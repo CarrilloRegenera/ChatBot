@@ -6,7 +6,7 @@ class RegisterRequest(BaseModel):
     password: str
 
 class LoginRequest(BaseModel):
-    email: str
+    nombre: str
     password: str
 
 class ConversationRequest(BaseModel):

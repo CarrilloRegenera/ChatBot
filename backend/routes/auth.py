@@ -30,7 +30,7 @@ def login(data: LoginRequest):
     
     cursor.execute(
         "SELECT Id, Nombre, Rol FROM Usuarios WHERE Email = ? AND Password = ?",
-        data.email, data.password
+        data.nombre, data.password
     )
     user = cursor.fetchone()
     conn.close()
