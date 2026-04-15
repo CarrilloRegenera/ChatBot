@@ -1,22 +1,22 @@
 from fastapi import APIRouter, HTTPException
-from models import RegistroRequest, LoginRequest
+from models import RegisterRequest, LoginRequest
 from database import get_connection
 
 router = APIRouter()
 
 @router.post("/registro")
-def registro(datos: RegistroRequest):
+def register(data: RegisterRequest):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT Id FROM Usuarios WHERE Email = ?", datos.email)
+    cursor.execute("SELECT Id FROM Usuarios WHERE Email = ?", data.email)
     if cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail="El email ya está registrado")
     
     cursor.execute(
         "INSERT INTO Usuarios (Nombre, Email, Password) VALUES (?, ?, ?)",
-        datos.nombre, datos.email, datos.password
+        data.nombre, data.email, data.password
     )
 
     conn.commit()
@@ -24,13 +24,13 @@ def registro(datos: RegistroRequest):
     return {"mensaje": "Usuario registrado correctamente"}
 
 @router.post("/login")
-def login(datos: LoginRequest):
+def login(data: LoginRequest):
     conn = get_connection()
     cursor = conn.cursor()
     
     cursor.execute(
         "SELECT Id, Nombre, Rol FROM Usuarios WHERE Email = ? AND Password = ?",
-        datos.email, datos.password
+        data.email, data.password
     )
     user = cursor.fetchone()
     conn.close()
