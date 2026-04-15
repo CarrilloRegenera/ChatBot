@@ -86,3 +86,17 @@ def get_history(conversation_id: int):
         })
     
     return {"messages": messages}
+
+@router.put("/conversations/{conversation_id}/title")
+def update_title(conversation_id: int, data: dict):
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        "UPDATE Conversaciones SET Titulo = ? WHERE Id = ?",
+        data["title"], conversation_id
+    )
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Title updated"}

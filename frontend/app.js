@@ -17,7 +17,6 @@ function showView(view) {
         document.getElementById('chat-view').classList.add('active');
     }
 
-    // Clear errors
     document.querySelectorAll('.error-msg, .success-msg').forEach(el => {
         el.textContent = '';
     });
@@ -119,7 +118,6 @@ async function createConversation() {
         const data = await res.json();
         currentConversation = data.conversation_id;
 
-        // Reset chat
         document.getElementById("chat-messages").innerHTML = "";
         document.getElementById("chat-messages").classList.remove('active');
         document.getElementById("chat-welcome").classList.remove('hidden');
@@ -140,20 +138,19 @@ async function loadConversations() {
         const list = document.getElementById("conversation-list");
         list.innerHTML = "";
 
-        data.conversaciones.forEach(conv => {
+        data.conversations.forEach(conv => {
             const item = document.createElement("div");
             item.className = "conversation-item" + (conv.id === currentConversation ? " active" : "");
-            item.textContent = conv.titulo;
-            item.onclick = () => selectConversation(conv.id, conv.titulo);
+            item.textContent = conv.title;
+            item.onclick = () => selectConversation(conv.id, conv.title);
             list.appendChild(item);
         });
 
-        // If no conversations, create one
-        if (data.conversaciones.length === 0) {
+        if (data.conversations.length === 0) {
             createConversation();
         } else if (!currentConversation) {
-            const first = data.conversaciones[0];
-            selectConversation(first.id, first.titulo);
+            const first = data.conversations[0];
+            selectConversation(first.id, first.title);
         }
     } catch (err) {
         console.error("Error loading conversations:", err);
@@ -163,13 +160,11 @@ async function loadConversations() {
 async function selectConversation(id, title) {
     currentConversation = id;
 
-    // Update sidebar active state
     document.querySelectorAll('.conversation-item').forEach(item => {
         item.classList.remove('active');
         if (item.textContent === title) item.classList.add('active');
     });
 
-    // Load messages
     try {
         const res = await fetch(`${API}/conversations/${id}/messages`);
         const data = await res.json();
@@ -177,13 +172,13 @@ async function selectConversation(id, title) {
         const messagesDiv = document.getElementById("chat-messages");
         messagesDiv.innerHTML = "";
 
-        if (data.mensajes.length > 0) {
+        if (data.messages.length > 0) {
             document.getElementById("chat-welcome").classList.add('hidden');
             messagesDiv.classList.add('active');
 
-            data.mensajes.forEach(msg => {
-                appendMessage('user', msg.pregunta);
-                appendMessage('assistant', msg.respuesta);
+            data.messages.forEach(msg => {
+                appendMessage('user', msg.question);
+                appendMessage('assistant', msg.response);
             });
 
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -239,17 +234,14 @@ async function sendMessage() {
     input.value = "";
     input.style.height = "auto";
 
-    // Show messages area
     document.getElementById("chat-welcome").classList.add('hidden');
     document.getElementById("chat-messages").classList.add('active');
 
-    // Show user message
     appendMessage('user', question);
 
     const messagesDiv = document.getElementById("chat-messages");
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
-    // Show typing
     showTypingIndicator();
 
     try {
@@ -265,6 +257,22 @@ async function sendMessage() {
         appendMessage('assistant', data.response);
 
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        // Update conversation title with first question
+        const convItems = document.querySelectorAll('.conversation-item');
+        convItems.forEach(item => {
+            if (item.classList.contains('active') && item.textContent === "Nueva conversación") {
+                const shortTitle = question.length > 30 ? question.substring(0, 30) + "..." : question;
+                item.textContent = shortTitle;
+                // Update title in backend
+                fetch(`${API}/conversations/${currentConversation}/title`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: shortTitle })
+                });
+            }
+        });
+
     } catch (err) {
         removeTypingIndicator();
         appendMessage('assistant', "Error de conexión con el servidor.");
