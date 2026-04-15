@@ -36,7 +36,7 @@ def login(datos: LoginRequest):
     conn.close()
     
     if not user:
-        raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
+        raise HTTPException(status_code=401, detail="Email y contraseña no coinciden")
     
     return {
         "mensaje": "Login correcto",
