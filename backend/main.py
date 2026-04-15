@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+
 app = FastAPI(title="ChatBot API")
 
 app.add_middleware(
@@ -18,3 +19,22 @@ def root():
 @app.get("/health")
 def health():
     return{"status: ok"}
+
+
+from database import get_connection
+
+@app.get("/test-db")
+def test_db():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM Usuarios")
+    rows = cursor.fetchall()
+    usuarios = []
+    for row in rows:
+        usuarios.append({
+            "id": row[0],
+            "nombre": row[1],
+            "email": row[2]
+        })
+    conn.close()
+    return {"usuarios": usuarios}
