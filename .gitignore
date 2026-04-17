@@ -12,3 +12,12 @@
 # Python cache artifacts
 __pycache__/
 *.py[cod]
+
+# Local environment config
+backend/.env
+
+# RAG local artifacts
+chroma_db/
+documentos/
+*.bin
+*.pkl
