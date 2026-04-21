@@ -16,3 +16,7 @@ class ConversationRequest(BaseModel):
 class MessageRequest(BaseModel):
     conversation_id: int
     question: str
+
+
+class InteractionReviewRequest(BaseModel):
+    reviewer: str = "system"

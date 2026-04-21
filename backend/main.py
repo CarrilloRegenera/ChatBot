@@ -1,7 +1,18 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes.auth import router as auth_router
 from routes.chat import router as chat_router
+from database import ensure_app_schema
+from config import LOG_LEVEL
+
+
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s | %(levelname).1s | %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 
 app = FastAPI(title="ChatBot API")
@@ -16,6 +27,11 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(chat_router)
 
+
+@app.on_event("startup")
+def startup_init():
+    ensure_app_schema()
+
 @app.get("/")
 def root():
     return{"mensaje: ChatBot API funcionando"}
@@ -23,7 +39,6 @@ def root():
 @app.get("/health")
 def health():
     return{"status: ok"}
-
 
 from database import get_connection
 
