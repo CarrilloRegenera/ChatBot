@@ -1,18 +1,22 @@
 import logging
+import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from routes.auth import router as auth_router
 from routes.chat import router as chat_router
 from database import ensure_app_schema
 from config import LOG_LEVEL
+from observability import RequestIdFilter, reset_request_id, set_request_id
 
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s | %(levelname).1s | %(name)s | %(message)s",
+    format="%(asctime)s | %(levelname).1s | req=%(request_id)s | %(name)s | %(message)s",
     datefmt="%H:%M:%S",
 )
+for handler in logging.getLogger().handlers:
+    handler.addFilter(RequestIdFilter())
 
 
 app = FastAPI(title="ChatBot API")
@@ -26,6 +30,18 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(chat_router)
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())[:12]
+    token = set_request_id(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_request_id(token)
+    response.headers["x-request-id"] = request_id
+    return response
 
 
 @app.on_event("startup")

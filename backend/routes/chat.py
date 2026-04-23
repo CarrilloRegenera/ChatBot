@@ -4,9 +4,10 @@ from threading import Lock
 
 from fastapi import APIRouter, HTTPException
 
-from ai_service import get_ai_response, validate_answer
+from ai_service import generate_ai_response, validate_answer
 from database import get_connection
 from memory_service import (
+    get_admin_metrics,
     list_pending_interactions,
     record_interaction_pending,
     reject_interaction,
@@ -67,7 +68,8 @@ def _get_conversation_lock(conversation_id: int) -> Lock:
         return _conversation_locks[conversation_id]
 
 
-def _save_chat_message(conversation_id: int, question: str, response: str, elapsed_ms: int) -> None:
+def _save_chat_message(conversation_id: int, question: str, response: str, elapsed_ms: int) -> int:
+    start = time.time()
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -81,6 +83,12 @@ def _save_chat_message(conversation_id: int, question: str, response: str, elaps
         conn.commit()
     finally:
         conn.close()
+    return int((time.time() - start) * 1000)
+
+
+def _assert_admin(role: str) -> None:
+    if (role or "").strip().lower() != "administrador":
+        raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
 
 
 @router.post("/conversations")
@@ -104,13 +112,15 @@ def send_message(data: MessageRequest):
 
     with conversation_lock:
         start = time.time()
+        stage_router_start = time.time()
         route_info = classify_question(data.question)
         route = route_info["route"]
+        router_ms = int((time.time() - stage_router_start) * 1000)
 
         if route in {"invalid", "smalltalk", "out_of_scope"}:
             response = route_info["message"]
             elapsed = int((time.time() - start) * 1000)
-            _save_chat_message(data.conversation_id, data.question, response, elapsed)
+            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
             _log_chat_event(
                 event="CHAT",
                 conversation_id=data.conversation_id,
@@ -120,6 +130,7 @@ def send_message(data: MessageRequest):
                 sources_count=0,
                 elapsed_ms=elapsed,
                 question=data.question,
+                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
             )
             return {
                 "question": data.question,
@@ -133,6 +144,10 @@ def send_message(data: MessageRequest):
         sources = []
         confidence = 0.0
         from_memory = False
+        rag_ms = 0
+        llm_ms = 0
+        db_ms = 0
+        llm_retries = 0
 
         try:
             memory_hit = search_validated_memory(data.question)
@@ -155,9 +170,18 @@ def send_message(data: MessageRequest):
                     extra=f"distance={float(memory_hit.get('distance', 0.0)):.4f}",
                 )
             else:
+                stage_rag_start = time.time()
                 context, sources = search_documents(data.question)
-                response = get_ai_response(data.question, context=context, sources=sources)
+                rag_ms = int((time.time() - stage_rag_start) * 1000)
+
+                stage_llm_start = time.time()
+                generated = generate_ai_response(data.question, context=context, sources=sources)
+                llm_ms = int((time.time() - stage_llm_start) * 1000)
+                response = generated["text"]
+                llm_retries = int(generated.get("retries", 0))
                 response, confidence = validate_answer(response, context=context, sources=sources)
+                elapsed_partial = int((time.time() - start) * 1000)
+                stage_metrics_db_start = time.time()
                 record_interaction_pending(
                     conversation_id=data.conversation_id,
                     question=data.question,
@@ -165,9 +189,17 @@ def send_message(data: MessageRequest):
                     sources=sources,
                     context=context,
                     confidence=confidence,
+                    prompt_tokens=generated["usage"]["prompt_tokens"],
+                    completion_tokens=generated["usage"]["completion_tokens"],
+                    total_tokens=generated["usage"]["total_tokens"],
+                    model=generated.get("model", ""),
+                    route="knowledge",
+                    from_memory=False,
+                    elapsed_ms=elapsed_partial,
                 )
+                db_ms += int((time.time() - stage_metrics_db_start) * 1000)
         except Exception:
-            logger.exception("Error en procesamiento de /messages")
+            logger.exception("[ALERT][CHAT_ERROR] Error en procesamiento de /messages")
             response = (
                 "No he podido generar respuesta en este momento por un error temporal. "
                 "Vuelve a intentarlo en unos segundos."
@@ -175,7 +207,16 @@ def send_message(data: MessageRequest):
             confidence = 0.0
 
         elapsed = int((time.time() - start) * 1000)
-        _save_chat_message(data.conversation_id, data.question, response, elapsed)
+        db_ms += _save_chat_message(data.conversation_id, data.question, response, elapsed)
+
+        if llm_retries > 0:
+            logger.warning("[ALERT][LLM_RETRY] conv=%s retries=%s q=\"%s\"", data.conversation_id, llm_retries, _q_preview(data.question))
+        if elapsed > 8000:
+            logger.warning(
+                "[ALERT][SLOW_REQUEST] conv=%s elapsed=%sms router_ms=%s rag_ms=%s llm_ms=%s db_ms=%s",
+                data.conversation_id, elapsed, router_ms, rag_ms, llm_ms, db_ms
+            )
+
         _log_chat_event(
             event="CHAT",
             conversation_id=data.conversation_id,
@@ -185,6 +226,7 @@ def send_message(data: MessageRequest):
             sources_count=len(sources),
             elapsed_ms=elapsed,
             question=data.question,
+            extra=f"router_ms={router_ms} rag_ms={rag_ms} llm_ms={llm_ms} db_ms={db_ms} retries={llm_retries}",
         )
 
         return {
@@ -199,6 +241,18 @@ def send_message(data: MessageRequest):
 
 @router.get("/knowledge/pending")
 def get_pending_knowledge(limit: int = 50):
+    return {"pending": list_pending_interactions(limit=limit)}
+
+
+@router.get("/admin/metrics")
+def admin_metrics(role: str, days: int = 30):
+    _assert_admin(role)
+    return get_admin_metrics(days=days)
+
+
+@router.get("/admin/knowledge/pending")
+def admin_pending(role: str, limit: int = 50):
+    _assert_admin(role)
     return {"pending": list_pending_interactions(limit=limit)}
 
 

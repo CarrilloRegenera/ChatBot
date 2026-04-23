@@ -170,6 +170,12 @@
                 <span>Nueva conversación</span>
             </button>
             <div id="conversation-list" class="conversation-list"></div>
+            <div id="admin-tools" class="admin-tools hidden">
+                <button class="admin-panel-btn" onclick="openAdminPanel()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M12 4h9"/><path d="M4 9h16"/><path d="M4 15h16"/></svg>
+                    <span>Panel Admin</span>
+                </button>
+            </div>
             <div class="sidebar-footer">
                 <div class="user-info">
                     <div class="user-avatar" id="user-avatar">A</div>
@@ -213,6 +219,32 @@
                 <p class="input-disclaimer">REGENERA ChatBot puede cometer errores. Verifica siempre la información.</p>
             </div>
         </main>
+    </div>
+
+    <!-- ==================== ADMIN PANEL ==================== -->
+    <div id="admin-panel" class="admin-panel hidden">
+        <div class="admin-panel-overlay" onclick="closeAdminPanel()"></div>
+        <div class="admin-panel-content">
+            <div class="admin-panel-header">
+                <h3>Panel de Administrador</h3>
+                <button class="admin-close-btn" onclick="closeAdminPanel()">Cerrar</button>
+            </div>
+            <div class="admin-metrics-grid">
+                <div class="metric-card"><span>Total interacciones</span><strong id="metric-total-interactions">0</strong></div>
+                <div class="metric-card"><span>Tokens acumulados</span><strong id="metric-total-tokens">0</strong></div>
+                <div class="metric-card"><span>Latencia media (ms)</span><strong id="metric-avg-latency">0</strong></div>
+                <div class="metric-card"><span>Pendientes</span><strong id="metric-total-pending">0</strong></div>
+                <div class="metric-card"><span>Validadas</span><strong id="metric-total-validated">0</strong></div>
+                <div class="metric-card"><span>Tasa validación</span><strong id="metric-validation-rate">0%</strong></div>
+            </div>
+            <div class="admin-section">
+                <div class="admin-section-header">
+                    <h4>Interacciones pendientes</h4>
+                    <button class="admin-refresh-btn" onclick="loadAdminPanel()">Actualizar</button>
+                </div>
+                <div id="admin-pending-list" class="admin-pending-list"></div>
+            </div>
+        </div>
     </div>
 
     <script src="app.js"></script>

@@ -90,6 +90,13 @@ def _candidate_window(base_results: int, question_keywords: set[str], clean_ques
     return min(max(base_results * 4, 16) + complexity_bonus, 70)
 
 
+def _focus_hits(document: str, core_terms: List[str]) -> int:
+    if not core_terms:
+        return 0
+    doc_norm = _normalize_text(document)
+    return sum(1 for core in core_terms if core in doc_norm)
+
+
 def reset_documents() -> None:
     chroma_client.delete_collection(COLLECTION_NAME)
     global collection
@@ -184,6 +191,8 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
             score += 6
         if core_terms and core_hits == 0:
             score -= CORE_TERM_PENALTY
+        if overlap_score == 0 and core_hits == 0:
+            score -= 6
 
         ranked_items.append((score, doc_id, document, metadata))
         seen_ids.add(doc_id)
@@ -253,6 +262,21 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
             selected_ids.add(doc_id)
             if len(selected) >= n_results:
                 break
+
+    # Focus pass: prioritize chunks that directly contain core terms.
+    if core_terms and selected:
+        focused = []
+        non_focused = []
+        for item in selected:
+            _, _, document, _ = item
+            if _focus_hits(document, core_terms) > 0:
+                focused.append(item)
+            else:
+                non_focused.append(item)
+
+        if focused:
+            focused.sort(key=lambda item: _focus_hits(item[2], core_terms), reverse=True)
+            selected = (focused + non_focused)[:n_results]
 
     context_parts = []
     sources = []

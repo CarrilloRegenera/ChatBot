@@ -53,5 +53,24 @@ def ensure_app_schema():
         """
     )
 
+    cursor.execute(
+        """
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'PromptTokens') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD PromptTokens INT NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'CompletionTokens') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD CompletionTokens INT NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'TotalTokens') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD TotalTokens INT NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'Modelo') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD Modelo NVARCHAR(120) NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'Ruta') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD Ruta NVARCHAR(40) NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'DesdeMemoria') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD DesdeMemoria BIT NOT NULL CONSTRAINT DF_InteraccionesRAG_DesdeMemoria DEFAULT 0;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'TiempoRespuestaMs') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD TiempoRespuestaMs INT NULL;
+        """
+    )
+
     conn.commit()
     conn.close()

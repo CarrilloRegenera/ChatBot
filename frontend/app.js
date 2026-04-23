@@ -2,6 +2,45 @@ const API = "http://localhost:8000";
 let currentUser = null;
 let currentConversation = null;
 
+// ===== SESSION PERSISTENCE =====
+
+function saveSession() {
+    if (currentUser) {
+        localStorage.setItem("chatbot_user", JSON.stringify(currentUser));
+    }
+    if (currentConversation) {
+        localStorage.setItem("chatbot_conversation_id", String(currentConversation));
+    }
+}
+
+function clearSession() {
+    localStorage.removeItem("chatbot_user");
+    localStorage.removeItem("chatbot_conversation_id");
+}
+
+function restoreSession() {
+    const rawUser = localStorage.getItem("chatbot_user");
+    const rawConversation = localStorage.getItem("chatbot_conversation_id");
+
+    if (!rawUser) return false;
+
+    try {
+        currentUser = JSON.parse(rawUser);
+    } catch {
+        clearSession();
+        return false;
+    }
+
+    if (rawConversation) {
+        const parsed = parseInt(rawConversation, 10);
+        if (!Number.isNaN(parsed)) {
+            currentConversation = parsed;
+        }
+    }
+
+    return true;
+}
+
 // ===== VIEW MANAGEMENT =====
 
 function showView(view) {
@@ -20,6 +59,13 @@ function showView(view) {
     document.querySelectorAll('.error-msg, .success-msg').forEach(el => {
         el.textContent = '';
     });
+}
+
+function updateAdminVisibility() {
+    const adminTools = document.getElementById("admin-tools");
+    if (!adminTools) return;
+    const isAdmin = currentUser && (currentUser.rol || "").toLowerCase() === "administrador";
+    adminTools.classList.toggle("hidden", !isAdmin);
 }
 
 // ===== AUTH =====
@@ -46,7 +92,9 @@ async function login() {
             currentUser = data.usuario;
             document.getElementById("user-name-display").textContent = currentUser.nombre;
             document.getElementById("user-avatar").textContent = currentUser.nombre.charAt(0).toUpperCase();
+            saveSession();
             showView('chat');
+            updateAdminVisibility();
             loadConversations();
         } else {
             document.getElementById("login-error").textContent = data.detail;
@@ -96,10 +144,12 @@ async function register() {
 function logout() {
     currentUser = null;
     currentConversation = null;
+    clearSession();
     document.getElementById("chat-messages").innerHTML = "";
     document.getElementById("conversation-list").innerHTML = "";
     document.getElementById("chat-messages").classList.remove('active');
     document.getElementById("chat-welcome").classList.remove('hidden');
+    closeAdminPanel();
     showView('login');
 }
 
@@ -117,6 +167,7 @@ async function createConversation() {
 
         const data = await res.json();
         currentConversation = data.conversation_id;
+        saveSession();
 
         document.getElementById("chat-messages").innerHTML = "";
         document.getElementById("chat-messages").classList.remove('active');
@@ -159,6 +210,7 @@ async function loadConversations() {
 
 async function selectConversation(id, title) {
     currentConversation = id;
+    saveSession();
 
     document.querySelectorAll('.conversation-item').forEach(item => {
         item.classList.remove('active');
@@ -297,3 +349,120 @@ function autoResize(el) {
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
 }
+
+// ===== ADMIN PANEL =====
+
+function openAdminPanel() {
+    if (!currentUser || (currentUser.rol || "").toLowerCase() !== "administrador") {
+        alert("Solo disponible para administradores.");
+        return;
+    }
+    document.getElementById("admin-panel").classList.remove("hidden");
+    loadAdminPanel();
+}
+
+function closeAdminPanel() {
+    const panel = document.getElementById("admin-panel");
+    if (panel) panel.classList.add("hidden");
+}
+
+function formatNumber(value) {
+    return new Intl.NumberFormat("es-ES").format(value || 0);
+}
+
+async function loadAdminPanel() {
+    if (!currentUser) return;
+    const role = encodeURIComponent(currentUser.rol || "");
+    try {
+        const [metricsRes, pendingRes] = await Promise.all([
+            fetch(`${API}/admin/metrics?role=${role}&days=30`),
+            fetch(`${API}/admin/knowledge/pending?role=${role}&limit=30`),
+        ]);
+
+        if (!metricsRes.ok || !pendingRes.ok) {
+            throw new Error("No se pudieron cargar datos admin");
+        }
+
+        const metrics = await metricsRes.json();
+        const pendingData = await pendingRes.json();
+
+        document.getElementById("metric-total-interactions").textContent = formatNumber(metrics.total_interactions);
+        document.getElementById("metric-total-tokens").textContent = formatNumber(metrics.total_tokens);
+        document.getElementById("metric-avg-latency").textContent = formatNumber(Math.round(metrics.avg_latency_ms || 0));
+        document.getElementById("metric-total-pending").textContent = formatNumber(metrics.total_pending);
+        document.getElementById("metric-total-validated").textContent = formatNumber(metrics.total_validated);
+        document.getElementById("metric-validation-rate").textContent = `${Math.round((metrics.validation_rate || 0) * 100)}%`;
+
+        renderPendingList(pendingData.pending || []);
+    } catch (err) {
+        console.error("Error loading admin panel:", err);
+    }
+}
+
+function renderPendingList(items) {
+    const container = document.getElementById("admin-pending-list");
+    container.innerHTML = "";
+
+    if (!items.length) {
+        container.innerHTML = `<div class="pending-card"><div class="pending-answer">No hay interacciones pendientes.</div></div>`;
+        return;
+    }
+
+    items.forEach(item => {
+        const card = document.createElement("div");
+        card.className = "pending-card";
+        card.innerHTML = `
+            <div class="pending-meta">#${item.id} · conf=${Number(item.confidence || 0).toFixed(2)} · tokens=${item.total_tokens || 0} · ${item.created_at}</div>
+            <div class="pending-question">${item.question}</div>
+            <div class="pending-answer">${item.answer}</div>
+            <div class="pending-actions">
+                <button class="approve-btn" onclick="validateInteraction(${item.id})">Aprobar</button>
+                <button class="reject-btn" onclick="rejectInteraction(${item.id})">Rechazar</button>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+async function validateInteraction(interactionId) {
+    if (!currentUser) return;
+    const res = await fetch(`${API}/knowledge/${interactionId}/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewer: currentUser.nombre || "admin" }),
+    });
+    if (!res.ok) {
+        alert("No se pudo validar la interacción.");
+        return;
+    }
+    loadAdminPanel();
+}
+
+async function rejectInteraction(interactionId) {
+    if (!currentUser) return;
+    const res = await fetch(`${API}/knowledge/${interactionId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewer: currentUser.nombre || "admin" }),
+    });
+    if (!res.ok) {
+        alert("No se pudo rechazar la interacción.");
+        return;
+    }
+    loadAdminPanel();
+}
+
+// ===== INIT =====
+
+document.addEventListener("DOMContentLoaded", () => {
+    if (restoreSession()) {
+        document.getElementById("user-name-display").textContent = currentUser.nombre;
+        document.getElementById("user-avatar").textContent = currentUser.nombre.charAt(0).toUpperCase();
+        showView("chat");
+        updateAdminVisibility();
+        loadConversations();
+    } else {
+        updateAdminVisibility();
+        showView("login");
+    }
+});
