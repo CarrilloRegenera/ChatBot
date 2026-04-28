@@ -555,6 +555,56 @@ function formatCurrency(value) {
     }).format(value || 0);
 }
 
+function renderModelComparison(metrics) {
+    const container = document.getElementById("admin-model-comparison");
+    if (!container) return;
+
+    const comparison = metrics.model_comparison || {};
+    const current = comparison.current_model || null;
+    const baseline = comparison.baseline_model || null;
+    const delta = comparison.current_vs_baseline || {};
+
+    if (!current && !baseline) {
+        container.innerHTML = `<div class="model-compare-empty">No hay datos por modelo en el rango seleccionado.</div>`;
+        return;
+    }
+
+    const renderCard = (item, title) => {
+        if (!item) return "";
+        return `
+            <div class="model-compare-card">
+                <div class="model-compare-header">
+                    <span class="model-compare-badge">${title}</span>
+                    <strong>${item.model || "-"}</strong>
+                </div>
+                <div class="model-compare-grid">
+                    <div><span>Interacciones</span><strong>${formatNumber(item.interactions)}</strong></div>
+                    <div><span>Coste estimado</span><strong>${formatCurrency(item.estimated_cost_usd)}</strong></div>
+                    <div><span>Latencia media</span><strong>${formatNumber(Math.round(item.avg_latency_ms || 0))} ms</strong></div>
+                    <div><span>Errores</span><strong>${formatNumber(item.errors)}</strong></div>
+                    <div><span>Tokens</span><strong>${formatNumber(item.total_tokens)}</strong></div>
+                    <div><span>Coste / 1k tokens</span><strong>${formatCurrency(item.cost_per_1k_tokens_usd)}</strong></div>
+                    <div><span>Tasa validacion</span><strong>${Math.round((item.validation_rate || 0) * 100)}%</strong></div>
+                    <div><span>Nota de precio</span><strong>${item.pricing_notes || "-"}</strong></div>
+                </div>
+            </div>
+        `;
+    };
+
+    container.innerHTML = `
+        <div class="model-compare-cards">
+            ${renderCard(baseline, "Modelo antiguo")}
+            ${renderCard(current, "Modelo nuevo")}
+        </div>
+        <div class="model-compare-delta">
+            <div><span>Diferencia de coste</span><strong>${formatCurrency(delta.cost_delta_usd)}</strong></div>
+            <div><span>Diferencia de latencia</span><strong>${formatNumber(Math.round(delta.latency_delta_ms || 0))} ms</strong></div>
+            <div><span>Diferencia de errores</span><strong>${formatNumber(delta.error_delta)}</strong></div>
+            <div><span>Diferencia de validacion</span><strong>${Math.round((delta.validation_rate_delta || 0) * 100)}%</strong></div>
+        </div>
+    `;
+}
+
 function setAdminRange(days, button) {
     adminRangeDays = days;
     document.querySelectorAll(".admin-range-btn").forEach((item) => {
@@ -589,6 +639,7 @@ async function loadAdminPanel() {
         document.getElementById("metric-total-pending").textContent = formatNumber(metrics.total_pending);
         document.getElementById("metric-total-validated").textContent = formatNumber(metrics.total_validated);
         document.getElementById("metric-validation-rate").textContent = `${Math.round((metrics.validation_rate || 0) * 100)}%`;
+        renderModelComparison(metrics);
 
         renderPendingList(pendingData.pending || []);
     } catch (err) {

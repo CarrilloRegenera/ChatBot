@@ -901,6 +901,90 @@ html, body {
     margin-bottom: 10px;
 }
 
+.admin-model-comparison {
+    display: grid;
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.model-compare-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+}
+
+.model-compare-card {
+    border: 1px solid var(--gray-200);
+    border-radius: 18px;
+    padding: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%);
+    box-shadow: 0 10px 30px rgba(19, 31, 53, 0.06);
+}
+
+.model-compare-header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.model-compare-header strong {
+    font-size: 18px;
+    color: #162239;
+}
+
+.model-compare-badge {
+    width: fit-content;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(66, 103, 178, 0.1);
+    color: #4267b2;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.model-compare-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.model-compare-grid div,
+.model-compare-delta div {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(66, 103, 178, 0.05);
+}
+
+.model-compare-grid span,
+.model-compare-delta span {
+    display: block;
+    font-size: 12px;
+    color: var(--gray-500);
+    margin-bottom: 4px;
+}
+
+.model-compare-grid strong,
+.model-compare-delta strong {
+    color: #162239;
+    font-size: 14px;
+}
+
+.model-compare-delta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.model-compare-empty {
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: rgba(66, 103, 178, 0.06);
+    color: var(--gray-700);
+}
+
 .admin-pending-list {
     display: flex;
     flex-direction: column;

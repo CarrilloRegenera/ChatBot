@@ -21,6 +21,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 DOCUMENTS_PATH = _to_absolute_path(os.getenv("DOCUMENTS_PATH", "../documentos"))
 CHROMA_DB_PATH = _to_absolute_path(os.getenv("CHROMA_DB_PATH", "../chroma_db"))
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_BASELINE_MODEL = os.getenv("GEMINI_BASELINE_MODEL", "gemini-2.5-flash").strip()
 TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", "3"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "reglamentos").strip()
 RECURSIVE_PDF_SCAN = os.getenv("RECURSIVE_PDF_SCAN", "true").strip().lower() in {"1", "true", "yes", "on"}

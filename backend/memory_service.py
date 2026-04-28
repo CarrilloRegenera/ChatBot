@@ -6,6 +6,8 @@ import chromadb
 
 from config import (
     CHROMA_DB_PATH,
+    GEMINI_BASELINE_MODEL,
+    GEMINI_MODEL,
     MEMORY_COLLECTION_NAME,
     MEMORY_MAX_DISTANCE,
     MEMORY_MAX_RESULTS,
@@ -38,13 +40,21 @@ chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 memory_collection = _get_memory_collection(chroma_client, MEMORY_COLLECTION_NAME, _embedding_fn)
 
 MODEL_PRICING_USD_PER_MILLION = {
+    "gemini-1.5-pro": {
+        # Official Gemini Developer API pricing for <=128k prompts.
+        "input": 1.25,
+        "output": 5.00,
+        "notes": "Estimacion para prompts de hasta 128k tokens",
+    },
     "gemini-2.5-flash": {
         "input": 0.30,
         "output": 2.50,
+        "notes": "Tarifa estandar",
     },
     "gemini-2.5-flash-lite": {
         "input": 0.10,
         "output": 0.40,
+        "notes": "Tarifa estandar",
     },
 }
 
@@ -69,6 +79,62 @@ def _estimate_model_cost_usd(model: str, prompt_tokens: int, completion_tokens: 
     prompt_cost = (max(prompt_tokens, 0) / 1_000_000) * pricing["input"]
     completion_cost = (max(completion_tokens, 0) / 1_000_000) * pricing["output"]
     return prompt_cost + completion_cost
+
+
+def _empty_model_stats(model_name: str, role: str) -> Dict:
+    pricing = MODEL_PRICING_USD_PER_MILLION.get((model_name or "").strip().lower(), {})
+    return {
+        "model": model_name,
+        "role": role,
+        "interactions": 0,
+        "validated": 0,
+        "pending": 0,
+        "rejected": 0,
+        "errors": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "avg_latency_ms": 0.0,
+        "estimated_cost_usd": 0.0,
+        "cost_per_1k_tokens_usd": 0.0,
+        "validation_rate": 0.0,
+        "pricing_notes": pricing.get("notes", ""),
+    }
+
+
+def _normalize_model_stats(row, role: str) -> Dict:
+    model_name = row[0] or ""
+    interactions = int(row[1] or 0)
+    validated = int(row[2] or 0)
+    pending = int(row[3] or 0)
+    rejected = int(row[4] or 0)
+    errors = int(row[5] or 0)
+    prompt_tokens = int(row[6] or 0)
+    completion_tokens = int(row[7] or 0)
+    total_tokens = int(row[8] or 0)
+    avg_latency = float(row[9] or 0.0)
+    estimated_cost = _estimate_model_cost_usd(model_name, prompt_tokens, completion_tokens)
+    cost_per_1k_tokens = (estimated_cost / total_tokens * 1000) if total_tokens > 0 else 0.0
+    validation_rate = (validated / interactions) if interactions else 0.0
+    pricing = MODEL_PRICING_USD_PER_MILLION.get((model_name or "").strip().lower(), {})
+
+    return {
+        "model": model_name,
+        "role": role,
+        "interactions": interactions,
+        "validated": validated,
+        "pending": pending,
+        "rejected": rejected,
+        "errors": errors,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "avg_latency_ms": round(avg_latency, 2),
+        "estimated_cost_usd": round(estimated_cost, 6),
+        "cost_per_1k_tokens_usd": round(cost_per_1k_tokens, 6),
+        "validation_rate": round(validation_rate, 4),
+        "pricing_notes": pricing.get("notes", ""),
+    }
 
 
 def record_interaction_pending(
@@ -174,13 +240,24 @@ def get_admin_metrics(days: int = 30) -> Dict:
 
     cursor.execute(
         """
-        SELECT Modelo, ISNULL(SUM(PromptTokens), 0) AS prompt_tokens, ISNULL(SUM(CompletionTokens), 0) AS completion_tokens
+        SELECT
+            Modelo,
+            COUNT(*) AS interactions,
+            SUM(CASE WHEN Estado='validada' THEN 1 ELSE 0 END) AS validated,
+            SUM(CASE WHEN Estado='pendiente' THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN Estado='rechazada' THEN 1 ELSE 0 END) AS rejected,
+            SUM(CASE WHEN Respuesta LIKE 'No he podido generar respuesta en este momento por un error temporal%'
+                  OR Respuesta LIKE 'El modelo no ha podido responder por saturacion temporal del servicio%'
+                THEN 1 ELSE 0 END) AS total_errors,
+            ISNULL(SUM(PromptTokens), 0) AS prompt_tokens,
+            ISNULL(SUM(CompletionTokens), 0) AS completion_tokens,
+            ISNULL(SUM(TotalTokens), 0) AS total_tokens,
+            ISNULL(AVG(CAST(TiempoRespuestaMs AS FLOAT)), 0) AS avg_latency_ms
         FROM dbo.InteraccionesRAG
         WHERE FechaCreacion >= DATEADD(day, ?, SYSUTCDATETIME())
           AND Modelo IS NOT NULL AND Modelo <> ''
         GROUP BY Modelo
-        """
-        ,
+        """,
         -abs(days),
     )
     model_rows = cursor.fetchall()
@@ -199,24 +276,30 @@ def get_admin_metrics(days: int = 30) -> Dict:
     validation_rate = (validated / total_interactions) if total_interactions else 0.0
     cost_estimated_usd = 0.0
     model_breakdown = []
+    model_index = {}
     for model_row in model_rows:
-        model_name = model_row[0] or ""
-        model_prompt_tokens = int(model_row[1] or 0)
-        model_completion_tokens = int(model_row[2] or 0)
-        model_cost = _estimate_model_cost_usd(
-            model=model_name,
-            prompt_tokens=model_prompt_tokens,
-            completion_tokens=model_completion_tokens,
-        )
-        cost_estimated_usd += model_cost
-        model_breakdown.append(
-            {
-                "model": model_name,
-                "prompt_tokens": model_prompt_tokens,
-                "completion_tokens": model_completion_tokens,
-                "estimated_cost_usd": round(model_cost, 6),
-            }
-        )
+        stats = _normalize_model_stats(model_row, role="observed")
+        cost_estimated_usd += stats["estimated_cost_usd"]
+        model_breakdown.append(stats)
+        model_index[(stats["model"] or "").strip().lower()] = stats
+
+    current_model_key = (GEMINI_MODEL or "").strip().lower()
+    baseline_model_key = (GEMINI_BASELINE_MODEL or "").strip().lower()
+    current_model_stats = model_index.get(current_model_key, _empty_model_stats(GEMINI_MODEL, "nuevo"))
+    baseline_model_stats = model_index.get(baseline_model_key, _empty_model_stats(GEMINI_BASELINE_MODEL, "antiguo"))
+    current_model_stats["role"] = "nuevo"
+    baseline_model_stats["role"] = "antiguo"
+
+    comparison_summary = {
+        "current_model": current_model_stats,
+        "baseline_model": baseline_model_stats,
+        "current_vs_baseline": {
+            "cost_delta_usd": round(current_model_stats["estimated_cost_usd"] - baseline_model_stats["estimated_cost_usd"], 6),
+            "latency_delta_ms": round(current_model_stats["avg_latency_ms"] - baseline_model_stats["avg_latency_ms"], 2),
+            "error_delta": int(current_model_stats["errors"] - baseline_model_stats["errors"]),
+            "validation_rate_delta": round(current_model_stats["validation_rate"] - baseline_model_stats["validation_rate"], 4),
+        },
+    }
 
     return {
         "window_days": abs(days),
@@ -231,8 +314,10 @@ def get_admin_metrics(days: int = 30) -> Dict:
         "total_tokens": total_tokens,
         "avg_latency_ms": round(avg_latency, 2),
         "estimated_cost_usd": round(cost_estimated_usd, 6),
-        "model": (model_breakdown[0]["model"] if model_breakdown else ""),
+        "model": GEMINI_MODEL,
+        "baseline_model": GEMINI_BASELINE_MODEL,
         "model_breakdown": model_breakdown,
+        "model_comparison": comparison_summary,
     }
 
 
