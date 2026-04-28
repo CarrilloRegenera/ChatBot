@@ -1,6 +1,10 @@
 const API = "http://localhost:8000";
 let currentUser = null;
 let currentConversation = null;
+let isSending = false;
+let activeConversationRequest = 0;
+let conversationsLoadPromise = null;
+let adminRangeDays = 7;
 
 // ===== SESSION PERSISTENCE =====
 
@@ -44,20 +48,20 @@ function restoreSession() {
 // ===== VIEW MANAGEMENT =====
 
 function showView(view) {
-    document.querySelectorAll('.auth-view, .chat-view').forEach(v => {
-        v.classList.remove('active');
+    document.querySelectorAll(".auth-view, .chat-view").forEach((v) => {
+        v.classList.remove("active");
     });
 
-    if (view === 'login') {
-        document.getElementById('login-view').classList.add('active');
-    } else if (view === 'register') {
-        document.getElementById('register-view').classList.add('active');
-    } else if (view === 'chat') {
-        document.getElementById('chat-view').classList.add('active');
+    if (view === "login") {
+        document.getElementById("login-view").classList.add("active");
+    } else if (view === "register") {
+        document.getElementById("register-view").classList.add("active");
+    } else if (view === "chat") {
+        document.getElementById("chat-view").classList.add("active");
     }
 
-    document.querySelectorAll('.error-msg, .success-msg').forEach(el => {
-        el.textContent = '';
+    document.querySelectorAll(".error-msg, .success-msg").forEach((el) => {
+        el.textContent = "";
     });
 }
 
@@ -66,6 +70,46 @@ function updateAdminVisibility() {
     if (!adminTools) return;
     const isAdmin = currentUser && (currentUser.rol || "").toLowerCase() === "administrador";
     adminTools.classList.toggle("hidden", !isAdmin);
+}
+
+function showWelcomeState() {
+    document.getElementById("chat-messages").classList.remove("active");
+    document.getElementById("chat-welcome").classList.remove("hidden");
+}
+
+function showMessagesState() {
+    document.getElementById("chat-welcome").classList.add("hidden");
+    document.getElementById("chat-messages").classList.add("active");
+}
+
+function renderConversationItem(conv) {
+    const item = document.createElement("div");
+    item.className = "conversation-item" + (conv.id === currentConversation ? " active" : "");
+    item.dataset.conversationId = String(conv.id);
+
+    const title = document.createElement("span");
+    title.className = "conversation-title";
+    title.textContent = conv.title;
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "conversation-delete-btn";
+    deleteBtn.type = "button";
+    deleteBtn.title = "Borrar conversacion";
+    deleteBtn.setAttribute("aria-label", `Borrar conversacion ${conv.title}`);
+    deleteBtn.textContent = "x";
+    deleteBtn.onclick = (event) => {
+        event.stopPropagation();
+        if (isSending) return;
+        deleteConversation(conv.id, conv.title);
+    };
+
+    item.appendChild(title);
+    item.appendChild(deleteBtn);
+    item.onclick = () => {
+        if (isSending) return;
+        selectConversation(conv.id, conv.title);
+    };
+    return item;
 }
 
 // ===== AUTH =====
@@ -83,7 +127,7 @@ async function login() {
         const res = await fetch(`${API}/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nombre, password })
+            body: JSON.stringify({ nombre, password }),
         });
 
         const data = await res.json();
@@ -93,14 +137,14 @@ async function login() {
             document.getElementById("user-name-display").textContent = currentUser.nombre;
             document.getElementById("user-avatar").textContent = currentUser.nombre.charAt(0).toUpperCase();
             saveSession();
-            showView('chat');
+            showView("chat");
             updateAdminVisibility();
-            loadConversations();
+            await loadConversations();
         } else {
             document.getElementById("login-error").textContent = data.detail;
         }
-    } catch (err) {
-        document.getElementById("login-error").textContent = "Error de conexión con el servidor";
+    } catch {
+        document.getElementById("login-error").textContent = "Error de conexion con el servidor";
     }
 }
 
@@ -115,7 +159,7 @@ async function register() {
     }
 
     if (password.length < 6) {
-        document.getElementById("register-error").textContent = "La contraseña debe tener al menos 6 caracteres";
+        document.getElementById("register-error").textContent = "La contrasena debe tener al menos 6 caracteres";
         return;
     }
 
@@ -123,46 +167,47 @@ async function register() {
         const res = await fetch(`${API}/registro`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nombre: name, email, password })
+            body: JSON.stringify({ nombre: name, email, password }),
         });
 
         const data = await res.json();
 
         if (res.ok) {
             document.getElementById("register-error").textContent = "";
-            document.getElementById("register-success").textContent = "Cuenta creada correctamente. Ya puedes iniciar sesión.";
-            setTimeout(() => showView('login'), 2000);
+            document.getElementById("register-success").textContent = "Cuenta creada correctamente. Ya puedes iniciar sesion.";
+            setTimeout(() => showView("login"), 2000);
         } else {
             document.getElementById("register-success").textContent = "";
             document.getElementById("register-error").textContent = data.detail;
         }
-    } catch (err) {
-        document.getElementById("register-error").textContent = "Error de conexión con el servidor";
+    } catch {
+        document.getElementById("register-error").textContent = "Error de conexion con el servidor";
     }
 }
 
 function logout() {
+    if (isSending) return;
     currentUser = null;
     currentConversation = null;
     clearSession();
     document.getElementById("chat-messages").innerHTML = "";
     document.getElementById("conversation-list").innerHTML = "";
-    document.getElementById("chat-messages").classList.remove('active');
-    document.getElementById("chat-welcome").classList.remove('hidden');
+    showWelcomeState();
     closeAdminPanel();
-    showView('login');
+    setSendingState(false);
+    showView("login");
 }
 
 // ===== CONVERSATIONS =====
 
-async function createConversation() {
-    if (!currentUser) return;
+async function createConversation(reloadList = true) {
+    if (!currentUser || isSending) return;
 
     try {
         const res = await fetch(`${API}/conversations`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: currentUser.id, title: "Nueva conversación" })
+            body: JSON.stringify({ user_id: currentUser.id, title: "Nueva conversacion" }),
         });
 
         const data = await res.json();
@@ -170,10 +215,11 @@ async function createConversation() {
         saveSession();
 
         document.getElementById("chat-messages").innerHTML = "";
-        document.getElementById("chat-messages").classList.remove('active');
-        document.getElementById("chat-welcome").classList.remove('hidden');
+        showWelcomeState();
 
-        loadConversations();
+        if (reloadList) {
+            await loadConversations();
+        }
     } catch (err) {
         console.error("Error creating conversation:", err);
     }
@@ -182,64 +228,117 @@ async function createConversation() {
 async function loadConversations() {
     if (!currentUser) return;
 
-    try {
+    if (conversationsLoadPromise) {
+        return conversationsLoadPromise;
+    }
+
+    conversationsLoadPromise = (async () => {
+        try {
         const res = await fetch(`${API}/conversations/${currentUser.id}`);
         const data = await res.json();
 
         const list = document.getElementById("conversation-list");
         list.innerHTML = "";
 
-        data.conversations.forEach(conv => {
-            const item = document.createElement("div");
-            item.className = "conversation-item" + (conv.id === currentConversation ? " active" : "");
-            item.textContent = conv.title;
-            item.onclick = () => selectConversation(conv.id, conv.title);
-            list.appendChild(item);
+        data.conversations.forEach((conv) => {
+            list.appendChild(renderConversationItem(conv));
         });
 
-        if (data.conversations.length === 0) {
-            createConversation();
-        } else if (!currentConversation) {
-            const first = data.conversations[0];
-            selectConversation(first.id, first.title);
+        let conversations = data.conversations || [];
+
+        if (conversations.length === 0) {
+            await createConversation(false);
+            const retryRes = await fetch(`${API}/conversations/${currentUser.id}`);
+            const retryData = await retryRes.json();
+            conversations = retryData.conversations || [];
+
+            list.innerHTML = "";
+            conversations.forEach((conv) => {
+                list.appendChild(renderConversationItem(conv));
+            });
         }
-    } catch (err) {
-        console.error("Error loading conversations:", err);
-    }
+
+        if (conversations.length > 0) {
+            const currentConv = conversations.find((conv) => conv.id === currentConversation);
+            if (currentConv) {
+                await selectConversation(currentConv.id, currentConv.title);
+            } else {
+                const first = conversations[0];
+                await selectConversation(first.id, first.title);
+            }
+        }
+        } catch (err) {
+            console.error("Error loading conversations:", err);
+        } finally {
+            conversationsLoadPromise = null;
+        }
+    })();
+
+    return conversationsLoadPromise;
 }
 
-async function selectConversation(id, title) {
+async function selectConversation(id) {
+    if (isSending) return;
+    const requestId = ++activeConversationRequest;
     currentConversation = id;
     saveSession();
 
-    document.querySelectorAll('.conversation-item').forEach(item => {
-        item.classList.remove('active');
-        if (item.textContent === title) item.classList.add('active');
+    document.querySelectorAll(".conversation-item").forEach((item) => {
+        item.classList.toggle("active", item.dataset.conversationId === String(id));
     });
 
     try {
         const res = await fetch(`${API}/conversations/${id}/messages`);
         const data = await res.json();
 
+        if (requestId !== activeConversationRequest || currentConversation !== id) {
+            return;
+        }
+
         const messagesDiv = document.getElementById("chat-messages");
         messagesDiv.innerHTML = "";
 
         if (data.messages.length > 0) {
-            document.getElementById("chat-welcome").classList.add('hidden');
-            messagesDiv.classList.add('active');
-
-            data.messages.forEach(msg => {
-                appendMessage('user', msg.question);
-                appendMessage('assistant', msg.response);
+            showMessagesState();
+            data.messages.forEach((msg) => {
+                appendMessage("user", msg.question);
+                appendMessage("assistant", msg.response);
             });
-
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         } else {
-            messagesDiv.classList.remove('active');
-            document.getElementById("chat-welcome").classList.remove('hidden');
+            showWelcomeState();
         }
     } catch (err) {
         console.error("Error loading messages:", err);
+    }
+}
+
+async function deleteConversation(conversationId, title) {
+    if (!currentUser || isSending) return;
+    const confirmed = window.confirm(`Quieres borrar la conversacion "${title}"?`);
+    if (!confirmed) return;
+
+    try {
+        const res = await fetch(`${API}/conversations/${conversationId}`, {
+            method: "DELETE",
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data?.detail || "No se pudo borrar la conversacion.");
+        }
+
+        const wasCurrent = currentConversation === conversationId;
+        if (wasCurrent) {
+            currentConversation = null;
+            activeConversationRequest += 1;
+            document.getElementById("chat-messages").innerHTML = "";
+            showWelcomeState();
+            saveSession();
+        }
+
+        await loadConversations();
+    } catch (err) {
+        alert(err?.message || "No se pudo borrar la conversacion.");
     }
 }
 
@@ -278,60 +377,136 @@ function removeTypingIndicator() {
     if (typing) typing.remove();
 }
 
+function setSendingState(sending) {
+    isSending = sending;
+
+    const sendBtn = document.getElementById("send-btn");
+    const input = document.getElementById("question-input");
+    const newChatBtn = document.querySelector(".new-chat-btn");
+    const logoutBtn = document.querySelector(".logout-btn");
+    const adminBtn = document.querySelector(".admin-panel-btn");
+    const suggestionButtons = document.querySelectorAll(".chip");
+    const conversationItems = document.querySelectorAll(".conversation-item");
+    const deleteButtons = document.querySelectorAll(".conversation-delete-btn");
+    const chatView = document.getElementById("chat-view");
+
+    if (sendBtn) {
+        sendBtn.disabled = sending;
+        sendBtn.setAttribute("aria-disabled", sending ? "true" : "false");
+    }
+
+    if (input) {
+        input.disabled = sending;
+        if (sending) {
+            input.setAttribute("aria-busy", "true");
+        } else {
+            input.removeAttribute("aria-busy");
+        }
+    }
+
+    if (newChatBtn) {
+        newChatBtn.disabled = sending;
+        newChatBtn.setAttribute("aria-disabled", sending ? "true" : "false");
+    }
+
+    if (logoutBtn) {
+        logoutBtn.disabled = sending;
+        logoutBtn.setAttribute("aria-disabled", sending ? "true" : "false");
+    }
+
+    if (adminBtn) {
+        adminBtn.disabled = sending;
+        adminBtn.setAttribute("aria-disabled", sending ? "true" : "false");
+    }
+
+    suggestionButtons.forEach((button) => {
+        button.disabled = sending;
+        button.setAttribute("aria-disabled", sending ? "true" : "false");
+    });
+
+    conversationItems.forEach((item) => {
+        item.classList.toggle("disabled", sending);
+        item.setAttribute("aria-disabled", sending ? "true" : "false");
+    });
+
+    deleteButtons.forEach((button) => {
+        button.disabled = sending;
+        button.setAttribute("aria-disabled", sending ? "true" : "false");
+    });
+
+    if (chatView) {
+        chatView.classList.toggle("chat-busy", sending);
+    }
+}
+
 async function sendMessage() {
+    if (isSending) return;
+
+    if (conversationsLoadPromise) {
+        await conversationsLoadPromise;
+    }
+
     const input = document.getElementById("question-input");
     const question = input.value.trim();
     if (!question || !currentConversation) return;
+    const conversationId = currentConversation;
+    activeConversationRequest += 1;
 
     input.value = "";
     input.style.height = "auto";
 
-    document.getElementById("chat-welcome").classList.add('hidden');
-    document.getElementById("chat-messages").classList.add('active');
-
-    appendMessage('user', question);
+    showMessagesState();
+    appendMessage("user", question);
 
     const messagesDiv = document.getElementById("chat-messages");
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
     showTypingIndicator();
+    setSendingState(true);
 
     try {
         const res = await fetch(`${API}/messages`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ conversation_id: currentConversation, question })
+            body: JSON.stringify({ conversation_id: conversationId, question }),
         });
 
         const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data?.detail || "Error al procesar la consulta.");
+        }
 
         removeTypingIndicator();
-        appendMessage('assistant', data.response);
-
+        appendMessage("assistant", data.response);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
-        // Update conversation title with first question
-        const convItems = document.querySelectorAll('.conversation-item');
-        convItems.forEach(item => {
-            if (item.classList.contains('active') && item.textContent === "Nueva conversación") {
-                const shortTitle = question.length > 30 ? question.substring(0, 30) + "..." : question;
-                item.textContent = shortTitle;
-                // Update title in backend
-                fetch(`${API}/conversations/${currentConversation}/title`, {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ title: shortTitle })
-                });
-            }
-        });
+        const activeItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+        const titleEl = activeItem ? activeItem.querySelector(".conversation-title") : null;
+        const currentTitle = titleEl ? titleEl.textContent.trim() : "";
 
+        if (titleEl && (currentTitle === "Nueva conversacion" || currentTitle === "Nueva conversación")) {
+            const shortTitle = question.length > 30 ? question.substring(0, 30) + "..." : question;
+            titleEl.textContent = shortTitle;
+            fetch(`${API}/conversations/${conversationId}/title`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title: shortTitle }),
+            });
+        }
+
+        document.querySelectorAll(".conversation-item").forEach((item) => {
+            item.classList.toggle("active", item.dataset.conversationId === String(conversationId));
+        });
     } catch (err) {
         removeTypingIndicator();
-        appendMessage('assistant', "Error de conexión con el servidor.");
+        appendMessage("assistant", err?.message || "Error de conexion con el servidor.");
+    } finally {
+        setSendingState(false);
     }
 }
 
 function askSuggestion(text) {
+    if (isSending) return;
     document.getElementById("question-input").value = text;
     sendMessage();
 }
@@ -339,7 +514,7 @@ function askSuggestion(text) {
 // ===== INPUT HANDLING =====
 
 function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
     }
@@ -353,6 +528,7 @@ function autoResize(el) {
 // ===== ADMIN PANEL =====
 
 function openAdminPanel() {
+    if (isSending) return;
     if (!currentUser || (currentUser.rol || "").toLowerCase() !== "administrador") {
         alert("Solo disponible para administradores.");
         return;
@@ -370,12 +546,29 @@ function formatNumber(value) {
     return new Intl.NumberFormat("es-ES").format(value || 0);
 }
 
+function formatCurrency(value) {
+    return new Intl.NumberFormat("es-ES", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 4,
+        maximumFractionDigits: 4,
+    }).format(value || 0);
+}
+
+function setAdminRange(days, button) {
+    adminRangeDays = days;
+    document.querySelectorAll(".admin-range-btn").forEach((item) => {
+        item.classList.toggle("active", item === button);
+    });
+    loadAdminPanel();
+}
+
 async function loadAdminPanel() {
     if (!currentUser) return;
     const role = encodeURIComponent(currentUser.rol || "");
     try {
         const [metricsRes, pendingRes] = await Promise.all([
-            fetch(`${API}/admin/metrics?role=${role}&days=30`),
+            fetch(`${API}/admin/metrics?role=${role}&days=${adminRangeDays}`),
             fetch(`${API}/admin/knowledge/pending?role=${role}&limit=30`),
         ]);
 
@@ -387,8 +580,12 @@ async function loadAdminPanel() {
         const pendingData = await pendingRes.json();
 
         document.getElementById("metric-total-interactions").textContent = formatNumber(metrics.total_interactions);
+        document.getElementById("metric-prompt-tokens").textContent = formatNumber(metrics.prompt_tokens);
+        document.getElementById("metric-completion-tokens").textContent = formatNumber(metrics.completion_tokens);
         document.getElementById("metric-total-tokens").textContent = formatNumber(metrics.total_tokens);
+        document.getElementById("metric-estimated-cost").textContent = formatCurrency(metrics.estimated_cost_usd);
         document.getElementById("metric-avg-latency").textContent = formatNumber(Math.round(metrics.avg_latency_ms || 0));
+        document.getElementById("metric-total-errors").textContent = formatNumber(metrics.total_errors);
         document.getElementById("metric-total-pending").textContent = formatNumber(metrics.total_pending);
         document.getElementById("metric-total-validated").textContent = formatNumber(metrics.total_validated);
         document.getElementById("metric-validation-rate").textContent = `${Math.round((metrics.validation_rate || 0) * 100)}%`;
@@ -408,11 +605,11 @@ function renderPendingList(items) {
         return;
     }
 
-    items.forEach(item => {
+    items.forEach((item) => {
         const card = document.createElement("div");
         card.className = "pending-card";
         card.innerHTML = `
-            <div class="pending-meta">#${item.id} · conf=${Number(item.confidence || 0).toFixed(2)} · tokens=${item.total_tokens || 0} · ${item.created_at}</div>
+            <div class="pending-meta">#${item.id} - conf=${Number(item.confidence || 0).toFixed(2)} - tokens=${item.total_tokens || 0} - ${item.created_at}</div>
             <div class="pending-question">${item.question}</div>
             <div class="pending-answer">${item.answer}</div>
             <div class="pending-actions">
@@ -432,7 +629,7 @@ async function validateInteraction(interactionId) {
         body: JSON.stringify({ reviewer: currentUser.nombre || "admin" }),
     });
     if (!res.ok) {
-        alert("No se pudo validar la interacción.");
+        alert("No se pudo validar la interaccion.");
         return;
     }
     loadAdminPanel();
@@ -446,7 +643,7 @@ async function rejectInteraction(interactionId) {
         body: JSON.stringify({ reviewer: currentUser.nombre || "admin" }),
     });
     if (!res.ok) {
-        alert("No se pudo rechazar la interacción.");
+        alert("No se pudo rechazar la interaccion.");
         return;
     }
     loadAdminPanel();

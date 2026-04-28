@@ -47,6 +47,8 @@ async def request_id_middleware(request: Request, call_next):
 @app.on_event("startup")
 def startup_init():
     ensure_app_schema()
+    from rag_service import sync_documents
+    sync_documents()
 
 @app.get("/")
 def root():

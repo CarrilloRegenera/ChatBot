@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Dict, List, Optional
 
 import chromadb
@@ -10,10 +11,42 @@ from config import (
     MEMORY_MAX_RESULTS,
 )
 from database import get_connection
+from rag_service import _embedding_fn
+
+
+logger = logging.getLogger(__name__)
+
+_MEMORY_EF_VERSION = "multilingual-minilm-v1"
+
+
+def _get_memory_collection(client: chromadb.PersistentClient, name: str, ef):
+    try:
+        col = client.get_or_create_collection(name=name, embedding_function=ef, metadata={"ef_version": _MEMORY_EF_VERSION})
+        if (col.metadata or {}).get("ef_version") != _MEMORY_EF_VERSION:
+            raise ValueError("ef_version mismatch")
+        return col
+    except Exception:
+        logger.warning("Memory collection embedding mismatch — recreando coleccion de memoria")
+        try:
+            client.delete_collection(name)
+        except Exception:
+            pass
+        return client.create_collection(name=name, embedding_function=ef, metadata={"ef_version": _MEMORY_EF_VERSION})
 
 
 chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-memory_collection = chroma_client.get_or_create_collection(name=MEMORY_COLLECTION_NAME)
+memory_collection = _get_memory_collection(chroma_client, MEMORY_COLLECTION_NAME, _embedding_fn)
+
+MODEL_PRICING_USD_PER_MILLION = {
+    "gemini-2.5-flash": {
+        "input": 0.30,
+        "output": 2.50,
+    },
+    "gemini-2.5-flash-lite": {
+        "input": 0.10,
+        "output": 0.40,
+    },
+}
 
 
 def _to_json(value) -> str:
@@ -27,6 +60,15 @@ def _from_json(value: Optional[str], fallback):
         return json.loads(value)
     except Exception:
         return fallback
+
+
+def _estimate_model_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    pricing = MODEL_PRICING_USD_PER_MILLION.get((model or "").strip().lower())
+    if not pricing:
+        return 0.0
+    prompt_cost = (max(prompt_tokens, 0) / 1_000_000) * pricing["input"]
+    completion_cost = (max(completion_tokens, 0) / 1_000_000) * pricing["output"]
+    return prompt_cost + completion_cost
 
 
 def record_interaction_pending(
@@ -118,6 +160,9 @@ def get_admin_metrics(days: int = 30) -> Dict:
             SUM(CASE WHEN Estado='validada' THEN 1 ELSE 0 END) AS total_validated,
             SUM(CASE WHEN Estado='pendiente' THEN 1 ELSE 0 END) AS total_pending,
             SUM(CASE WHEN Estado='rechazada' THEN 1 ELSE 0 END) AS total_rejected,
+            SUM(CASE WHEN Respuesta LIKE 'No he podido generar respuesta en este momento por un error temporal%' THEN 1 ELSE 0 END) AS total_errors,
+            ISNULL(SUM(PromptTokens), 0) AS total_prompt_tokens,
+            ISNULL(SUM(CompletionTokens), 0) AS total_completion_tokens,
             ISNULL(SUM(TotalTokens), 0) AS total_tokens,
             ISNULL(AVG(CAST(TiempoRespuestaMs AS FLOAT)), 0) AS avg_latency_ms
         FROM dbo.InteraccionesRAG
@@ -129,33 +174,65 @@ def get_admin_metrics(days: int = 30) -> Dict:
 
     cursor.execute(
         """
-        SELECT TOP 1 Modelo
+        SELECT Modelo, ISNULL(SUM(PromptTokens), 0) AS prompt_tokens, ISNULL(SUM(CompletionTokens), 0) AS completion_tokens
         FROM dbo.InteraccionesRAG
-        WHERE Modelo IS NOT NULL AND Modelo <> ''
-        ORDER BY FechaCreacion DESC
+        WHERE FechaCreacion >= DATEADD(day, ?, SYSUTCDATETIME())
+          AND Modelo IS NOT NULL AND Modelo <> ''
+        GROUP BY Modelo
         """
+        ,
+        -abs(days),
     )
-    model_row = cursor.fetchone()
+    model_rows = cursor.fetchall()
     conn.close()
 
     total_interactions = int(row[0] or 0)
     validated = int(row[1] or 0)
     pending = int(row[2] or 0)
     rejected = int(row[3] or 0)
-    total_tokens = int(row[4] or 0)
-    avg_latency = float(row[5] or 0.0)
+    total_errors = int(row[4] or 0)
+    total_prompt_tokens = int(row[5] or 0)
+    total_completion_tokens = int(row[6] or 0)
+    total_tokens = int(row[7] or 0)
+    avg_latency = float(row[8] or 0.0)
 
     validation_rate = (validated / total_interactions) if total_interactions else 0.0
+    cost_estimated_usd = 0.0
+    model_breakdown = []
+    for model_row in model_rows:
+        model_name = model_row[0] or ""
+        model_prompt_tokens = int(model_row[1] or 0)
+        model_completion_tokens = int(model_row[2] or 0)
+        model_cost = _estimate_model_cost_usd(
+            model=model_name,
+            prompt_tokens=model_prompt_tokens,
+            completion_tokens=model_completion_tokens,
+        )
+        cost_estimated_usd += model_cost
+        model_breakdown.append(
+            {
+                "model": model_name,
+                "prompt_tokens": model_prompt_tokens,
+                "completion_tokens": model_completion_tokens,
+                "estimated_cost_usd": round(model_cost, 6),
+            }
+        )
+
     return {
         "window_days": abs(days),
         "total_interactions": total_interactions,
         "total_validated": validated,
         "total_pending": pending,
         "total_rejected": rejected,
+        "total_errors": total_errors,
         "validation_rate": round(validation_rate, 4),
+        "prompt_tokens": total_prompt_tokens,
+        "completion_tokens": total_completion_tokens,
         "total_tokens": total_tokens,
         "avg_latency_ms": round(avg_latency, 2),
-        "model": (model_row[0] if model_row else ""),
+        "estimated_cost_usd": round(cost_estimated_usd, 6),
+        "model": (model_breakdown[0]["model"] if model_breakdown else ""),
+        "model_breakdown": model_breakdown,
     }
 
 

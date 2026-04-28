@@ -1,10 +1,11 @@
 import logging
 import time
 from threading import Lock
+from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException
 
-from ai_service import generate_ai_response, validate_answer
+from ai_service import AIResponseError, generate_ai_response, validate_answer
 from database import get_connection
 from memory_service import (
     get_admin_metrics,
@@ -20,7 +21,7 @@ from models import (
     MessageRequest,
 )
 from query_router import classify_question
-from rag_service import search_documents
+from rag_service import search_documents, sync_documents
 
 
 router = APIRouter()
@@ -68,6 +69,21 @@ def _get_conversation_lock(conversation_id: int) -> Lock:
         return _conversation_locks[conversation_id]
 
 
+def _get_recent_history(conversation_id: int, limit: int = 2) -> List[Dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT TOP (?) Pregunta, Respuesta FROM Mensajes WHERE ConversacionId = ? ORDER BY FechaCreacion DESC",
+            limit,
+            conversation_id,
+        )
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
+    return [{"question": row[0], "response": row[1]} for row in reversed(rows)]
+
+
 def _save_chat_message(conversation_id: int, question: str, response: str, elapsed_ms: int) -> int:
     start = time.time()
     conn = get_connection()
@@ -104,6 +120,28 @@ def create_conversation(data: ConversationRequest):
     conn.commit()
     conn.close()
     return {"message": "Conversacion Creada", "conversation_id": conversation_id}
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(conversation_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT Id FROM Conversaciones WHERE Id = ?", conversation_id)
+        existing = cursor.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+
+        cursor.execute("DELETE FROM Mensajes WHERE ConversacionId = ?", conversation_id)
+        cursor.execute("DELETE FROM Conversaciones WHERE Id = ?", conversation_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with _locks_guard:
+        _conversation_locks.pop(conversation_id, None)
+
+    return {"message": "Conversacion eliminada", "conversation_id": conversation_id}
 
 
 @router.post("/messages")
@@ -174,30 +212,55 @@ def send_message(data: MessageRequest):
                 context, sources = search_documents(data.question)
                 rag_ms = int((time.time() - stage_rag_start) * 1000)
 
+                history = _get_recent_history(data.conversation_id, limit=2)
                 stage_llm_start = time.time()
-                generated = generate_ai_response(data.question, context=context, sources=sources)
-                llm_ms = int((time.time() - stage_llm_start) * 1000)
+                try:
+                    generated = generate_ai_response(data.question, context=context, sources=sources, history=history)
+                finally:
+                    llm_ms = int((time.time() - stage_llm_start) * 1000)
                 response = generated["text"]
                 llm_retries = int(generated.get("retries", 0))
-                response, confidence = validate_answer(response, context=context, sources=sources)
+                response, confidence = validate_answer(data.question, response, context=context, sources=sources)
                 elapsed_partial = int((time.time() - start) * 1000)
-                stage_metrics_db_start = time.time()
-                record_interaction_pending(
-                    conversation_id=data.conversation_id,
-                    question=data.question,
-                    answer=response,
-                    sources=sources,
-                    context=context,
-                    confidence=confidence,
-                    prompt_tokens=generated["usage"]["prompt_tokens"],
-                    completion_tokens=generated["usage"]["completion_tokens"],
-                    total_tokens=generated["usage"]["total_tokens"],
-                    model=generated.get("model", ""),
-                    route="knowledge",
-                    from_memory=False,
-                    elapsed_ms=elapsed_partial,
+                try:
+                    stage_metrics_db_start = time.time()
+                    record_interaction_pending(
+                        conversation_id=data.conversation_id,
+                        question=data.question,
+                        answer=response,
+                        sources=sources,
+                        context=context,
+                        confidence=confidence,
+                        prompt_tokens=generated["usage"]["prompt_tokens"],
+                        completion_tokens=generated["usage"]["completion_tokens"],
+                        total_tokens=generated["usage"]["total_tokens"],
+                        model=generated.get("model", ""),
+                        route="knowledge",
+                        from_memory=False,
+                        elapsed_ms=elapsed_partial,
+                    )
+                    db_ms += int((time.time() - stage_metrics_db_start) * 1000)
+                except Exception:
+                    logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo registrar InteraccionesRAG")
+        except AIResponseError as exc:
+            llm_retries = max(llm_retries, int(getattr(exc, "retries", 0) or 0))
+            logger.exception(
+                "[ALERT][CHAT_ERROR] Error LLM en /messages status=%s transient=%s retries=%s",
+                getattr(exc, "status_code", None),
+                "yes" if getattr(exc, "transient", False) else "no",
+                llm_retries,
+            )
+            if getattr(exc, "transient", False):
+                response = (
+                    "El modelo no ha podido responder por saturacion temporal del servicio. "
+                    "Vuelve a intentarlo en unos segundos."
                 )
-                db_ms += int((time.time() - stage_metrics_db_start) * 1000)
+            else:
+                response = (
+                    "No he podido generar respuesta en este momento por un error del modelo. "
+                    "Vuelve a intentarlo en unos segundos."
+                )
+            confidence = 0.0
         except Exception:
             logger.exception("[ALERT][CHAT_ERROR] Error en procesamiento de /messages")
             response = (
@@ -237,6 +300,13 @@ def send_message(data: MessageRequest):
             "sources": sources,
             "route": "knowledge",
         }
+
+
+@router.post("/admin/sync")
+def admin_sync(role: str):
+    _assert_admin(role)
+    result = sync_documents()
+    return result
 
 
 @router.get("/knowledge/pending")

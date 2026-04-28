@@ -20,14 +20,14 @@ def _to_absolute_path(path_value: str) -> str:
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 DOCUMENTS_PATH = _to_absolute_path(os.getenv("DOCUMENTS_PATH", "../documentos"))
 CHROMA_DB_PATH = _to_absolute_path(os.getenv("CHROMA_DB_PATH", "../chroma_db"))
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", "3"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "reglamentos").strip()
 RECURSIVE_PDF_SCAN = os.getenv("RECURSIVE_PDF_SCAN", "true").strip().lower() in {"1", "true", "yes", "on"}
 ENABLE_RERANK = os.getenv("ENABLE_RERANK", "true").strip().lower() in {"1", "true", "yes", "on"}
 RERANK_MODEL = os.getenv("RERANK_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()
-RERANK_WEIGHT = float(os.getenv("RERANK_WEIGHT", "6.0"))
-MAX_CHUNKS_PER_SOURCE = int(os.getenv("MAX_CHUNKS_PER_SOURCE", "2"))
+RERANK_WEIGHT = float(os.getenv("RERANK_WEIGHT", "9.0"))
+MAX_CHUNKS_PER_SOURCE = int(os.getenv("MAX_CHUNKS_PER_SOURCE", "4"))
 MIN_QUERY_LENGTH = int(os.getenv("MIN_QUERY_LENGTH", "4"))
 MEMORY_COLLECTION_NAME = os.getenv("MEMORY_COLLECTION_NAME", f"{COLLECTION_NAME}_memoria_validada").strip()
 MEMORY_MAX_RESULTS = int(os.getenv("MEMORY_MAX_RESULTS", "3"))
@@ -40,6 +40,9 @@ DEFAULT_STOPWORDS = {
     "como", "donde", "cuando", "cuales", "cuanto", "sobre", "segun",
     "para", "desde", "hasta", "esta", "este", "estas", "estos", "debe",
     "deben", "que", "con", "sin", "entre", "hacia",
+    # palabras estructurales de preguntas — no aportan semántica al tema
+    "cuantos", "cuantas", "tiene", "cada", "seran", "seria", "puede",
+    "podria", "suele", "deben", "hacer", "tener",
 }
 
 stopwords_env = os.getenv("DOMAIN_STOPWORDS", "")

@@ -6,6 +6,9 @@ def get_connection():
         "Server=localhost\\SQLEXPRESS;"
         "Database=ChatBot;"
         "Trusted_Connection=yes;"
+        "Encrypt=no;"
+        "TrustServerCertificate=yes;"
+        "Connection Timeout=5;"
     )
     return conn
 
