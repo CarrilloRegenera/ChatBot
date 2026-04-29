@@ -4,13 +4,19 @@ import re
 import time
 from typing import Dict, List, Optional, Tuple
 
-from config import GEMINI_API_KEY, GEMINI_MODEL
+from config import (
+    CONFIDENCE_FALLBACK_THRESHOLD,
+    GEMINI_FLASH_503_FALLBACK_MODEL,
+    GEMINI_SECONDARY_MODEL,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
+)
 
 
-if not GEMINI_API_KEY:
-    raise ValueError("Falta GEMINI_API_KEY en el archivo .env")
+if not OPENAI_API_KEY:
+    raise ValueError("Falta OPENAI_API_KEY en el archivo .env")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=OPENAI_API_KEY)
 logger = logging.getLogger(__name__)
 NUMERIC_ASK_PATTERN = re.compile(
     r"\b(cuanto|cuantos|cuantas|valor|valores|limite|limites|maximo|minimo|potencia|resistencia|"
@@ -24,12 +30,117 @@ TRUNCATED_ENDING_PATTERN = re.compile(
     r"(?:\bprev\.?$|\binstal\.?$|\baprox\.?$|\bseg[uú]n\s*$|\bcuando existe\s+\w*$|\bsi existe\s+\w*$)",
     re.IGNORECASE,
 )
-UNSAFE_LAST_FRAGMENT_PATTERN = re.compile(r"(?:[:;,]\s*$|(?:\b(?:de|del|la|el|y|o|con|para|por)\s*)$)", re.IGNORECASE)
+UNSAFE_LAST_FRAGMENT_PATTERN = re.compile(
+    r"(?:[:;,]\s*$|(?:\b(?:a|al|de|del|en|la|el|los|las|un|una|y|o|con|para|por|que|su|sus)\s*)$)",
+    re.IGNORECASE,
+)
+MARKDOWN_PATTERN = re.compile(r"\*{1,3}([^*\n]*)\*{1,3}|\*+|^#{1,6}\s+", re.MULTILINE)
+DEFINITION_ASK_PATTERN = re.compile(
+    r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bque\s+se\s+entiende\s+por\b|\bdefinicion\b)",
+    re.IGNORECASE,
+)
+LIST_ASK_PATTERN = re.compile(
+    r"(?:\bcuales\s+son\b|\benumera\b|\blista\b|\btipos\s+de\b|\bclases\s+de\b|\bpueden\s+ser\b)",
+    re.IGNORECASE,
+)
+COMPARISON_ASK_PATTERN = re.compile(
+    r"(?:\bdiferencia\b|\bdiferencias\b|\bcompara\b|\bcomparar\b|\bfrente\s+a\b|\bversus\b)",
+    re.IGNORECASE,
+)
+PROCEDURE_ASK_PATTERN = re.compile(
+    r"(?:\bcomo\s+se\s+calcula\b|\bcomo\s+debe\b|\bcomo\s+puede\b|\bprocedimiento\b|\bpasos\b)",
+    re.IGNORECASE,
+)
+DIRECT_FACT_ASK_PATTERN = re.compile(
+    r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bcual\s+es\b|\bcuales\s+son\b|\bcuanto\b|\bcuantos\b|\bcuantas\b)",
+    re.IGNORECASE,
+)
+DEFINITION_WEAK_OPENING_PATTERN = re.compile(
+    r"^(?:el contexto recuperado indica que|segun el contexto|la documentacion indica que)\b",
+    re.IGNORECASE,
+)
+DEFINITION_DIRECT_ANSWER_PATTERN = re.compile(
+    r"^(?:se denomina|es|se define como|recibe el nombre de)\b",
+    re.IGNORECASE,
+)
+VAGUE_DEFINITION_PATTERN = re.compile(
+    r"\b(?:es una caracteristica|es un concepto|es un valor|hace referencia a|se refiere a una caracteristica)\b",
+    re.IGNORECASE,
+)
+LIST_FORMAT_PATTERN = re.compile(r"^(?:[-*]\s+|\d+\.\s+)", re.MULTILINE)
+TRAILING_METADATA_PATTERN = re.compile(
+    r"(?:(?:^|\n)[ \t]*|(?<=[.!?])\s+)(?:Base documental:|Fuentes:).*",
+    re.IGNORECASE | re.DOTALL,
+)
+LABELED_TERM_PATTERNS = {
+    "clase": re.compile(r"\bclase\s+(i{1,3}|iv|v|vi|vii|viii|ix|x|\d+|[a-z])\b", re.IGNORECASE),
+    "tipo": re.compile(r"\btipo\s+([a-z0-9]+)\b", re.IGNORECASE),
+    "categoria": re.compile(r"\bcategor(?:ia|ía)\s+([a-z0-9]+)\b", re.IGNORECASE),
+    "grado_ip": re.compile(r"\bip\s?(\d{2}[a-z]?)\b", re.IGNORECASE),
+    "grado_ik": re.compile(r"\bik\s?(\d{2})\b", re.IGNORECASE),
+    "esquema": re.compile(r"\b(tt|tn(?:-?[sc])?|it)\b", re.IGNORECASE),
+}
 
 
-def _build_prompt(question: str, context: str = "", sources: Optional[List[str]] = None, history: Optional[List[Dict]] = None) -> str:
+def _infer_answer_profile(question: str) -> Dict[str, object]:
+    q = (question or "").strip()
+    return {
+        "definition": bool(DEFINITION_ASK_PATTERN.search(q)),
+        "list": bool(LIST_ASK_PATTERN.search(q)),
+        "comparison": bool(COMPARISON_ASK_PATTERN.search(q)),
+        "procedure": bool(PROCEDURE_ASK_PATTERN.search(q)),
+        "numeric": bool(NUMERIC_ASK_PATTERN.search(q)),
+        "direct_fact": bool(DIRECT_FACT_ASK_PATTERN.search(q)),
+    }
+
+
+def _build_output_instruction(profile: Dict[str, object]) -> str:
+    if profile["definition"]:
+        return (
+            "Responde de forma breve y directa, normalmente en 1-3 frases. "
+            "La primera frase debe contener el termino exacto si aparece en el contexto."
+        )
+    if profile["numeric"]:
+        return (
+            "Responde de forma directa y precisa, normalmente en 1-3 frases. "
+            "Prioriza los valores, limites, unidades y condiciones asociadas."
+        )
+    if profile["list"]:
+        return (
+            "Responde con una lista corta y clara cuando ayude a la comprension. "
+            "Agrupa los elementos sin anadir categorias no presentes en el contexto."
+        )
+    if profile["comparison"]:
+        return (
+            "Responde comparando solo los puntos relevantes que aparezcan en el contexto. "
+            "Destaca diferencias concretas sin inventar relaciones."
+        )
+    if profile["procedure"]:
+        return (
+            "Responde de forma ordenada y operativa. "
+            "Si el contexto lo permite, presenta condiciones o pasos de forma breve."
+        )
+    return "Desarrolla la respuesta con el detalle necesario, normalmente en 2-5 frases. Si la pregunta lo pide, puedes usar una lista corta."
+
+
+def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]] = None) -> str:
     if context.strip():
-        sources_text = ", ".join(sources or [])
+        profile = _infer_answer_profile(question)
+        definition_hint = ""
+        if profile["definition"]:
+            definition_hint = (
+                "13. Si la pregunta pide como se denomina o una definicion, empieza por el termino exacto en la primera frase.\n"
+                "14. En preguntas definicionales, evita respuestas vagas como 'es una caracteristica' si el contexto permite nombrar el termino.\n"
+            )
+        intent_hint = ""
+        if profile["list"]:
+            intent_hint += "15. Si la pregunta pide tipos, clases o enumeraciones, devuelve todos los elementos recuperados que respondan a la pregunta.\n"
+        if profile["comparison"]:
+            intent_hint += "16. Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
+        if profile["procedure"]:
+            intent_hint += "17. Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
+        if profile["numeric"]:
+            intent_hint += "18. Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
 
         history_section = ""
         if history:
@@ -43,6 +154,8 @@ def _build_prompt(question: str, context: str = "", sources: Optional[List[str]]
                     turns.append(f"Usuario: {q}\nAsistente: {a}")
             if turns:
                 history_section = "HISTORIAL RECIENTE:\n" + "\n\n".join(turns) + "\n\n"
+
+        output_instruction = _build_output_instruction(profile)
 
         return f"""Eres un asistente tecnico especializado en normativa tecnica espanola.
 Tu tarea es responder usando SOLO el contexto proporcionado.
@@ -61,11 +174,13 @@ Reglas obligatorias:
 10. Si la pregunta pide numeros y el contexto no los contiene, indicalo explicitamente.
 11. Si hay varias fuentes y aportan datos distintos o parciales, integralo sin inventar relaciones entre ellas.
 12. No copies fragmentos incompletos del contexto; si una frase esta truncada, reformulala solo con la parte segura.
+13. Responde en texto plano. No uses formato markdown: sin asteriscos, sin guiones de lista, sin cabeceras. Escribe siempre frases completas que terminen con punto.
+{definition_hint}
+{intent_hint}
 
 {history_section}Formato de salida obligatorio:
-Desarrolla la respuesta con el detalle necesario, normalmente en 4-8 frases. Si la pregunta lo pide, puedes usar una lista corta.
-Base documental: indica si la respuesta es explicita o parcial segun el contexto.
-Fuentes: {sources_text}
+{output_instruction}
+Texto plano unicamente. No anadas lineas finales de metadatos como "Base documental" o "Fuentes".
 
 CONTEXTO:
 {context}
@@ -91,16 +206,72 @@ def _extract_usage(response) -> Dict[str, int]:
     }
 
 
+def _extract_response_text(response) -> str:
+    try:
+        text = response.text
+    except (AttributeError, ValueError):
+        text = None
+    if text and text.strip():
+        return text.strip()
+
+    parts = getattr(response, "parts", None) or []
+    collected_parts = []
+    for part in parts:
+        part_text = getattr(part, "text", None)
+        if part_text and str(part_text).strip():
+            collected_parts.append(str(part_text).strip())
+    if collected_parts:
+        return "\n".join(collected_parts).strip()
+
+    candidates = getattr(response, "candidates", None) or []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        content_parts = getattr(content, "parts", None) or []
+        candidate_text = []
+        for part in content_parts:
+            part_text = getattr(part, "text", None)
+            if part_text and str(part_text).strip():
+                candidate_text.append(str(part_text).strip())
+        if candidate_text:
+            return "\n".join(candidate_text).strip()
+
+    return ""
+
+
+def _describe_empty_response(response) -> str:
+    prompt_feedback = getattr(response, "prompt_feedback", None) or getattr(response, "promptFeedback", None)
+    if prompt_feedback:
+        block_reason = getattr(prompt_feedback, "block_reason", None) or getattr(prompt_feedback, "blockReason", None)
+        if block_reason:
+            return f"Respuesta bloqueada por prompt_feedback={block_reason}"
+
+    candidates = getattr(response, "candidates", None) or []
+    if candidates:
+        finish_reason = getattr(candidates[0], "finish_reason", None) or getattr(candidates[0], "finishReason", None)
+        finish_message = getattr(candidates[0], "finish_message", None) or getattr(candidates[0], "finishMessage", None)
+        if finish_reason and finish_message:
+            return f"Respuesta vacia del modelo (finish_reason={finish_reason}: {finish_message})"
+        if finish_reason:
+            return f"Respuesta vacia del modelo (finish_reason={finish_reason})"
+
+    return "Respuesta vacia del modelo"
+
+
 def _trim_unsafe_last_line(line: str) -> str:
     candidate = line.rstrip()
     if not candidate:
         return candidate
 
     if TRUNCATED_ENDING_PATTERN.search(candidate) or UNSAFE_LAST_FRAGMENT_PATTERN.search(candidate):
-        for separator in (". ", "; ", ": ", ", "):
+        trimmed = False
+        for separator in (". ", "? ", "! ", "; ", ": ", ", "):
             if separator in candidate:
                 candidate = candidate.rsplit(separator, 1)[0].rstrip(" ,;:")
+                trimmed = True
                 break
+        if not trimmed:
+            # No clause boundary found: remove only the trailing unsafe word
+            candidate = re.sub(r"\s+\S+\s*$", "", candidate).rstrip(" ,;:")
 
     candidate = re.sub(r"\s+", " ", candidate).strip(" \t,;:")
     return candidate
@@ -110,6 +281,14 @@ def postprocess_answer(text: str) -> str:
     raw = (text or "").strip()
     if not raw:
         return raw
+
+    # Strip markdown bold/italic/headings before any other processing
+    raw = re.sub(r'\*{2,3}([^*\n]*)\*{2,3}', r'\1', raw)  # **bold** / ***text*** → text
+    raw = re.sub(r'\*([^*\n]+)\*', r'\1', raw)             # *italic* → text
+    raw = re.sub(r'\*+', '', raw)                           # remaining stray asterisks
+    raw = re.sub(r'^#{1,6}\s+', '', raw, flags=re.MULTILINE)  # ## headings → plain text
+
+    raw = TRAILING_METADATA_PATTERN.sub("", raw).strip()
 
     lines = [line.rstrip() for line in raw.splitlines()]
     processed = []
@@ -134,8 +313,202 @@ def postprocess_answer(text: str) -> str:
     return cleaned
 
 
-_RETRY_WAITS = [2, 5, 10, 20]  # segundos entre intentos (backoff para 503 sostenidos)
+def _infer_document_basis(answer: str) -> str:
+    lower_text = (answer or "").lower()
+    if any(
+        phrase in lower_text
+        for phrase in (
+            "no hay informacion suficiente",
+            "no se menciona",
+            "no se especifica",
+            "no se indica",
+            "informacion parcial",
+            "información parcial",
+        )
+    ):
+        return "parcial"
+    if PARTIAL_SIGNAL_PATTERN.search(lower_text):
+        return "parcial"
+    return "explicita"
+
+
+def _extract_labeled_terms(text: str) -> Dict[str, set[str]]:
+    extracted: Dict[str, set[str]] = {}
+    for family, pattern in LABELED_TERM_PATTERNS.items():
+        matches = {
+            re.sub(r"\s+", "", match.group(1).lower())
+            for match in pattern.finditer(text or "")
+            if match.group(1)
+        }
+        if matches:
+            extracted[family] = matches
+    return extracted
+
+
+def _find_labeled_term_conflicts(question: str, answer: str, context: str) -> List[str]:
+    answer_terms = _extract_labeled_terms(answer)
+    if not answer_terms:
+        return []
+
+    question_terms = _extract_labeled_terms(question)
+    context_terms = _extract_labeled_terms(context)
+    conflicts = []
+
+    for family, answer_values in answer_terms.items():
+        allowed_values = set()
+        allowed_values.update(question_terms.get(family, set()))
+        allowed_values.update(context_terms.get(family, set()))
+        if not allowed_values:
+            continue
+
+        unexpected = answer_values - allowed_values
+        if unexpected:
+            conflicts.append(f"{family}:{', '.join(sorted(unexpected))}")
+
+    return conflicts
+
+
+def _split_context_chunks(context: str) -> List[str]:
+    return [chunk.strip() for chunk in re.split(r"\n\s*\n", context or "") if chunk.strip()]
+
+
+def _extract_focus_terms(question: str, limit: int = 6) -> List[str]:
+    stopwords = {
+        "como", "cual", "cuales", "cuanto", "cuantos", "cuantas", "debe", "deben",
+        "puede", "pueden", "material", "clase", "tipo", "categoria", "categoría",
+        "aislamiento", "reforzado", "doble", "con", "por", "para", "del", "de", "la", "el",
+        "define", "definicion", "definiciÃ³n", "denomina",
+    }
+    terms = []
+    seen = set()
+    for token in re.findall(r"[A-Za-z0-9]{4,}", (question or "").lower()):
+        if token in stopwords or token in seen:
+            continue
+        seen.add(token)
+        terms.append(token)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def _has_chunk_support_for_labeled_terms(question: str, answer: str, context: str) -> bool:
+    answer_terms = _extract_labeled_terms(answer)
+    if not answer_terms:
+        return True
+
+    chunks = _split_context_chunks(context)
+    if not chunks:
+        return True
+
+    focus_terms = _extract_focus_terms(question)
+    for family, values in answer_terms.items():
+        for value in values:
+            supported = False
+            for chunk in chunks:
+                chunk_terms = _extract_labeled_terms(chunk)
+                if value not in chunk_terms.get(family, set()):
+                    continue
+
+                chunk_lower = chunk.lower()
+                focus_hits = sum(1 for term in focus_terms if term in chunk_lower)
+                if focus_hits >= 1 or not focus_terms:
+                    supported = True
+                    break
+            if not supported:
+                return False
+
+    return True
+
+
+def _extract_answer_terms(answer: str, limit: int = 10) -> List[str]:
+    stopwords = {
+        "respuesta", "documental", "fuentes", "explicita", "explicita", "contexto",
+        "segun", "según", "material", "clase", "tipo", "categoria", "categoría",
+        "debe", "deben", "puede", "pueden", "sera", "será", "igual", "superior",
+    }
+    terms = []
+    seen = set()
+    for token in re.findall(r"[A-Za-z0-9]{4,}", (answer or "").lower()):
+        if token in stopwords or token in seen:
+            continue
+        seen.add(token)
+        terms.append(token)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def _best_chunk_support_score(question: str, answer: str, context: str) -> float:
+    chunks = _split_context_chunks(context)
+    if not chunks:
+        return 0.0
+
+    focus_terms = _extract_focus_terms(question)
+    answer_terms = _extract_answer_terms(answer)
+    answer_labels = _extract_labeled_terms(answer)
+    answer_numbers = set(re.findall(r"\b\d+[.,]?\d*\b", answer or ""))
+
+    best_score = 0.0
+    for chunk in chunks:
+        chunk_lower = chunk.lower()
+        focus_hits = sum(1 for term in focus_terms if term in chunk_lower)
+        answer_hits = sum(1 for term in answer_terms if term in chunk_lower)
+        number_hits = sum(1 for value in answer_numbers if value in chunk)
+        label_hits = 0
+        chunk_labels = _extract_labeled_terms(chunk)
+        for family, values in answer_labels.items():
+            label_hits += sum(1 for value in values if value in chunk_labels.get(family, set()))
+
+        score = 0.0
+        if focus_terms:
+            score += min(focus_hits / max(len(focus_terms), 1), 1.0) * 0.45
+        if answer_terms:
+            score += min(answer_hits / max(len(answer_terms), 1), 1.0) * 0.35
+        if answer_numbers:
+            score += min(number_hits / max(len(answer_numbers), 1), 1.0) * 0.10
+        if answer_labels:
+            total_labels = sum(len(values) for values in answer_labels.values())
+            score += min(label_hits / max(total_labels, 1), 1.0) * 0.10
+
+        best_score = max(best_score, score)
+
+    if len(focus_terms) <= 1 and best_score < 0.35:
+        lexical_focus = focus_terms[0] if focus_terms else ""
+        if lexical_focus:
+            for chunk in chunks:
+                chunk_lower = chunk.lower()
+                if lexical_focus in chunk_lower:
+                    overlap_hits = sum(1 for term in answer_terms[:4] if term in chunk_lower)
+                    if overlap_hits >= 1:
+                        best_score = max(best_score, 0.46)
+
+    return round(best_score, 4)
+
+
+def _has_critical_term_conflict(question: str, answer: str, context: str) -> bool:
+    profile = _infer_answer_profile(question)
+    if not (profile["definition"] or profile["direct_fact"] or profile["numeric"]):
+        return False
+    if _find_labeled_term_conflicts(question, answer, context):
+        return True
+    return not _has_chunk_support_for_labeled_terms(question, answer, context)
+
+
+def format_answer_for_user(answer: str, sources: Optional[List[str]]) -> str:
+    clean_answer = postprocess_answer(answer)
+    if not clean_answer:
+        return clean_answer
+
+    basis = _infer_document_basis(clean_answer)
+    metadata_lines = [f"Base documental: La respuesta es {basis} en el contexto."]
+    if sources:
+        metadata_lines.append(f"Fuentes: {', '.join(sources)}")
+    return f"{clean_answer}\n" + "\n".join(metadata_lines)
+
+
+_RETRY_WAITS = [2, 5, 10, 20]  # segundos entre intentos (backoff para errores transitorios)
 _MAX_ATTEMPTS = len(_RETRY_WAITS) + 1
+_MAX_CONSECUTIVE_503 = 3  # tras 3 errores 503 seguidos se abandona el modelo para ir al fallback
 
 
 class AIResponseError(RuntimeError):
@@ -177,58 +550,155 @@ def _is_transient_error(exc: Exception) -> bool:
     return any(marker in message for marker in transient_markers)
 
 
-def generate_ai_response(question: str, context: str = "", sources: Optional[List[str]] = None, history: Optional[List[Dict]] = None) -> Dict:
-    prompt = _build_prompt(question=question, context=context, sources=sources, history=history)
+_COMPLEX_SIGNALS = re.compile(
+    r"\b(diferencia|diferencias|compara|comparar|explica|detalla|relaciona|enumera|resume|todos los|cuales son todos)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_complex_question(question: str) -> bool:
+    q = (question or "").strip()
+    has_complex_signal = bool(_COMPLEX_SIGNALS.search(q))
+    is_very_long = len(q) > 220
+    is_multi_part = q.count("?") > 1
+    is_long_and_analytical = len(q) > 150 and has_complex_signal
+    return is_very_long or is_multi_part or is_long_and_analytical
+
+
+def generate_ai_response(question: str, context: str = "", history: Optional[List[Dict]] = None, *, model: Optional[str] = None) -> Dict:
+    prompt = _build_prompt(question=question, context=context, history=history)
+    active_model = model or OPENAI_MODEL
 
     last_error = None
     retries = 0
+    consecutive_503 = 0
     for attempt in range(_MAX_ATTEMPTS):
         try:
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=active_model,
                 contents=prompt,
+                config={
+                    "temperature": 0.2,
+                    "max_output_tokens": 2048,
+                },
             )
-
-            text = getattr(response, "text", None)
+            text = _extract_response_text(response)
             if text and text.strip():
                 return {
                     "text": postprocess_answer(text),
                     "usage": _extract_usage(response),
-                    "model": GEMINI_MODEL,
+                    "model": active_model,
                     "retries": retries,
                 }
 
-            last_error = ValueError("Respuesta vacia del modelo")
+            last_error = ValueError(_describe_empty_response(response))
+            consecutive_503 = 0
         except Exception as exc:
             last_error = exc
-            logger.warning("Fallo Gemini (intento %s/%s): %s", attempt + 1, _MAX_ATTEMPTS, str(exc))
+            logger.warning("Fallo Gemini %s (intento %s/%s): %s", active_model, attempt + 1, _MAX_ATTEMPTS, str(exc))
+            if _extract_status_code(exc) == 503:
+                consecutive_503 += 1
+                if consecutive_503 >= _MAX_CONSECUTIVE_503:
+                    logger.warning("[503_ABORT] %s consecutivos en %s; abandonando para usar fallback", consecutive_503, active_model)
+                    break
+            else:
+                consecutive_503 = 0
+
+        if isinstance(last_error, ValueError) and "finish_reason=" in str(last_error).lower():
+            break
 
         if attempt < len(_RETRY_WAITS):
             retries += 1
             time.sleep(_RETRY_WAITS[attempt])
 
-    logger.error("[ALERT][LLM_ERROR] agotados intentos en Gemini: %s", str(last_error))
+    logger.error("[ALERT][LLM_ERROR] agotados intentos en Gemini %s: %s", active_model, str(last_error))
     status_code = _extract_status_code(last_error) if isinstance(last_error, Exception) else None
     transient = _is_transient_error(last_error) if isinstance(last_error, Exception) else False
     raise AIResponseError(
-        f"No se pudo obtener respuesta de Gemini: {str(last_error)}",
+        f"No se pudo obtener respuesta de Gemini ({active_model}): {str(last_error)}",
         retries=retries,
         transient=transient,
         status_code=status_code,
     )
 
 
-def get_ai_response(question: str, context: str = "", sources: Optional[List[str]] = None, history: Optional[List[Dict]] = None) -> str:
-    generated = generate_ai_response(question=question, context=context, sources=sources, history=history)
+def generate_ai_response_with_fallback(question: str, context: str = "", sources: Optional[List[str]] = None, history: Optional[List[Dict]] = None) -> Dict:
+    try:
+        result = generate_ai_response(question, context=context, history=history)
+    except AIResponseError as exc:
+        should_try_flash_503_fallback = (
+            OPENAI_MODEL == "gemini-2.5-flash"
+            and GEMINI_FLASH_503_FALLBACK_MODEL
+            and GEMINI_FLASH_503_FALLBACK_MODEL != OPENAI_MODEL
+            and getattr(exc, "status_code", None) == 503
+        )
+        if not should_try_flash_503_fallback:
+            raise
+
+        logger.warning(
+            "[FLASH_503_FALLBACK] %s devolvio 503; probando %s",
+            OPENAI_MODEL,
+            GEMINI_FLASH_503_FALLBACK_MODEL,
+        )
+        result = generate_ai_response(
+            question,
+            context=context,
+            history=history,
+            model=GEMINI_FLASH_503_FALLBACK_MODEL,
+        )
+        result["flash_503_fallback"] = True
+        result["source_model"] = OPENAI_MODEL
+
+    _, confidence = validate_answer(question, result["text"], context, sources)
+    primary_has_conflict = _has_critical_term_conflict(question, result["text"], context)
+    complex_q = _is_complex_question(question)
+
+    if confidence >= CONFIDENCE_FALLBACK_THRESHOLD and not complex_q and not primary_has_conflict:
+        return result
+
+    logger.info(
+        "[MODEL_FALLBACK] conf=%.2f complex=%s modelo_secundario=%s q='%s'",
+        confidence, complex_q, GEMINI_SECONDARY_MODEL, question[:80],
+    )
+    try:
+        result_pro = generate_ai_response(question, context=context, history=history, model=GEMINI_SECONDARY_MODEL)
+        result_pro["escalated"] = True
+        result_pro["flash_confidence"] = round(confidence, 4)
+        _, secondary_confidence = validate_answer(question, result_pro["text"], context, sources)
+        secondary_has_conflict = _has_critical_term_conflict(question, result_pro["text"], context)
+        if secondary_has_conflict and secondary_confidence < CONFIDENCE_FALLBACK_THRESHOLD:
+            logger.warning(
+                "[MODEL_FALLBACK_REJECT] respuesta inconsistente tras fallback en %s; devolviendo insuficiencia",
+                GEMINI_SECONDARY_MODEL,
+            )
+            result_pro["text"] = "No hay informacion suficiente en el contexto recuperado"
+        return result_pro
+    except AIResponseError as exc:
+        logger.warning(
+            "[MODEL_FALLBACK_FAIL] devolviendo respuesta base tras fallo en %s: %s",
+            GEMINI_SECONDARY_MODEL,
+            str(exc),
+        )
+        if primary_has_conflict and confidence < CONFIDENCE_FALLBACK_THRESHOLD:
+            logger.warning("[PRIMARY_REJECT] respuesta base inconsistente con el contexto; devolviendo insuficiencia")
+            result["text"] = "No hay informacion suficiente en el contexto recuperado"
+        result["pro_fallback_failed"] = True
+        result["flash_confidence"] = round(confidence, 4)
+        result["retries"] = max(int(result.get("retries", 0) or 0), int(getattr(exc, "retries", 0) or 0))
+        return result
+
+
+def get_ai_response(question: str, context: str = "", history: Optional[List[Dict]] = None) -> str:
+    generated = generate_ai_response(question=question, context=context, history=history)
     return generated["text"]
 
 
 def validate_answer(question: str, answer: str, context: str, sources: Optional[List[str]]) -> Tuple[str, float]:
     text = postprocess_answer(answer)
     confidence = 0.0
-    question_lower = (question or "").lower()
     lower_text = text.lower()
     context_lower = (context or "").lower()
+    profile = _infer_answer_profile(question)
 
     if len(text) >= 180:
         confidence += 0.25
@@ -275,7 +745,12 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         "no se indica",
     )
     uncertainty_signal = any(phrase in lower_text for phrase in uncertainty_phrases)
-    numeric_question = bool(NUMERIC_ASK_PATTERN.search(question_lower))
+    numeric_question = bool(profile["numeric"])
+    definition_question = bool(profile["definition"])
+    list_question = bool(profile["list"])
+    comparison_question = bool(profile["comparison"])
+    procedure_question = bool(profile["procedure"])
+    direct_fact_question = bool(profile["direct_fact"])
     partial_signal = bool(PARTIAL_SIGNAL_PATTERN.search(lower_text)) or "base documental: parcial" in lower_text
     explicit_signal = bool(EXPLICIT_SIGNAL_PATTERN.search(lower_text)) or "base documental: explic" in lower_text
     formula_fragment_signal = any(
@@ -283,6 +758,15 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         for line in text.splitlines()
         if line.strip() and "fuentes:" not in line.lower()
     )
+    first_non_source_line = next((line.strip() for line in text.splitlines() if line.strip() and "fuentes:" not in line.lower()), "")
+    weak_definition_opening = bool(DEFINITION_WEAK_OPENING_PATTERN.search(first_non_source_line))
+    direct_definition_opening = bool(DEFINITION_DIRECT_ANSWER_PATTERN.search(first_non_source_line))
+    vague_definition_signal = bool(VAGUE_DEFINITION_PATTERN.search(lower_text))
+    list_format_signal = bool(LIST_FORMAT_PATTERN.search(text))
+    has_step_markers = bool(re.search(r"\b(paso|primero|segundo|despues|a continuacion)\b", lower_text))
+    comparison_markers = bool(re.search(r"\b(mientras que|por el contrario|en cambio|diferencia|frente a)\b", lower_text))
+    labeled_term_conflicts = _find_labeled_term_conflicts(question, text, context)
+    chunk_support_score = _best_chunk_support_score(question, text, context)
 
     if has_numeric_evidence:
         confidence += 0.05
@@ -296,6 +780,34 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence += 0.05
     elif numeric_question and not has_numeric_evidence and not uncertainty_signal:
         confidence -= 0.2
+    if list_question and list_format_signal:
+        confidence += 0.06
+    elif list_question and len(text) < 40:
+        confidence -= 0.08
+    if comparison_question and comparison_markers:
+        confidence += 0.06
+    elif comparison_question and not uncertainty_signal:
+        confidence -= 0.08
+    if procedure_question and has_step_markers:
+        confidence += 0.05
+    if chunk_support_score >= 0.72:
+        confidence += 0.12
+    elif chunk_support_score >= 0.55:
+        confidence += 0.06
+    elif (definition_question or direct_fact_question or numeric_question or list_question) and chunk_support_score < 0.35:
+        confidence -= 0.22
+    elif chunk_support_score < 0.22:
+        confidence -= 0.12
+    if definition_question and direct_definition_opening:
+        confidence += 0.08
+    elif definition_question and weak_definition_opening:
+        confidence -= 0.18
+    if definition_question and vague_definition_signal:
+        confidence -= 0.22
+    if direct_fact_question and weak_definition_opening and not uncertainty_signal:
+        confidence -= 0.12
+    if labeled_term_conflicts:
+        confidence -= 0.3
     if formula_fragment_signal:
         confidence -= 0.15
     if context and overlap_ratio < 0.08:
@@ -313,6 +825,14 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence = min(confidence, 0.6)
     if formula_fragment_signal:
         cap = min(cap, 0.7)
+    if definition_question and (weak_definition_opening or vague_definition_signal) and not direct_definition_opening:
+        cap = min(cap, 0.55)
+    if direct_fact_question and weak_definition_opening and not direct_definition_opening:
+        cap = min(cap, 0.65)
+    if labeled_term_conflicts:
+        cap = min(cap, 0.55)
+    if (definition_question or direct_fact_question or numeric_question or list_question) and chunk_support_score < 0.35:
+        cap = min(cap, 0.55)
 
     confidence = min(max(confidence, 0.0), cap)
     return text, confidence

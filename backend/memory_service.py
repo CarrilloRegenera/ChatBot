@@ -6,8 +6,8 @@ import chromadb
 
 from config import (
     CHROMA_DB_PATH,
-    GEMINI_BASELINE_MODEL,
-    GEMINI_MODEL,
+    GEMINI_SECONDARY_MODEL,
+    OPENAI_MODEL,
     MEMORY_COLLECTION_NAME,
     MEMORY_MAX_DISTANCE,
     MEMORY_MAX_RESULTS,
@@ -40,21 +40,35 @@ chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 memory_collection = _get_memory_collection(chroma_client, MEMORY_COLLECTION_NAME, _embedding_fn)
 
 MODEL_PRICING_USD_PER_MILLION = {
-    "gemini-1.5-pro": {
-        # Official Gemini Developer API pricing for <=128k prompts.
-        "input": 1.25,
-        "output": 5.00,
-        "notes": "Estimacion para prompts de hasta 128k tokens",
+    "gpt-4o-mini": {
+        "input": 0.15,
+        "output": 0.60,
+        "notes": "Tarifa estandar OpenAI",
+    },
+    "gpt-5.4-mini": {
+        "input": 0.15,
+        "output": 0.60,
+        "notes": "Tarifa pendiente confirmar OpenAI",
+    },
+    "gpt-4o": {
+        "input": 2.50,
+        "output": 10.00,
+        "notes": "Tarifa estandar OpenAI",
     },
     "gemini-2.5-flash": {
         "input": 0.30,
         "output": 2.50,
-        "notes": "Tarifa estandar",
+        "notes": "Tarifa estandar Google Gemini 2.5 Flash",
     },
     "gemini-2.5-flash-lite": {
         "input": 0.10,
         "output": 0.40,
-        "notes": "Tarifa estandar",
+        "notes": "Tarifa estandar Google Gemini 2.5 Flash-Lite",
+    },
+    "gemini-3-flash-preview": {
+        "input": 0.50,
+        "output": 3.00,
+        "notes": "Tarifa estandar Google Gemini 3 Flash Preview",
     },
 }
 
@@ -283,16 +297,16 @@ def get_admin_metrics(days: int = 30) -> Dict:
         model_breakdown.append(stats)
         model_index[(stats["model"] or "").strip().lower()] = stats
 
-    current_model_key = (GEMINI_MODEL or "").strip().lower()
-    baseline_model_key = (GEMINI_BASELINE_MODEL or "").strip().lower()
-    current_model_stats = model_index.get(current_model_key, _empty_model_stats(GEMINI_MODEL, "nuevo"))
-    baseline_model_stats = model_index.get(baseline_model_key, _empty_model_stats(GEMINI_BASELINE_MODEL, "antiguo"))
-    current_model_stats["role"] = "nuevo"
-    baseline_model_stats["role"] = "antiguo"
+    primary_model_key = (OPENAI_MODEL or "").strip().lower()
+    secondary_model_key = (GEMINI_SECONDARY_MODEL or "").strip().lower()
+    current_model_stats = model_index.get(primary_model_key, _empty_model_stats(OPENAI_MODEL, "base"))
+    baseline_model_stats = model_index.get(secondary_model_key, _empty_model_stats(GEMINI_SECONDARY_MODEL, "escalado"))
+    current_model_stats["role"] = "base"
+    baseline_model_stats["role"] = "escalado"
 
     comparison_summary = {
-        "current_model": current_model_stats,
-        "baseline_model": baseline_model_stats,
+        "primary_model": current_model_stats,
+        "secondary_model": baseline_model_stats,
         "current_vs_baseline": {
             "cost_delta_usd": round(current_model_stats["estimated_cost_usd"] - baseline_model_stats["estimated_cost_usd"], 6),
             "latency_delta_ms": round(current_model_stats["avg_latency_ms"] - baseline_model_stats["avg_latency_ms"], 2),
@@ -314,8 +328,8 @@ def get_admin_metrics(days: int = 30) -> Dict:
         "total_tokens": total_tokens,
         "avg_latency_ms": round(avg_latency, 2),
         "estimated_cost_usd": round(cost_estimated_usd, 6),
-        "model": GEMINI_MODEL,
-        "baseline_model": GEMINI_BASELINE_MODEL,
+        "model": OPENAI_MODEL,
+        "baseline_model": GEMINI_SECONDARY_MODEL,
         "model_breakdown": model_breakdown,
         "model_comparison": comparison_summary,
     }

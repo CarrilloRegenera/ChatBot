@@ -43,6 +43,39 @@ CHUNK_SENTENCE_GRACE = 180
 HEADING_PATTERN = re.compile(r"^(?:\d+(?:\.\d+)*[\.\)]?\s+)?[A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑa-záéíóúüñ\s\-/,:()]{3,}$")
 REFERENCE_PATTERN = re.compile(r"\b(?:itc[-\s]*bt[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b", re.IGNORECASE)
 NUMERIC_PATTERN = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:m2|mm2|kw|w|v|a|ma|kv|hz|ohmios?|ohm|%)?\b", re.IGNORECASE)
+DEFINITION_QUERY_PATTERN = re.compile(
+    r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bque\s+se\s+entiende\s+por\b|\bdefinicion\b)",
+    re.IGNORECASE,
+)
+DEFINITION_CUE_PATTERN = re.compile(
+    r"\b(?:se denomina|se define como|es la|es el|recibe el nombre de|definicion)\b",
+    re.IGNORECASE,
+)
+LIST_QUERY_PATTERN = re.compile(
+    r"(?:\bcuales\s+son\b|\benumera\b|\blista\b|\btipos\s+de\b|\bclases\s+de\b|\bpueden\s+ser\b)",
+    re.IGNORECASE,
+)
+LIST_CUE_PATTERN = re.compile(r"(?:^|\n)(?:[-*]\s+|\d+\.\s+)", re.IGNORECASE)
+COMPARISON_QUERY_PATTERN = re.compile(
+    r"(?:\bdiferencia\b|\bdiferencias\b|\bcompara\b|\bcomparar\b|\bfrente\s+a\b|\bversus\b)",
+    re.IGNORECASE,
+)
+COMPARISON_CUE_PATTERN = re.compile(
+    r"\b(?:mientras que|por el contrario|en cambio|a diferencia de|frente a)\b",
+    re.IGNORECASE,
+)
+PROCEDURE_QUERY_PATTERN = re.compile(
+    r"(?:\bcomo\s+se\s+calcula\b|\bcomo\s+debe\b|\bcomo\s+puede\b|\bprocedimiento\b|\bpasos\b)",
+    re.IGNORECASE,
+)
+PROCEDURE_CUE_PATTERN = re.compile(
+    r"\b(?:paso|primero|segundo|a continuacion|debe|deben|se debe|se deben)\b",
+    re.IGNORECASE,
+)
+DEFINITION_PRIORITY_BOOST = 10
+LIST_PRIORITY_BOOST = 6
+COMPARISON_PRIORITY_BOOST_INTENT = 6
+PROCEDURE_PRIORITY_BOOST = 5
 
 
 logger = logging.getLogger(__name__)
@@ -292,6 +325,10 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "reference_terms": _extract_reference_terms(clean_question),
         "comparison": any(term in normalized for term in ("compara", "diferencia", "frente", "versus")),
         "expects_numeric": bool(re.search(r"\b(cuanto|cuantos|cuantas|valor|limite|potencia|resistencia|ohm|kw|mm2|m2|volt|amper|porcentaje)\b", normalized)),
+        "definition_query": bool(DEFINITION_QUERY_PATTERN.search(normalized)),
+        "list_query": bool(LIST_QUERY_PATTERN.search(normalized)),
+        "comparison_query": bool(COMPARISON_QUERY_PATTERN.search(normalized)),
+        "procedure_query": bool(PROCEDURE_QUERY_PATTERN.search(normalized)),
         "question_keywords": question_keywords,
         "section_terms": _extract_topic_terms(clean_question, limit=MAX_TOPIC_TOKENS),
     }
@@ -494,10 +531,22 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
         reference_hits = sum(1 for term in query_profile["reference_terms"] if term in doc_norm or term in metadata_norm)
         section_hits = sum(1 for term in query_profile["section_terms"] if term in metadata_norm)
         section_title_hits = sum(1 for term in query_profile["section_terms"] if term in section_title)
+        definition_hits = len(DEFINITION_CUE_PATTERN.findall(document)) if query_profile["definition_query"] else 0
+        list_hits = 1 if query_profile["list_query"] and LIST_CUE_PATTERN.search(document) else 0
+        comparison_hits = len(COMPARISON_CUE_PATTERN.findall(document)) if query_profile["comparison_query"] else 0
+        procedure_hits = len(PROCEDURE_CUE_PATTERN.findall(document)) if query_profile["procedure_query"] else 0
 
         score = overlap_score + (keyword_hits * 2) + (core_hits * 4)
         if normalized_question and normalized_question in doc_norm:
             score += 6
+        if definition_hits:
+            score += definition_hits * DEFINITION_PRIORITY_BOOST
+        if list_hits:
+            score += list_hits * LIST_PRIORITY_BOOST
+        if comparison_hits:
+            score += comparison_hits * COMPARISON_PRIORITY_BOOST_INTENT
+        if procedure_hits:
+            score += procedure_hits * PROCEDURE_PRIORITY_BOOST
         if numeric_hits:
             score += numeric_hits * NUMERIC_PRIORITY_BOOST
         elif query_profile["expects_numeric"] and not _extract_numeric_terms(document):
@@ -547,6 +596,14 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
                 lexical_score -= CORE_TERM_PENALTY
             if query_profile["reference_terms"] and any(ref in doc_norm for ref in query_profile["reference_terms"]):
                 lexical_score += REFERENCE_PRIORITY_BOOST
+            if query_profile["definition_query"] and DEFINITION_CUE_PATTERN.search(document):
+                lexical_score += DEFINITION_PRIORITY_BOOST
+            if query_profile["list_query"] and LIST_CUE_PATTERN.search(document):
+                lexical_score += LIST_PRIORITY_BOOST
+            if query_profile["comparison_query"] and COMPARISON_CUE_PATTERN.search(document):
+                lexical_score += COMPARISON_PRIORITY_BOOST_INTENT
+            if query_profile["procedure_query"] and PROCEDURE_CUE_PATTERN.search(document):
+                lexical_score += PROCEDURE_PRIORITY_BOOST
             ranked_items.append((lexical_score, doc_id, document, metadata))
             seen_ids.add(doc_id)
 

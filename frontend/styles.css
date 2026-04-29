@@ -652,6 +652,8 @@ html, body {
     font-size: 15px;
     line-height: 1.6;
     animation: fadeIn 0.3s ease;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .message-row.user .message-bubble {

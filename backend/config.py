@@ -17,11 +17,21 @@ def _to_absolute_path(path_value: str) -> str:
     return str(path)
 
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 DOCUMENTS_PATH = _to_absolute_path(os.getenv("DOCUMENTS_PATH", "../documentos"))
 CHROMA_DB_PATH = _to_absolute_path(os.getenv("CHROMA_DB_PATH", "../chroma_db"))
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
-GEMINI_BASELINE_MODEL = os.getenv("GEMINI_BASELINE_MODEL", "gemini-2.5-flash").strip()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_SECONDARY_MODEL = (
+    os.getenv("GEMINI_SECONDARY_MODEL")
+    or os.getenv("GEMINI_FLASH_503_FALLBACK_MODEL")
+    or os.getenv("GEMINI_PRO_MODEL")
+    or "gemini-3-flash-preview"
+).strip()
+GEMINI_FLASH_503_FALLBACK_MODEL = os.getenv("GEMINI_FLASH_503_FALLBACK_MODEL", GEMINI_SECONDARY_MODEL).strip()
+CONFIDENCE_FALLBACK_THRESHOLD = float(os.getenv("CONFIDENCE_FALLBACK_THRESHOLD", "0.65"))
+# Keep a Gemini baseline by default so historical cost/quality comparisons
+# remain meaningful after moving the live traffic to OpenAI.
+OPENAI_BASELINE_MODEL = (os.getenv("GEMINI_BASELINE_MODEL") or os.getenv("OPENAI_BASELINE_MODEL", "gemini-2.5-flash")).strip()
 TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", "3"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "reglamentos").strip()
 RECURSIVE_PDF_SCAN = os.getenv("RECURSIVE_PDF_SCAN", "true").strip().lower() in {"1", "true", "yes", "on"}

@@ -1,10 +1,12 @@
-const API = "http://localhost:8000";
+const API = window.location.port === "8000" ? window.location.origin : "http://localhost:8000";
 let currentUser = null;
 let currentConversation = null;
 let isSending = false;
 let activeConversationRequest = 0;
 let conversationsLoadPromise = null;
 let adminRangeDays = 7;
+const PENDING_MESSAGE_KEY = "chatbot_pending_message";
+const LAST_UNLOAD_KEY = "chatbot_last_unload";
 
 // ===== SESSION PERSISTENCE =====
 
@@ -43,6 +45,36 @@ function restoreSession() {
     }
 
     return true;
+}
+
+function savePendingMessage(payload) {
+    localStorage.setItem(PENDING_MESSAGE_KEY, JSON.stringify(payload));
+}
+
+function readPendingMessage() {
+    const raw = localStorage.getItem(PENDING_MESSAGE_KEY);
+    if (!raw) return null;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        localStorage.removeItem(PENDING_MESSAGE_KEY);
+        return null;
+    }
+}
+
+function clearPendingMessage() {
+    localStorage.removeItem(PENDING_MESSAGE_KEY);
+}
+
+function markPageUnload() {
+    sessionStorage.setItem(LAST_UNLOAD_KEY, String(Date.now()));
+}
+
+function consumePageUnloadMark() {
+    const value = sessionStorage.getItem(LAST_UNLOAD_KEY);
+    if (!value) return null;
+    sessionStorage.removeItem(LAST_UNLOAD_KEY);
+    return value;
 }
 
 // ===== VIEW MANAGEMENT =====
@@ -295,6 +327,10 @@ async function selectConversation(id) {
             return;
         }
 
+        if (isSending && currentConversation === id) {
+            return;
+        }
+
         const messagesDiv = document.getElementById("chat-messages");
         messagesDiv.innerHTML = "";
 
@@ -308,6 +344,7 @@ async function selectConversation(id) {
         } else {
             showWelcomeState();
         }
+        await reconcilePendingMessage(id);
     } catch (err) {
         console.error("Error loading messages:", err);
     }
@@ -355,6 +392,44 @@ function appendMessage(role, text) {
 
     row.appendChild(bubble);
     messagesDiv.appendChild(row);
+}
+
+function historyContainsQuestion(messages, question) {
+    const normalizedQuestion = String(question || "").replace(/\s+/g, " ").trim();
+    return (messages || []).some((msg) => String(msg.question || "").replace(/\s+/g, " ").trim() === normalizedQuestion);
+}
+
+async function reconcilePendingMessage(conversationId) {
+    const pending = readPendingMessage();
+    if (!pending || pending.conversationId !== conversationId) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API}/conversations/${conversationId}/messages`);
+        if (!res.ok) {
+            return;
+        }
+        const data = await res.json();
+        if (historyContainsQuestion(data.messages || [], pending.question)) {
+            clearPendingMessage();
+            if (currentConversation === conversationId && !isSending) {
+                await selectConversation(conversationId);
+            }
+            return;
+        }
+
+        if (currentConversation === conversationId && !isSending) {
+            showMessagesState();
+            const messagesDiv = document.getElementById("chat-messages");
+            if (!messagesDiv.textContent.includes(pending.question)) {
+                appendMessage("user", pending.question);
+                appendMessage("assistant", pending.response || "Procesando respuesta...");
+            }
+        }
+    } catch (err) {
+        console.warn("No se pudo reconciliar el mensaje pendiente:", err);
+    }
 }
 
 function showTypingIndicator() {
@@ -442,29 +517,36 @@ function setSendingState(sending) {
 async function sendMessage() {
     if (isSending) return;
 
-    if (conversationsLoadPromise) {
-        await conversationsLoadPromise;
-    }
-
     const input = document.getElementById("question-input");
     const question = input.value.trim();
     if (!question || !currentConversation) return;
     const conversationId = currentConversation;
-    activeConversationRequest += 1;
 
-    input.value = "";
-    input.style.height = "auto";
-
-    showMessagesState();
-    appendMessage("user", question);
-
-    const messagesDiv = document.getElementById("chat-messages");
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
-    showTypingIndicator();
     setSendingState(true);
 
     try {
+        if (conversationsLoadPromise) {
+            await conversationsLoadPromise;
+        }
+
+        activeConversationRequest += 1;
+
+        input.value = "";
+        input.style.height = "auto";
+
+        showMessagesState();
+        appendMessage("user", question);
+        savePendingMessage({
+            conversationId,
+            question,
+            createdAt: Date.now(),
+        });
+
+        const messagesDiv = document.getElementById("chat-messages");
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        showTypingIndicator();
+
         const res = await fetch(`${API}/messages`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -479,6 +561,13 @@ async function sendMessage() {
         removeTypingIndicator();
         appendMessage("assistant", data.response);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        savePendingMessage({
+            conversationId,
+            question,
+            response: data.response,
+            createdAt: Date.now(),
+            status: "answered",
+        });
 
         const activeItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
         const titleEl = activeItem ? activeItem.querySelector(".conversation-title") : null;
@@ -491,6 +580,8 @@ async function sendMessage() {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ title: shortTitle }),
+            }).catch(() => {
+                titleEl.textContent = currentTitle;
             });
         }
 
@@ -500,6 +591,7 @@ async function sendMessage() {
     } catch (err) {
         removeTypingIndicator();
         appendMessage("assistant", err?.message || "Error de conexion con el servidor.");
+        clearPendingMessage();
     } finally {
         setSendingState(false);
     }
@@ -560,8 +652,8 @@ function renderModelComparison(metrics) {
     if (!container) return;
 
     const comparison = metrics.model_comparison || {};
-    const current = comparison.current_model || null;
-    const baseline = comparison.baseline_model || null;
+    const current = comparison.primary_model || null;
+    const baseline = comparison.secondary_model || null;
     const delta = comparison.current_vs_baseline || {};
 
     if (!current && !baseline) {
@@ -593,8 +685,8 @@ function renderModelComparison(metrics) {
 
     container.innerHTML = `
         <div class="model-compare-cards">
-            ${renderCard(baseline, "Modelo antiguo")}
-            ${renderCard(current, "Modelo nuevo")}
+            ${renderCard(current, "Flash base")}
+            ${renderCard(baseline, "Flash Preview (escalado)")}
         </div>
         <div class="model-compare-delta">
             <div><span>Diferencia de coste</span><strong>${formatCurrency(delta.cost_delta_usd)}</strong></div>
@@ -703,6 +795,10 @@ async function rejectInteraction(interactionId) {
 // ===== INIT =====
 
 document.addEventListener("DOMContentLoaded", () => {
+    const unloadMark = consumePageUnloadMark();
+    if (unloadMark) {
+        console.warn("La pagina se recargo o descargo durante la sesion:", unloadMark);
+    }
     if (restoreSession()) {
         document.getElementById("user-name-display").textContent = currentUser.nombre;
         document.getElementById("user-avatar").textContent = currentUser.nombre.charAt(0).toUpperCase();
@@ -714,3 +810,5 @@ document.addEventListener("DOMContentLoaded", () => {
         showView("login");
     }
 });
+
+window.addEventListener("beforeunload", markPageUnload);

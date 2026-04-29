@@ -5,7 +5,7 @@ from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException
 
-from ai_service import AIResponseError, generate_ai_response, validate_answer
+from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback, validate_answer
 from database import get_connection
 from memory_service import (
     get_admin_metrics,
@@ -74,14 +74,18 @@ def _get_recent_history(conversation_id: int, limit: int = 2) -> List[Dict]:
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "SELECT TOP (?) Pregunta, Respuesta FROM Mensajes WHERE ConversacionId = ? ORDER BY FechaCreacion DESC",
+            "SELECT Pregunta, Respuesta FROM ("
+            "  SELECT TOP (?) Pregunta, Respuesta, FechaCreacion, Id"
+            "  FROM Mensajes WHERE ConversacionId = ?"
+            "  ORDER BY FechaCreacion DESC, Id DESC"
+            ") sub ORDER BY FechaCreacion ASC, Id ASC",
             limit,
             conversation_id,
         )
         rows = cursor.fetchall()
     finally:
         conn.close()
-    return [{"question": row[0], "response": row[1]} for row in reversed(rows)]
+    return [{"question": row[0], "response": row[1]} for row in rows]
 
 
 def _save_chat_message(conversation_id: int, question: str, response: str, elapsed_ms: int) -> int:
@@ -193,8 +197,7 @@ def send_message(data: MessageRequest):
                 response = memory_hit["answer"]
                 sources = memory_hit.get("sources", [])
                 confidence = max(0.9, 1.0 - memory_hit.get("distance", 0.0))
-                if sources and "Fuentes:" not in response:
-                    response = f"{response}\nFuentes: {', '.join(sources)}"
+                response = format_answer_for_user(response, sources)
                 from_memory = True
                 _log_chat_event(
                     event="MEMORY_HIT",
@@ -215,12 +218,13 @@ def send_message(data: MessageRequest):
                 history = _get_recent_history(data.conversation_id, limit=2)
                 stage_llm_start = time.time()
                 try:
-                    generated = generate_ai_response(data.question, context=context, sources=sources, history=history)
+                    generated = generate_ai_response_with_fallback(data.question, context=context, sources=sources, history=history)
                 finally:
                     llm_ms = int((time.time() - stage_llm_start) * 1000)
                 response = generated["text"]
                 llm_retries = int(generated.get("retries", 0))
                 response, confidence = validate_answer(data.question, response, context=context, sources=sources)
+                response = format_answer_for_user(response, sources)
                 elapsed_partial = int((time.time() - start) * 1000)
                 try:
                     stage_metrics_db_start = time.time()
@@ -369,7 +373,7 @@ def get_history(conversation_id: int):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT Pregunta, Respuesta, FechaCreacion FROM Mensajes WHERE ConversacionId = ?",
+        "SELECT Pregunta, Respuesta, FechaCreacion FROM Mensajes WHERE ConversacionId = ? ORDER BY FechaCreacion ASC, Id ASC",
         conversation_id,
     )
     rows = cursor.fetchall()
