@@ -5,6 +5,7 @@ let isSending = false;
 let activeConversationRequest = 0;
 let conversationsLoadPromise = null;
 let adminRangeDays = 7;
+let admin503MetricsLoaded = false;
 const PENDING_MESSAGE_KEY = "chatbot_pending_message";
 const LAST_UNLOAD_KEY = "chatbot_last_unload";
 
@@ -226,6 +227,7 @@ function logout() {
     document.getElementById("conversation-list").innerHTML = "";
     showWelcomeState();
     closeAdminPanel();
+    closeAdmin503Modal();
     setSendingState(false);
     showView("login");
 }
@@ -631,6 +633,7 @@ function openAdminPanel() {
 
 function closeAdminPanel() {
     const panel = document.getElementById("admin-panel");
+    closeAdmin503Modal();
     if (panel) panel.classList.add("hidden");
 }
 
@@ -697,6 +700,157 @@ function renderModelComparison(metrics) {
     `;
 }
 
+function openAdmin503Modal() {
+    const modal = document.getElementById("admin-503-modal");
+    if (!modal) return;
+    const overlay = modal.querySelector(".admin-inline-modal-overlay");
+    const content = modal.querySelector(".admin-inline-modal-content");
+
+    modal.classList.remove("hidden");
+    modal.classList.add("active");
+    modal.style.display = "flex";
+    modal.style.position = "fixed";
+    modal.style.inset = "0";
+    modal.style.zIndex = "1200";
+    modal.style.alignItems = "center";
+    modal.style.justifyContent = "center";
+    modal.style.padding = "24px";
+    modal.setAttribute("aria-hidden", "false");
+
+    if (overlay) {
+        overlay.style.position = "absolute";
+        overlay.style.inset = "0";
+        overlay.style.background = "rgba(15, 23, 42, 0.42)";
+        overlay.style.backdropFilter = "blur(4px)";
+    }
+
+    if (content) {
+        content.style.position = "relative";
+        content.style.zIndex = "1";
+        content.style.width = "min(980px, 92vw)";
+        content.style.maxHeight = "88vh";
+        content.style.overflow = "auto";
+        content.style.background = "#ffffff";
+        content.style.borderRadius = "16px";
+        content.style.boxShadow = "0 8px 30px rgba(0,0,0,0.12)";
+        content.style.padding = "20px";
+    }
+
+    console.info("admin-503-modal abierto");
+    if (!admin503MetricsLoaded) {
+        loadAdmin503Metrics();
+    }
+}
+
+function closeAdmin503Modal() {
+    const modal = document.getElementById("admin-503-modal");
+    if (!modal) return;
+    modal.classList.remove("active");
+    modal.classList.add("hidden");
+    modal.style.display = "none";
+    modal.setAttribute("aria-hidden", "true");
+}
+
+function renderAdmin503Metrics(data) {
+    const summary = document.getElementById("admin-503-summary");
+    const comparison = document.getElementById("admin-503-comparison");
+    if (!summary || !comparison) return;
+
+    const models = data.models || [];
+    const base = models.find((item) => item.role === "base") || models[0] || {};
+    const secondary = models.find((item) => item.role !== "base") || models[1] || {};
+    const delta = Number(data.comparison?.delta_503 || 0);
+    const absoluteDelta = Math.abs(delta);
+    const winnerLabel = delta === 0
+        ? "Empate de errores"
+        : delta > 0
+            ? "Mas errores en el modelo base"
+            : "Mas errores en el modelo secundario";
+    const total503 = (base.count_503 || 0) + (secondary.count_503 || 0);
+    const trendTone = delta === 0 ? "neutral" : delta > 0 ? "warning" : "success";
+
+    summary.innerHTML = `
+        <div class="admin-503-summary-card admin-503-summary-highlight">
+            <span class="admin-503-eyebrow">Resumen</span>
+            <strong>${winnerLabel}</strong>
+            <p>${delta === 0 ? "Ambos modelos tienen el mismo numero de errores 503 en la ventana analizada." : `La diferencia actual es de ${formatNumber(absoluteDelta)} errores 503.`}</p>
+        </div>
+        <div class="admin-503-summary-card">
+            <span>Ventana analizada</span>
+            <strong>${formatNumber(data.window_hours || 0)} h</strong>
+            <p>Rango temporal aplicado al conteo.</p>
+        </div>
+        <div class="admin-503-summary-card">
+            <span>Total 503 comparados</span>
+            <strong>${formatNumber(total503)}</strong>
+            <p>Suma de ambos modelos en esta ventana.</p>
+        </div>
+        <div class="admin-503-summary-card">
+            <span>Diferencia absoluta</span>
+            <strong>${formatNumber(absoluteDelta)}</strong>
+            <p>Separacion entre el modelo base y el secundario.</p>
+        </div>
+    `;
+
+    const renderCard = (item, title, accentClass) => `
+        <div class="admin-503-card ${accentClass}">
+            <div class="admin-503-card-header">
+                <span class="model-compare-badge">${title}</span>
+                <strong>${item.model || "-"}</strong>
+            </div>
+            <div class="admin-503-card-body">
+                <div class="admin-503-card-count">${formatNumber(item.count_503 || 0)}</div>
+                <div class="admin-503-card-caption">errores HTTP 503 registrados</div>
+            </div>
+        </div>
+    `;
+
+    comparison.innerHTML = `
+        <div class="admin-503-cards">
+            ${renderCard(base, "Modelo base", "admin-503-card-base")}
+            ${renderCard(secondary, "Modelo secundario", "admin-503-card-secondary")}
+        </div>
+        <div class="admin-503-delta-card admin-503-delta-${trendTone}">
+            <div class="admin-503-delta-label">Diferencia base - secundario</div>
+            <div class="admin-503-delta-value">${formatNumber(delta)}</div>
+            <div class="admin-503-delta-copy">${delta === 0 ? "No hay diferencia entre los dos modelos." : delta > 0 ? "El modelo base acumula mas errores 503 en este rango." : "El modelo secundario acumula mas errores 503 en este rango."}</div>
+        </div>
+    `;
+}
+
+async function loadAdmin503Metrics() {
+    if (!currentUser) return;
+    const role = encodeURIComponent(currentUser.rol || "");
+    const hours = parseInt(document.getElementById("admin-503-hours")?.value || "24", 10);
+    const summary = document.getElementById("admin-503-summary");
+    const comparison = document.getElementById("admin-503-comparison");
+    if (summary) {
+        summary.innerHTML = `<div class="model-compare-empty">Cargando comparativa de errores 503...</div>`;
+    }
+    if (comparison) {
+        comparison.innerHTML = "";
+    }
+
+    try {
+        const res = await fetch(`${API}/admin/metrics/errors-503?role=${role}&hours=${hours}`);
+        if (!res.ok) {
+            throw new Error("No se pudieron cargar los errores 503");
+        }
+        const data = await res.json();
+        admin503MetricsLoaded = true;
+        renderAdmin503Metrics(data);
+    } catch (err) {
+        admin503MetricsLoaded = false;
+        if (summary) {
+            summary.innerHTML = `<div class="model-compare-empty">No se pudo cargar la comparativa de errores 503.</div>`;
+        }
+        if (comparison) {
+            comparison.innerHTML = "";
+        }
+        console.error("Error loading 503 metrics:", err);
+    }
+}
+
 function setAdminRange(days, button) {
     adminRangeDays = days;
     document.querySelectorAll(".admin-range-btn").forEach((item) => {
@@ -732,6 +886,7 @@ async function loadAdminPanel() {
         document.getElementById("metric-total-validated").textContent = formatNumber(metrics.total_validated);
         document.getElementById("metric-validation-rate").textContent = `${Math.round((metrics.validation_rate || 0) * 100)}%`;
         renderModelComparison(metrics);
+        admin503MetricsLoaded = false;
 
         renderPendingList(pendingData.pending || []);
     } catch (err) {

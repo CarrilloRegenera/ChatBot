@@ -43,6 +43,10 @@ LIST_ASK_PATTERN = re.compile(
     r"(?:\bcuales\s+son\b|\benumera\b|\blista\b|\btipos\s+de\b|\bclases\s+de\b|\bpueden\s+ser\b)",
     re.IGNORECASE,
 )
+SUMMARY_ASK_PATTERN = re.compile(
+    r"(?:\bresume\b|\bresumen\b|\bresumir\b|\bsintetiza\b|\bsintesis\b)",
+    re.IGNORECASE,
+)
 COMPARISON_ASK_PATTERN = re.compile(
     r"(?:\bdiferencia\b|\bdiferencias\b|\bcompara\b|\bcomparar\b|\bfrente\s+a\b|\bversus\b)",
     re.IGNORECASE,
@@ -68,6 +72,7 @@ VAGUE_DEFINITION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 LIST_FORMAT_PATTERN = re.compile(r"^(?:[-*]\s+|\d+\.\s+)", re.MULTILINE)
+LIST_MARKER_PATTERN = re.compile(r"^(?:[-*•]\s+|\d+[\.\)]\s+|[a-z][\.\)]\s+)", re.IGNORECASE)
 TRAILING_METADATA_PATTERN = re.compile(
     r"(?:(?:^|\n)[ \t]*|(?<=[.!?])\s+)(?:Base documental:|Fuentes:).*",
     re.IGNORECASE | re.DOTALL,
@@ -80,6 +85,10 @@ LABELED_TERM_PATTERNS = {
     "grado_ik": re.compile(r"\bik\s?(\d{2})\b", re.IGNORECASE),
     "esquema": re.compile(r"\b(tt|tn(?:-?[sc])?|it)\b", re.IGNORECASE),
 }
+MULTI_ITEM_ASK_PATTERN = re.compile(
+    r"(?:\bclases\s+de\b|\btipos\s+de\b|\bcuales\s+son\b|\btodos?\s+los\b|\btodas?\s+las\b)",
+    re.IGNORECASE,
+)
 
 
 def _infer_answer_profile(question: str) -> Dict[str, object]:
@@ -87,6 +96,7 @@ def _infer_answer_profile(question: str) -> Dict[str, object]:
     return {
         "definition": bool(DEFINITION_ASK_PATTERN.search(q)),
         "list": bool(LIST_ASK_PATTERN.search(q)),
+        "summary": bool(SUMMARY_ASK_PATTERN.search(q)),
         "comparison": bool(COMPARISON_ASK_PATTERN.search(q)),
         "procedure": bool(PROCEDURE_ASK_PATTERN.search(q)),
         "numeric": bool(NUMERIC_ASK_PATTERN.search(q)),
@@ -95,6 +105,16 @@ def _infer_answer_profile(question: str) -> Dict[str, object]:
 
 
 def _build_output_instruction(profile: Dict[str, object]) -> str:
+    if profile["summary"] and profile["list"]:
+        return (
+            "Resume el conjunto completo en una lista numerada 1. 2. 3. "
+            "Incluye cada clase, tipo o elemento distinto que aparezca en el contexto con una descripcion breve por linea."
+        )
+    if profile["summary"]:
+        return (
+            "Resume solo las ideas principales del contexto, normalmente en 3-6 lineas breves. "
+            "Sintetiza sin copiar fragmentos largos ni dejar frases truncadas."
+        )
     if profile["definition"]:
         return (
             "Responde de forma breve y directa, normalmente en 1-3 frases. "
@@ -107,8 +127,8 @@ def _build_output_instruction(profile: Dict[str, object]) -> str:
         )
     if profile["list"]:
         return (
-            "Responde con una lista corta y clara cuando ayude a la comprension. "
-            "Agrupa los elementos sin anadir categorias no presentes en el contexto."
+            "Responde con un elemento por linea en formato numerado simple 1. 2. 3. cuando el contexto enumere varios casos. "
+            "No repitas el enunciado y no anadas categorias no presentes en el contexto."
         )
     if profile["comparison"]:
         return (
@@ -134,13 +154,22 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
             )
         intent_hint = ""
         if profile["list"]:
-            intent_hint += "15. Si la pregunta pide tipos, clases o enumeraciones, devuelve todos los elementos recuperados que respondan a la pregunta.\n"
+            intent_hint += (
+                "15. Si la pregunta pide tipos, clases o enumeraciones, devuelve todos los elementos recuperados que respondan a la pregunta.\n"
+                "16. En preguntas de lista, escribe un elemento por linea con numeracion simple 1. 2. 3. y evita repetir el enunciado.\n"
+            )
+        if profile["summary"]:
+            intent_hint += (
+                "17. Si la pregunta pide un resumen, sintetiza el contenido relevante en vez de copiar un unico fragmento.\n"
+                "18. Si el resumen trata sobre clases, tipos o categorias, incluye todos los elementos distintos presentes en el contexto con una descripcion breve de cada uno.\n"
+                "19. No devuelvas una sola clase o un solo fragmento si la pregunta pide un conjunto en plural, salvo que el contexto solo contenga ese unico elemento.\n"
+            )
         if profile["comparison"]:
-            intent_hint += "16. Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
+            intent_hint += "20. Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
         if profile["procedure"]:
-            intent_hint += "17. Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
+            intent_hint += "21. Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
         if profile["numeric"]:
-            intent_hint += "18. Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
+            intent_hint += "22. Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
 
         history_section = ""
         if history:
@@ -174,7 +203,7 @@ Reglas obligatorias:
 10. Si la pregunta pide numeros y el contexto no los contiene, indicalo explicitamente.
 11. Si hay varias fuentes y aportan datos distintos o parciales, integralo sin inventar relaciones entre ellas.
 12. No copies fragmentos incompletos del contexto; si una frase esta truncada, reformulala solo con la parte segura.
-13. Responde en texto plano. No uses formato markdown: sin asteriscos, sin guiones de lista, sin cabeceras. Escribe siempre frases completas que terminen con punto.
+13. Responde en texto plano. No uses formato markdown: sin asteriscos ni cabeceras. Si la respuesta es una lista, usa lineas numeradas simples 1. 2. 3.; si no es una lista, escribe frases completas que terminen con punto.
 {definition_hint}
 {intent_hint}
 
@@ -277,7 +306,66 @@ def _trim_unsafe_last_line(line: str) -> str:
     return candidate
 
 
-def postprocess_answer(text: str) -> str:
+def _capitalize_list_item(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return cleaned
+    return cleaned[:1].upper() + cleaned[1:]
+
+
+def _count_structured_items(text: str) -> int:
+    non_empty = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    numbered = sum(1 for line in non_empty if LIST_MARKER_PATTERN.match(line))
+    if numbered:
+        return numbered
+    # Fallback: count short non-empty lines after a heading line if present
+    if len(non_empty) >= 2 and non_empty[0].endswith(":"):
+        return len(non_empty[1:])
+    return len(non_empty)
+
+
+def _normalize_list_answer(question: str, lines: List[str]) -> Optional[str]:
+    profile = _infer_answer_profile(question)
+    if not profile["list"]:
+        return None
+
+    non_empty = [line.strip() for line in lines if line.strip()]
+    if len(non_empty) < 2:
+        return None
+
+    heading = ""
+    item_lines = non_empty
+    if non_empty[0].endswith(":"):
+        heading = non_empty[0]
+        item_lines = non_empty[1:]
+    elif len(non_empty) >= 3 and non_empty[0].rstrip(".:").lower() == (question or "").strip().rstrip(".:").lower():
+        heading = non_empty[0].rstrip(".") + ":"
+        item_lines = non_empty[1:]
+
+    if len(item_lines) < 2:
+        return None
+
+    normalized_items = []
+    for line in item_lines:
+        item = LIST_MARKER_PATTERN.sub("", line.strip())
+        item = re.sub(r"\s+", " ", item).strip(" \t-")
+        if not item:
+            continue
+        item = _capitalize_list_item(item)
+        if item[-1] not in ".!?":
+            item += "."
+        normalized_items.append(item)
+
+    if len(normalized_items) < 2:
+        return None
+
+    numbered_items = [f"{idx}. {item}" for idx, item in enumerate(normalized_items, start=1)]
+    if heading:
+        return "\n".join([heading] + numbered_items)
+    return "\n".join(numbered_items)
+
+
+def postprocess_answer(text: str, question: str = "") -> str:
     raw = (text or "").strip()
     if not raw:
         return raw
@@ -307,7 +395,8 @@ def postprocess_answer(text: str) -> str:
         if stripped:
             processed.append(stripped)
 
-    cleaned = "\n".join(processed).strip()
+    normalized_list = _normalize_list_answer(question, processed)
+    cleaned = normalized_list if normalized_list else "\n".join(processed).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = re.sub(r" {2,}", " ", cleaned)
     return cleaned
@@ -494,8 +583,8 @@ def _has_critical_term_conflict(question: str, answer: str, context: str) -> boo
     return not _has_chunk_support_for_labeled_terms(question, answer, context)
 
 
-def format_answer_for_user(answer: str, sources: Optional[List[str]]) -> str:
-    clean_answer = postprocess_answer(answer)
+def format_answer_for_user(answer: str, sources: Optional[List[str]], question: str = "") -> str:
+    clean_answer = postprocess_answer(answer, question=question)
     if not clean_answer:
         return clean_answer
 
@@ -529,6 +618,14 @@ def _extract_status_code(exc: Exception) -> Optional[int]:
         return int(match.group(1))
 
     return None
+
+
+def _record_model_error_503_event(model: str) -> None:
+    try:
+        from memory_service import record_model_error_event
+        record_model_error_event(model, 503, error_kind="http_503", origin="generate_ai_response")
+    except Exception:
+        logger.exception("No se pudo registrar el error 503 del modelo %s", model)
 
 
 def _is_transient_error(exc: Exception) -> bool:
@@ -585,7 +682,7 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
             text = _extract_response_text(response)
             if text and text.strip():
                 return {
-                    "text": postprocess_answer(text),
+                    "text": postprocess_answer(text, question=question),
                     "usage": _extract_usage(response),
                     "model": active_model,
                     "retries": retries,
@@ -596,7 +693,9 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
         except Exception as exc:
             last_error = exc
             logger.warning("Fallo Gemini %s (intento %s/%s): %s", active_model, attempt + 1, _MAX_ATTEMPTS, str(exc))
-            if _extract_status_code(exc) == 503:
+            status_code = _extract_status_code(exc)
+            if status_code == 503:
+                _record_model_error_503_event(active_model)
                 consecutive_503 += 1
                 if consecutive_503 >= _MAX_CONSECUTIVE_503:
                     logger.warning("[503_ABORT] %s consecutivos en %s; abandonando para usar fallback", consecutive_503, active_model)
@@ -694,7 +793,7 @@ def get_ai_response(question: str, context: str = "", history: Optional[List[Dic
 
 
 def validate_answer(question: str, answer: str, context: str, sources: Optional[List[str]]) -> Tuple[str, float]:
-    text = postprocess_answer(answer)
+    text = postprocess_answer(answer, question=question)
     confidence = 0.0
     lower_text = text.lower()
     context_lower = (context or "").lower()
@@ -751,6 +850,8 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     comparison_question = bool(profile["comparison"])
     procedure_question = bool(profile["procedure"])
     direct_fact_question = bool(profile["direct_fact"])
+    summary_question = bool(profile["summary"])
+    expects_multiple_items = bool(MULTI_ITEM_ASK_PATTERN.search(question or ""))
     partial_signal = bool(PARTIAL_SIGNAL_PATTERN.search(lower_text)) or "base documental: parcial" in lower_text
     explicit_signal = bool(EXPLICIT_SIGNAL_PATTERN.search(lower_text)) or "base documental: explic" in lower_text
     formula_fragment_signal = any(
@@ -763,6 +864,7 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     direct_definition_opening = bool(DEFINITION_DIRECT_ANSWER_PATTERN.search(first_non_source_line))
     vague_definition_signal = bool(VAGUE_DEFINITION_PATTERN.search(lower_text))
     list_format_signal = bool(LIST_FORMAT_PATTERN.search(text))
+    structured_item_count = _count_structured_items(text)
     has_step_markers = bool(re.search(r"\b(paso|primero|segundo|despues|a continuacion)\b", lower_text))
     comparison_markers = bool(re.search(r"\b(mientras que|por el contrario|en cambio|diferencia|frente a)\b", lower_text))
     labeled_term_conflicts = _find_labeled_term_conflicts(question, text, context)
@@ -784,6 +886,8 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence += 0.06
     elif list_question and len(text) < 40:
         confidence -= 0.08
+    if (list_question or summary_question) and expects_multiple_items and structured_item_count < 2 and not uncertainty_signal:
+        confidence -= 0.2
     if comparison_question and comparison_markers:
         confidence += 0.06
     elif comparison_question and not uncertainty_signal:
@@ -806,6 +910,8 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence -= 0.22
     if direct_fact_question and weak_definition_opening and not uncertainty_signal:
         confidence -= 0.12
+    if summary_question and expects_multiple_items and structured_item_count >= 2:
+        confidence += 0.08
     if labeled_term_conflicts:
         confidence -= 0.3
     if formula_fragment_signal:
@@ -830,6 +936,8 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     if direct_fact_question and weak_definition_opening and not direct_definition_opening:
         cap = min(cap, 0.65)
     if labeled_term_conflicts:
+        cap = min(cap, 0.55)
+    if (list_question or summary_question) and expects_multiple_items and structured_item_count < 2:
         cap = min(cap, 0.55)
     if (definition_question or direct_fact_question or numeric_question or list_question) and chunk_support_score < 0.35:
         cap = min(cap, 0.55)

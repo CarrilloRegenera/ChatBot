@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>REGENERA ChatBot</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=5">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -249,6 +249,7 @@
             <div class="admin-section">
                 <div class="admin-section-header">
                     <h4>Comparativa de modelos</h4>
+                    <button class="admin-refresh-btn" onclick="openAdmin503Modal()">Errores 503</button>
                 </div>
                 <div id="admin-model-comparison" class="admin-model-comparison"></div>
             </div>
@@ -262,7 +263,33 @@
         </div>
     </div>
 
-    <script src="app.js?v=3"></script>
+    <div id="admin-503-modal" class="admin-inline-modal hidden">
+        <div class="admin-inline-modal-overlay" onclick="closeAdmin503Modal()"></div>
+        <div class="admin-inline-modal-content">
+            <div class="admin-inline-modal-header">
+                <div>
+                    <h4>Comparativa de errores 503</h4>
+                    <p>Conteo de errores HTTP 503 entre el modelo base y el secundario.</p>
+                </div>
+                <button class="admin-close-btn" type="button" onclick="closeAdmin503Modal()">Cerrar</button>
+            </div>
+            <div class="admin-503-toolbar">
+                <label for="admin-503-hours">Filtrar por horas</label>
+                <select id="admin-503-hours" onchange="loadAdmin503Metrics()">
+                    <option value="1">1 hora</option>
+                    <option value="6">6 horas</option>
+                    <option value="12">12 horas</option>
+                    <option value="24" selected>24 horas</option>
+                    <option value="72">72 horas</option>
+                    <option value="168">168 horas</option>
+                </select>
+            </div>
+            <div id="admin-503-summary" class="admin-503-summary"></div>
+            <div id="admin-503-comparison" class="admin-503-comparison"></div>
+        </div>
+    </div>
+
+    <script src="app.js?v=5"></script>
 </body>
 </html>
 

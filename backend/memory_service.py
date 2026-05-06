@@ -60,11 +60,7 @@ MODEL_PRICING_USD_PER_MILLION = {
         "output": 2.50,
         "notes": "Tarifa estandar Google Gemini 2.5 Flash",
     },
-    "gemini-2.5-flash-lite": {
-        "input": 0.10,
-        "output": 0.40,
-        "notes": "Tarifa estandar Google Gemini 2.5 Flash-Lite",
-    },
+   
     "gemini-3-flash-preview": {
         "input": 0.50,
         "output": 3.00,
@@ -332,6 +328,72 @@ def get_admin_metrics(days: int = 30) -> Dict:
         "baseline_model": GEMINI_SECONDARY_MODEL,
         "model_breakdown": model_breakdown,
         "model_comparison": comparison_summary,
+    }
+
+
+def record_model_error_event(model: str, status_code: int, *, error_kind: str = "", origin: str = "") -> None:
+    normalized_model = (model or "").strip()
+    if not normalized_model or not status_code:
+        return
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO dbo.ModelErrorEvents (Modelo, StatusCode, ErrorKind, Origen)
+            VALUES (?, ?, ?, ?)
+            """,
+            normalized_model,
+            int(status_code),
+            (error_kind or "").strip()[:40],
+            (origin or "").strip()[:40],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_admin_503_metrics(hours: int = 24) -> Dict:
+    window_hours = max(1, min(abs(int(hours or 24)), 24 * 30))
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT
+                Modelo,
+                COUNT(*) AS total_503
+            FROM dbo.ModelErrorEvents
+            WHERE StatusCode = 503
+              AND FechaCreacion >= DATEADD(hour, ?, SYSUTCDATETIME())
+            GROUP BY Modelo
+            """,
+            -window_hours,
+        )
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
+
+    counts_by_model = {(row[0] or "").strip().lower(): int(row[1] or 0) for row in rows}
+    primary_model = OPENAI_MODEL
+    secondary_model = GEMINI_SECONDARY_MODEL
+    primary_count = counts_by_model.get(primary_model.strip().lower(), 0)
+    secondary_count = counts_by_model.get(secondary_model.strip().lower(), 0)
+
+    return {
+        "window_hours": window_hours,
+        "models": [
+            {"model": primary_model, "role": "base", "count_503": primary_count},
+            {"model": secondary_model, "role": "secundario", "count_503": secondary_count},
+        ],
+        "comparison": {
+            "base_model": primary_model,
+            "secondary_model": secondary_model,
+            "base_count_503": primary_count,
+            "secondary_count_503": secondary_count,
+            "delta_503": primary_count - secondary_count,
+        },
     }
 
 

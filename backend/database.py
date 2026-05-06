@@ -58,6 +58,22 @@ def ensure_app_schema():
 
     cursor.execute(
         """
+        IF OBJECT_ID('dbo.ModelErrorEvents', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.ModelErrorEvents (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                Modelo NVARCHAR(120) NOT NULL,
+                StatusCode INT NOT NULL,
+                ErrorKind NVARCHAR(40) NULL,
+                Origen NVARCHAR(40) NULL,
+                FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            );
+        END
+        """
+    )
+
+    cursor.execute(
+        """
         IF COL_LENGTH('dbo.InteraccionesRAG', 'PromptTokens') IS NULL
             ALTER TABLE dbo.InteraccionesRAG ADD PromptTokens INT NULL;
         IF COL_LENGTH('dbo.InteraccionesRAG', 'CompletionTokens') IS NULL

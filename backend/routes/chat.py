@@ -9,6 +9,7 @@ from ai_service import AIResponseError, format_answer_for_user, generate_ai_resp
 from database import get_connection
 from memory_service import (
     get_admin_metrics,
+    get_admin_503_metrics,
     list_pending_interactions,
     record_interaction_pending,
     reject_interaction,
@@ -197,7 +198,7 @@ def send_message(data: MessageRequest):
                 response = memory_hit["answer"]
                 sources = memory_hit.get("sources", [])
                 confidence = max(0.9, 1.0 - memory_hit.get("distance", 0.0))
-                response = format_answer_for_user(response, sources)
+                response = format_answer_for_user(response, sources, question=data.question)
                 from_memory = True
                 _log_chat_event(
                     event="MEMORY_HIT",
@@ -224,7 +225,7 @@ def send_message(data: MessageRequest):
                 response = generated["text"]
                 llm_retries = int(generated.get("retries", 0))
                 response, confidence = validate_answer(data.question, response, context=context, sources=sources)
-                response = format_answer_for_user(response, sources)
+                response = format_answer_for_user(response, sources, question=data.question)
                 elapsed_partial = int((time.time() - start) * 1000)
                 try:
                     stage_metrics_db_start = time.time()
@@ -322,6 +323,12 @@ def get_pending_knowledge(limit: int = 50):
 def admin_metrics(role: str, days: int = 30):
     _assert_admin(role)
     return get_admin_metrics(days=days)
+
+
+@router.get("/admin/metrics/errors-503")
+def admin_503_metrics(role: str, hours: int = 24):
+    _assert_admin(role)
+    return get_admin_503_metrics(hours=hours)
 
 
 @router.get("/admin/knowledge/pending")
