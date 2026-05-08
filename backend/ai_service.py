@@ -47,6 +47,10 @@ SUMMARY_ASK_PATTERN = re.compile(
     r"(?:\bresume\b|\bresumen\b|\bresumir\b|\bsintetiza\b|\bsintesis\b)",
     re.IGNORECASE,
 )
+TABLE_ASK_PATTERN = re.compile(
+    r"(?:\btabla\b|\bcircuitos?\s+minimos?\b|\bcircuitos?\s+mínimos?\b|\brelacion\s+de\b|\brelación\s+de\b|\blista\s+completa\b)",
+    re.IGNORECASE,
+)
 COMPARISON_ASK_PATTERN = re.compile(
     r"(?:\bdiferencia\b|\bdiferencias\b|\bcompara\b|\bcomparar\b|\bfrente\s+a\b|\bversus\b)",
     re.IGNORECASE,
@@ -97,6 +101,7 @@ def _infer_answer_profile(question: str) -> Dict[str, object]:
         "definition": bool(DEFINITION_ASK_PATTERN.search(q)),
         "list": bool(LIST_ASK_PATTERN.search(q)),
         "summary": bool(SUMMARY_ASK_PATTERN.search(q)),
+        "table": bool(TABLE_ASK_PATTERN.search(q)),
         "comparison": bool(COMPARISON_ASK_PATTERN.search(q)),
         "procedure": bool(PROCEDURE_ASK_PATTERN.search(q)),
         "numeric": bool(NUMERIC_ASK_PATTERN.search(q)),
@@ -105,6 +110,11 @@ def _infer_answer_profile(question: str) -> Dict[str, object]:
 
 
 def _build_output_instruction(profile: Dict[str, object]) -> str:
+    if profile["table"]:
+        return (
+            "Si el contexto contiene la tabla o el listado completo, enumera todos los elementos recuperados en una lista numerada 1. 2. 3. "
+            "Si el contexto solo remite a una tabla sin mostrar su contenido completo, indicalo claramente y no inventes los elementos que faltan."
+        )
     if profile["summary"] and profile["list"]:
         return (
             "Resume el conjunto completo en una lista numerada 1. 2. 3. "
@@ -164,12 +174,18 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
                 "18. Si el resumen trata sobre clases, tipos o categorias, incluye todos los elementos distintos presentes en el contexto con una descripcion breve de cada uno.\n"
                 "19. No devuelvas una sola clase o un solo fragmento si la pregunta pide un conjunto en plural, salvo que el contexto solo contenga ese unico elemento.\n"
             )
+        if profile["table"]:
+            intent_hint += (
+                "20. Si la pregunta depende de una tabla o listado completo, solo enumera los elementos si aparecen de forma recuperada y legible en el contexto.\n"
+                "21. Si el contexto menciona la tabla pero no contiene su contenido completo, di expresamente que no se puede reconstruir la lista completa con seguridad.\n"
+                "22. Evita responder con un unico elemento aislado si la pregunta pide un conjunto completo.\n"
+            )
         if profile["comparison"]:
-            intent_hint += "20. Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
+            intent_hint += "23. Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
         if profile["procedure"]:
-            intent_hint += "21. Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
+            intent_hint += "24. Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
         if profile["numeric"]:
-            intent_hint += "22. Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
+            intent_hint += "25. Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
 
         history_section = ""
         if history:
@@ -851,6 +867,7 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     procedure_question = bool(profile["procedure"])
     direct_fact_question = bool(profile["direct_fact"])
     summary_question = bool(profile["summary"])
+    table_question = bool(profile["table"])
     expects_multiple_items = bool(MULTI_ITEM_ASK_PATTERN.search(question or ""))
     partial_signal = bool(PARTIAL_SIGNAL_PATTERN.search(lower_text)) or "base documental: parcial" in lower_text
     explicit_signal = bool(EXPLICIT_SIGNAL_PATTERN.search(lower_text)) or "base documental: explic" in lower_text
@@ -886,8 +903,10 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence += 0.06
     elif list_question and len(text) < 40:
         confidence -= 0.08
-    if (list_question or summary_question) and expects_multiple_items and structured_item_count < 2 and not uncertainty_signal:
+    if (list_question or summary_question or table_question) and expects_multiple_items and structured_item_count < 2 and not uncertainty_signal:
         confidence -= 0.2
+    if table_question and "tabla" in lower_text and structured_item_count < 2 and not uncertainty_signal:
+        confidence -= 0.12
     if comparison_question and comparison_markers:
         confidence += 0.06
     elif comparison_question and not uncertainty_signal:
@@ -910,7 +929,7 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence -= 0.22
     if direct_fact_question and weak_definition_opening and not uncertainty_signal:
         confidence -= 0.12
-    if summary_question and expects_multiple_items and structured_item_count >= 2:
+    if (summary_question or table_question) and expects_multiple_items and structured_item_count >= 2:
         confidence += 0.08
     if labeled_term_conflicts:
         confidence -= 0.3
@@ -937,7 +956,7 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         cap = min(cap, 0.65)
     if labeled_term_conflicts:
         cap = min(cap, 0.55)
-    if (list_question or summary_question) and expects_multiple_items and structured_item_count < 2:
+    if (list_question or summary_question or table_question) and expects_multiple_items and structured_item_count < 2:
         cap = min(cap, 0.55)
     if (definition_question or direct_fact_question or numeric_question or list_question) and chunk_support_score < 0.35:
         cap = min(cap, 0.55)
