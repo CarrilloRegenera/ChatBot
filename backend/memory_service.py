@@ -4,8 +4,8 @@ from typing import Dict, List, Optional
 
 import chromadb
 
+from chroma_client import get_chroma_client
 from config import (
-    CHROMA_DB_PATH,
     GEMINI_SECONDARY_MODEL,
     OPENAI_MODEL,
     MEMORY_COLLECTION_NAME,
@@ -36,7 +36,7 @@ def _get_memory_collection(client: chromadb.PersistentClient, name: str, ef):
         return client.create_collection(name=name, embedding_function=ef, metadata={"ef_version": _MEMORY_EF_VERSION})
 
 
-chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+chroma_client = get_chroma_client()
 memory_collection = _get_memory_collection(chroma_client, MEMORY_COLLECTION_NAME, _embedding_fn)
 
 MODEL_PRICING_USD_PER_MILLION = {

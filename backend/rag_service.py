@@ -12,8 +12,8 @@ import fitz
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.util import cos_sim
 
+from chroma_client import get_chroma_client
 from config import (
-    CHROMA_DB_PATH,
     COLLECTION_NAME,
     DOCUMENTS_PATH,
     ENABLE_RERANK,
@@ -59,7 +59,12 @@ SUMMARY_QUERY_PATTERN = re.compile(
     r"(?:\bresume\b|\bresumen\b|\bresumir\b|\bsintetiza\b|\bsintesis\b)",
     re.IGNORECASE,
 )
+TABLE_QUERY_PATTERN = re.compile(
+    r"(?:\btabla\b|\bcircuitos?\s+minimos?\b|\bcircuitos?\s+mínimos?\b|\brelacion\s+de\b|\brelación\s+de\b|\blista\s+completa\b)",
+    re.IGNORECASE,
+)
 LIST_CUE_PATTERN = re.compile(r"(?:^|\n)(?:[-*]\s+|\d+\.\s+)", re.IGNORECASE)
+CIRCUIT_LIST_CUE_PATTERN = re.compile(r"\bC(?:1[0-3]?|[1-9])\b", re.IGNORECASE)
 COMPARISON_QUERY_PATTERN = re.compile(
     r"(?:\bdiferencia\b|\bdiferencias\b|\bcompara\b|\bcomparar\b|\bfrente\s+a\b|\bversus\b)",
     re.IGNORECASE,
@@ -76,11 +81,22 @@ PROCEDURE_CUE_PATTERN = re.compile(
     r"\b(?:paso|primero|segundo|a continuacion|debe|deben|se debe|se deben)\b",
     re.IGNORECASE,
 )
+LABELED_QUERY_PATTERNS = {
+    "clase": re.compile(r"\bclase\s+(i{1,3}|iv|v|vi|vii|viii|ix|x|\d+|[a-z])\b", re.IGNORECASE),
+    "tipo": re.compile(r"\btipo\s+([a-z0-9]+)\b", re.IGNORECASE),
+    "categoria": re.compile(r"\bcategor(?:ia|ía)\s+([a-z0-9]+)\b", re.IGNORECASE),
+    "grado_ip": re.compile(r"\bip\s?(\d{2}[a-z]?)\b", re.IGNORECASE),
+    "grado_ik": re.compile(r"\bik\s?(\d{2})\b", re.IGNORECASE),
+    "esquema": re.compile(r"\b(tt|tn(?:-?[sc])?|it)\b", re.IGNORECASE),
+}
 DEFINITION_PRIORITY_BOOST = 10
 LIST_PRIORITY_BOOST = 6
 SUMMARY_PRIORITY_BOOST = 5
+TABLE_PRIORITY_BOOST = 8
 COMPARISON_PRIORITY_BOOST_INTENT = 6
 PROCEDURE_PRIORITY_BOOST = 5
+LABELED_MATCH_PRIORITY_BOOST = 12
+LABELED_CONTEXT_PENALTY = 10
 
 
 logger = logging.getLogger(__name__)
@@ -131,7 +147,7 @@ def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -
         return client.create_collection(name=name, embedding_function=ef, metadata={"ef_version": _EF_VERSION})
 
 
-chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+chroma_client = get_chroma_client()
 _embedding_fn = _MultilingualEF() if _st_model else None
 collection = _get_or_reset_collection(chroma_client, COLLECTION_NAME, _embedding_fn)
 
@@ -308,6 +324,51 @@ def _extract_reference_terms(text: str) -> List[str]:
     return [match.group(0).strip().lower() for match in REFERENCE_PATTERN.finditer(text or "")]
 
 
+def _extract_labeled_terms(text: str) -> Dict[str, set[str]]:
+    extracted: Dict[str, set[str]] = {}
+    for family, pattern in LABELED_QUERY_PATTERNS.items():
+        matches = {
+            re.sub(r"\s+", "", match.group(1).lower())
+            for match in pattern.finditer(text or "")
+            if match.group(1)
+        }
+        if matches:
+            extracted[family] = matches
+    return extracted
+
+
+def _extract_disambiguation_terms(text: str, *, exclude_labeled: bool = True, limit: int = 6) -> List[str]:
+    stopwords = STOPWORDS.union({
+        "clase", "tipo", "categoria", "categoría", "grado", "esquema",
+        "cual", "cuales", "que", "qué", "como", "cómo", "caracteriza",
+        "caracteristicas", "características", "define", "definicion", "definición",
+        "materiales",
+    })
+    labeled_values = set()
+    if exclude_labeled:
+        for values in _extract_labeled_terms(text).values():
+            labeled_values.update(values)
+
+    terms = []
+    seen = set()
+    for token in _tokenize(text):
+        normalized = _normalize_text(token)
+        normalized = re.sub(r"\s+", "", normalized)
+        if (
+            not normalized
+            or normalized in stopwords
+            or normalized in labeled_values
+            or len(normalized) < 5
+            or normalized in seen
+        ):
+            continue
+        seen.add(normalized)
+        terms.append(normalized)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
 def _extract_topic_terms(text: str, limit: int = MAX_TOPIC_TOKENS) -> List[str]:
     tokens = []
     seen = set()
@@ -328,11 +389,14 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "normalized_question": normalized,
         "numeric_terms": _extract_numeric_terms(clean_question),
         "reference_terms": _extract_reference_terms(clean_question),
+        "labeled_terms": _extract_labeled_terms(clean_question),
+        "disambiguation_terms": _extract_disambiguation_terms(clean_question),
         "comparison": any(term in normalized for term in ("compara", "diferencia", "frente", "versus")),
         "expects_numeric": bool(re.search(r"\b(cuanto|cuantos|cuantas|valor|limite|potencia|resistencia|ohm|kw|mm2|m2|volt|amper|porcentaje)\b", normalized)),
         "definition_query": bool(DEFINITION_QUERY_PATTERN.search(normalized)),
         "list_query": bool(LIST_QUERY_PATTERN.search(normalized)),
         "summary_query": bool(SUMMARY_QUERY_PATTERN.search(normalized)),
+        "table_query": bool(TABLE_QUERY_PATTERN.search(normalized)),
         "comparison_query": bool(COMPARISON_QUERY_PATTERN.search(normalized)),
         "procedure_query": bool(PROCEDURE_QUERY_PATTERN.search(normalized)),
         "question_keywords": question_keywords,
@@ -512,8 +576,8 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
     core_terms = [_normalize_text(term) for term in _extract_core_terms(question_keywords)]
     query_profile = _build_query_profile(clean_question, question_keywords)
     normalized_question = query_profile["normalized_question"]
-    if query_profile["summary_query"] or query_profile["list_query"]:
-        n_results = max(n_results, 7)
+    if query_profile["summary_query"] or query_profile["list_query"] or query_profile["table_query"]:
+        n_results = max(n_results, 7 if not query_profile["table_query"] else 8)
 
     candidate_count = _candidate_window(n_results, question_keywords, clean_question)
     results = collection.query(query_texts=[clean_question], n_results=candidate_count)
@@ -532,6 +596,7 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
         doc_tokens = set(_tokenize(document))
         metadata_norm = _metadata_text(metadata)
         section_title = _normalize_text(str(metadata.get("section", "")))
+        document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
         overlap_score = len(question_tokens.intersection(doc_tokens))
         keyword_hits = sum(1 for kw in question_keywords if _normalize_text(kw) in doc_norm)
         core_hits = sum(1 for core in core_terms if core in doc_norm)
@@ -542,8 +607,22 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
         definition_hits = len(DEFINITION_CUE_PATTERN.findall(document)) if query_profile["definition_query"] else 0
         list_hits = 1 if query_profile["list_query"] and LIST_CUE_PATTERN.search(document) else 0
         summary_hits = 1 if query_profile["summary_query"] and (LIST_CUE_PATTERN.search(document) or metadata.get("section")) else 0
+        table_hits = 0
+        if query_profile["table_query"]:
+            table_hits = sum((
+                1 if "tabla" in doc_norm or "tabla" in metadata_norm or "tabla" in section_title else 0,
+                1 if LIST_CUE_PATTERN.search(document) else 0,
+                1 if CIRCUIT_LIST_CUE_PATTERN.search(document) else 0,
+            ))
         comparison_hits = len(COMPARISON_CUE_PATTERN.findall(document)) if query_profile["comparison_query"] else 0
         procedure_hits = len(PROCEDURE_CUE_PATTERN.findall(document)) if query_profile["procedure_query"] else 0
+        labeled_match_hits = 0
+        for family, asked_values in query_profile["labeled_terms"].items():
+            labeled_match_hits += sum(1 for value in asked_values if value in document_labeled_terms.get(family, set()))
+        disambiguation_hits = sum(
+            1 for term in query_profile["disambiguation_terms"]
+            if term in doc_norm or term in metadata_norm or term in section_title
+        )
 
         score = overlap_score + (keyword_hits * 2) + (core_hits * 4)
         if normalized_question and normalized_question in doc_norm:
@@ -554,10 +633,16 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
             score += list_hits * LIST_PRIORITY_BOOST
         if summary_hits:
             score += summary_hits * SUMMARY_PRIORITY_BOOST
+        if table_hits:
+            score += table_hits * TABLE_PRIORITY_BOOST
         if comparison_hits:
             score += comparison_hits * COMPARISON_PRIORITY_BOOST_INTENT
         if procedure_hits:
             score += procedure_hits * PROCEDURE_PRIORITY_BOOST
+        if labeled_match_hits:
+            score += labeled_match_hits * LABELED_MATCH_PRIORITY_BOOST
+            if query_profile["disambiguation_terms"] and disambiguation_hits == 0:
+                score -= LABELED_CONTEXT_PENALTY
         if numeric_hits:
             score += numeric_hits * NUMERIC_PRIORITY_BOOST
         elif query_profile["expects_numeric"] and not _extract_numeric_terms(document):
@@ -613,10 +698,32 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
                 lexical_score += LIST_PRIORITY_BOOST
             if query_profile["summary_query"] and (LIST_CUE_PATTERN.search(document) or metadata.get("section")):
                 lexical_score += SUMMARY_PRIORITY_BOOST
+            if query_profile["table_query"]:
+                if "tabla" in doc_norm or "tabla" in metadata_norm or "tabla" in section_title:
+                    lexical_score += TABLE_PRIORITY_BOOST
+                if LIST_CUE_PATTERN.search(document):
+                    lexical_score += TABLE_PRIORITY_BOOST
+                if CIRCUIT_LIST_CUE_PATTERN.search(document):
+                    lexical_score += TABLE_PRIORITY_BOOST
             if query_profile["comparison_query"] and COMPARISON_CUE_PATTERN.search(document):
                 lexical_score += COMPARISON_PRIORITY_BOOST_INTENT
             if query_profile["procedure_query"] and PROCEDURE_CUE_PATTERN.search(document):
                 lexical_score += PROCEDURE_PRIORITY_BOOST
+            document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
+            doc_norm = _normalize_text(document)
+            metadata_norm = _metadata_text(metadata)
+            section_title = _normalize_text(str(metadata.get("section", "")))
+            labeled_match_hits = 0
+            for family, asked_values in query_profile["labeled_terms"].items():
+                labeled_match_hits += sum(1 for value in asked_values if value in document_labeled_terms.get(family, set()))
+            if labeled_match_hits:
+                lexical_score += labeled_match_hits * LABELED_MATCH_PRIORITY_BOOST
+                disambiguation_hits = sum(
+                    1 for term in query_profile["disambiguation_terms"]
+                    if term in doc_norm or term in metadata_norm or term in section_title
+                )
+                if query_profile["disambiguation_terms"] and disambiguation_hits == 0:
+                    lexical_score -= LABELED_CONTEXT_PENALTY
             ranked_items.append((lexical_score, doc_id, document, metadata))
             seen_ids.add(doc_id)
 
