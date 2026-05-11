@@ -310,7 +310,6 @@ def get_admin_metrics(days: int = 30) -> Dict:
             "validation_rate_delta": round(current_model_stats["validation_rate"] - baseline_model_stats["validation_rate"], 4),
         },
     }
-
     return {
         "window_days": abs(days),
         "total_interactions": total_interactions,

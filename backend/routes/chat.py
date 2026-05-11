@@ -22,13 +22,17 @@ from models import (
     MessageRequest,
 )
 from query_router import classify_question
-from rag_service import search_documents, sync_documents
+from rag_service import search_documents_detailed, sync_documents
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 _locks_guard = Lock()
-_conversation_locks = {}
+_conversation_locks: Dict[int, Lock] = {}
+_lock_last_used: Dict[int, float] = {}
+_last_lock_cleanup: float = 0.0
+_LOCK_TTL = 1800
+_LOCK_CLEANUP_INTERVAL = 300
 
 
 def _q_preview(text: str, size: int = 90) -> str:
@@ -64,9 +68,20 @@ def _log_chat_event(
 
 
 def _get_conversation_lock(conversation_id: int) -> Lock:
+    global _last_lock_cleanup
     with _locks_guard:
+        now = time.time()
+        if now - _last_lock_cleanup > _LOCK_CLEANUP_INTERVAL:
+            stale = [cid for cid, ts in _lock_last_used.items() if now - ts > _LOCK_TTL]
+            for cid in stale:
+                _conversation_locks.pop(cid, None)
+                _lock_last_used.pop(cid, None)
+            if stale:
+                logger.debug("[LOCKS_CLEANUP] eliminados %d locks inactivos", len(stale))
+            _last_lock_cleanup = now
         if conversation_id not in _conversation_locks:
             _conversation_locks[conversation_id] = Lock()
+        _lock_last_used[conversation_id] = now
         return _conversation_locks[conversation_id]
 
 
@@ -86,7 +101,7 @@ def _get_recent_history(conversation_id: int, limit: int = 2) -> List[Dict]:
         rows = cursor.fetchall()
     finally:
         conn.close()
-    return [{"question": row[0], "response": row[1]} for row in rows]
+    return [{"question": row[0], "response": format_answer_for_user(row[1], None, question=row[0])} for row in rows]
 
 
 def _save_chat_message(conversation_id: int, question: str, response: str, elapsed_ms: int) -> int:
@@ -185,6 +200,7 @@ def send_message(data: MessageRequest):
 
         context = ""
         sources = []
+        retrieval_stats = {}
         confidence = 0.0
         from_memory = False
         rag_ms = 0
@@ -213,13 +229,19 @@ def send_message(data: MessageRequest):
                 )
             else:
                 stage_rag_start = time.time()
-                context, sources = search_documents(data.question)
+                context, sources, retrieval_stats = search_documents_detailed(data.question)
                 rag_ms = int((time.time() - stage_rag_start) * 1000)
 
                 history = _get_recent_history(data.conversation_id, limit=2)
                 stage_llm_start = time.time()
                 try:
-                    generated = generate_ai_response_with_fallback(data.question, context=context, sources=sources, history=history)
+                    generated = generate_ai_response_with_fallback(
+                        data.question,
+                        context=context,
+                        sources=sources,
+                        history=history,
+                        retrieval_stats=retrieval_stats,
+                    )
                 finally:
                     llm_ms = int((time.time() - stage_llm_start) * 1000)
                 response = generated["text"]

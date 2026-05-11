@@ -81,6 +81,15 @@ PROCEDURE_CUE_PATTERN = re.compile(
     r"\b(?:paso|primero|segundo|a continuacion|debe|deben|se debe|se deben)\b",
     re.IGNORECASE,
 )
+TEMPORAL_QUERY_PATTERN = re.compile(
+    r"(?:\bcuando\b|\bplazo\b|\bperiodicidad\b|\brevisar\b|\brevisione?s\b|\bfrecuencia\b)",
+    re.IGNORECASE,
+)
+TEMPORAL_CUE_PATTERN = re.compile(
+    r"\b(?:periodicidad|plazo|cada\s+\d|bienal|anual|trimestral|quinquenal|semestral|revisiones?)\b",
+    re.IGNORECASE,
+)
+TEMPORAL_INJECT_TERMS = ("periodicidad", "plazo", "revision")
 LABELED_QUERY_PATTERNS = {
     "clase": re.compile(r"\bclase\s+(i{1,3}|iv|v|vi|vii|viii|ix|x|\d+|[a-z])\b", re.IGNORECASE),
     "tipo": re.compile(r"\btipo\s+([a-z0-9]+)\b", re.IGNORECASE),
@@ -95,8 +104,19 @@ SUMMARY_PRIORITY_BOOST = 5
 TABLE_PRIORITY_BOOST = 8
 COMPARISON_PRIORITY_BOOST_INTENT = 6
 PROCEDURE_PRIORITY_BOOST = 5
+TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
 LABELED_CONTEXT_PENALTY = 10
+DOMAIN_SOURCE_HINTS = {
+    "alta_tension": ("a16436-16554", "alta tension", "itc-lat", "lat"),
+    "rite": ("a35931-35984", "rite", "instalaciones termicas"),
+    "baja_tension": ("boe-326_reglamento_electrotecnico_para_baja_tension_e_itc", "rebt", "baja tension", "itc-bt"),
+}
+DOMAIN_SOURCES = {
+    "alta_tension": "A16436-16554.pdf",
+    "rite": "A35931-35984.pdf",
+    "baja_tension": "BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf",
+}
 
 
 logger = logging.getLogger(__name__)
@@ -158,12 +178,12 @@ def _find_chunk_boundary(text: str, chunk_size: int = CHUNK_SIZE, grace: int = C
 
     forward_limit = min(len(text), chunk_size + grace)
     for idx in range(chunk_size, forward_limit):
-        if text[idx] in ".;:!?" and (idx + 1 == len(text) or text[idx + 1].isspace()):
+        if text[idx] in ".;!?" and (idx + 1 == len(text) or text[idx + 1].isspace()):
             return idx + 1
 
     backward_limit = max(MIN_CHUNK_LENGTH, chunk_size - grace)
     for idx in range(chunk_size - 1, backward_limit - 1, -1):
-        if text[idx] in ".;:!?" and (idx + 1 == len(text) or text[idx + 1].isspace()):
+        if text[idx] in ".;!?" and (idx + 1 == len(text) or text[idx + 1].isspace()):
             return idx + 1
 
     for idx in range(chunk_size, min(len(text), chunk_size + 80)):
@@ -399,6 +419,7 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "table_query": bool(TABLE_QUERY_PATTERN.search(normalized)),
         "comparison_query": bool(COMPARISON_QUERY_PATTERN.search(normalized)),
         "procedure_query": bool(PROCEDURE_QUERY_PATTERN.search(normalized)),
+        "temporal_query": bool(TEMPORAL_QUERY_PATTERN.search(normalized)),
         "question_keywords": question_keywords,
         "section_terms": _extract_topic_terms(clean_question, limit=MAX_TOPIC_TOKENS),
     }
@@ -434,12 +455,33 @@ def _metadata_text(metadata: Dict[str, object]) -> str:
     )
 
 
+def _source_domain_key(source_name: str) -> str:
+    normalized_source = _normalize_text(source_name or "")
+    for domain_key, hints in DOMAIN_SOURCE_HINTS.items():
+        if any(hint in normalized_source for hint in hints):
+            return domain_key
+    return "general"
+
+
+def _expected_domains(question: str) -> List[str]:
+    normalized = _normalize_text(question or "")
+    domains = []
+    if any(term in normalized for term in ("alta tension", "itc-lat", "lineas electricas de alta", "lat", "linea de at", "lineas de at", "instalacion at", "instalaciones at")):
+        domains.append("alta_tension")
+    if any(term in normalized for term in ("rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion")):
+        domains.append("rite")
+    if any(term in normalized for term in ("rebt", "baja tension", "itc-bt")):
+        domains.append("baja_tension")
+    return domains
+
+
 def reset_documents() -> None:
     chroma_client.delete_collection(COLLECTION_NAME)
     global collection
-    collection = chroma_client.get_or_create_collection(
+    collection = chroma_client.create_collection(
         name=COLLECTION_NAME,
         embedding_function=_embedding_fn,
+        metadata={"ef_version": _EF_VERSION},
     )
 
 
@@ -476,7 +518,22 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     pdf = fitz.open(str(filepath))
     try:
         for page_index, page in enumerate(pdf):
-            text = page.get_text("text")
+            import html as _html
+            raw_html = page.get_text("html")
+            p_pat = re.compile(r'<p style="top:([\d.]+)pt[^"]*line-height:([\d.]+)pt[^"]*"[^>]*>(.*?)</p>', re.DOTALL)
+            lines = []
+            prev_top = None
+            prev_lh = 10.0
+            for top_s, lh_s, content in p_pat.findall(raw_html):
+                top, lh = float(top_s), float(lh_s)
+                txt = _html.unescape(re.sub(r"<[^>]+>", "", content)).strip()
+                if txt:
+                    if prev_top is not None and (top - prev_top) > prev_lh + 3.0:
+                        lines.append("")
+                    lines.append(txt)
+                    prev_top = top
+                    prev_lh = lh
+            text = "\n".join(lines)
             page_blocks = _extract_text_blocks(text)
             if not page_blocks:
                 continue
@@ -557,33 +614,75 @@ def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> in
     return collection.count()
 
 
-def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str]]:
+def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
-        return "", []
+        return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
 
     clean_question = _clean_question(question)
     if collection.count() == 0:
         try:
             sync_documents()
         except Exception:
-            return "", []
+            return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
         if collection.count() == 0:
-            return "", []
+            return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
 
     n_results = max(n_results, 6)
     question_tokens = set(_tokenize(clean_question))
     question_keywords = {token for token in question_tokens if token not in STOPWORDS and len(token) >= 5}
     core_terms = [_normalize_text(term) for term in _extract_core_terms(question_keywords)]
     query_profile = _build_query_profile(clean_question, question_keywords)
+    if query_profile["temporal_query"]:
+        for t in TEMPORAL_INJECT_TERMS:
+            if t not in core_terms:
+                core_terms.append(t)
     normalized_question = query_profile["normalized_question"]
+    expected_domains = _expected_domains(clean_question)
+    broad_query = any((
+        query_profile["definition_query"],
+        query_profile["list_query"],
+        query_profile["summary_query"],
+        query_profile["table_query"],
+        query_profile["comparison_query"],
+    ))
     if query_profile["summary_query"] or query_profile["list_query"] or query_profile["table_query"]:
         n_results = max(n_results, 8 if not query_profile["table_query"] else 10)
+    elif query_profile["definition_query"] or query_profile["comparison_query"]:
+        n_results = max(n_results, 7)
 
     candidate_count = _candidate_window(n_results, question_keywords, clean_question)
+    if broad_query:
+        candidate_count = min(candidate_count + 12, 80)
     results = collection.query(query_texts=[clean_question], n_results=candidate_count)
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     ids = results.get("ids", [[]])[0]
+
+    if expected_domains:
+        existing_ids = set(ids)
+        for domain in expected_domains:
+            source_file = DOMAIN_SOURCES.get(domain)
+            if not source_file:
+                continue
+            try:
+                forced_n = min(n_results + 6, 14)
+                domain_results = collection.query(
+                    query_texts=[clean_question],
+                    n_results=forced_n,
+                    where={"source": source_file},
+                )
+                for doc, meta, fid in zip(
+                    domain_results.get("documents", [[]])[0],
+                    domain_results.get("metadatas", [[]])[0],
+                    domain_results.get("ids", [[]])[0],
+                ):
+                    if fid not in existing_ids:
+                        documents.append(doc)
+                        metadatas.append(meta)
+                        ids.append(fid)
+                        existing_ids.add(fid)
+            except Exception as exc:
+                logger.warning("Domain-forced retrieval failed for %s: %s", domain, exc)
 
     ranked_items = []
     seen_ids = set()
@@ -596,6 +695,8 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
         doc_tokens = set(_tokenize(document))
         metadata_norm = _metadata_text(metadata)
         section_title = _normalize_text(str(metadata.get("section", "")))
+        source_title = _normalize_text(str(metadata.get("source", "")).replace("/", " "))
+        source_domain = _source_domain_key(str(metadata.get("source", "")))
         document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
         overlap_score = len(question_tokens.intersection(doc_tokens))
         keyword_hits = sum(1 for kw in question_keywords if _normalize_text(kw) in doc_norm)
@@ -604,6 +705,7 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
         reference_hits = sum(1 for term in query_profile["reference_terms"] if term in doc_norm or term in metadata_norm)
         section_hits = sum(1 for term in query_profile["section_terms"] if term in metadata_norm)
         section_title_hits = sum(1 for term in query_profile["section_terms"] if term in section_title)
+        source_title_hits = sum(1 for term in query_profile["section_terms"] if term in source_title)
         definition_hits = len(DEFINITION_CUE_PATTERN.findall(document)) if query_profile["definition_query"] else 0
         list_hits = 1 if query_profile["list_query"] and LIST_CUE_PATTERN.search(document) else 0
         summary_hits = 1 if query_profile["summary_query"] and (LIST_CUE_PATTERN.search(document) or metadata.get("section")) else 0
@@ -616,6 +718,7 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
             ))
         comparison_hits = len(COMPARISON_CUE_PATTERN.findall(document)) if query_profile["comparison_query"] else 0
         procedure_hits = len(PROCEDURE_CUE_PATTERN.findall(document)) if query_profile["procedure_query"] else 0
+        temporal_hits = len(TEMPORAL_CUE_PATTERN.findall(document)) if query_profile["temporal_query"] else 0
         labeled_match_hits = 0
         for family, asked_values in query_profile["labeled_terms"].items():
             labeled_match_hits += sum(1 for value in asked_values if value in document_labeled_terms.get(family, set()))
@@ -639,6 +742,8 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
             score += comparison_hits * COMPARISON_PRIORITY_BOOST_INTENT
         if procedure_hits:
             score += procedure_hits * PROCEDURE_PRIORITY_BOOST
+        if temporal_hits:
+            score += temporal_hits * TEMPORAL_PRIORITY_BOOST
         if labeled_match_hits:
             score += labeled_match_hits * LABELED_MATCH_PRIORITY_BOOST
             if query_profile["disambiguation_terms"] and disambiguation_hits == 0:
@@ -653,6 +758,13 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
             score += section_hits * SECTION_PRIORITY_BOOST
         if section_title_hits >= 2:
             score += section_title_hits * SECTION_TITLE_BOOST
+        if source_title_hits:
+            score += source_title_hits * 5
+        if expected_domains:
+            if source_domain in expected_domains:
+                score += 12
+            else:
+                score -= 10
         if query_profile["comparison"] and len(doc_tokens.intersection(question_tokens)) >= 2:
             score += COMPARISON_PRIORITY_BOOST
         if core_terms and core_hits == 0:
@@ -709,6 +821,8 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
                 lexical_score += COMPARISON_PRIORITY_BOOST_INTENT
             if query_profile["procedure_query"] and PROCEDURE_CUE_PATTERN.search(document):
                 lexical_score += PROCEDURE_PRIORITY_BOOST
+            if query_profile["temporal_query"] and TEMPORAL_CUE_PATTERN.search(document):
+                lexical_score += TEMPORAL_PRIORITY_BOOST
             document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
             doc_norm = _normalize_text(document)
             metadata_norm = _metadata_text(metadata)
@@ -728,7 +842,13 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
             seen_ids.add(doc_id)
 
     if not ranked_items:
-        return "", []
+        return "", [], {
+            "candidate_count": candidate_count,
+            "selected_count": 0,
+            "source_diversity": 0,
+            "expected_domains": expected_domains,
+            "domain_match_ratio": 0.0,
+        }
 
     if rerank_model:
         query_embedding = rerank_model.encode(clean_question, convert_to_tensor=True)
@@ -749,13 +869,20 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
     selected_ids = set()
     source_counts = {}
     section_counts = {}
+    source_cap = MAX_CHUNKS_PER_SOURCE + (2 if broad_query else 0)
+    section_cap = 3 if broad_query else 2
+    diversity_target = 0
+    if query_profile["comparison_query"] or query_profile["summary_query"] or query_profile["list_query"]:
+        diversity_target = min(3, len({item[3].get("source", "unknown") for item in ranked_items}))
     for item in ranked_items:
         _, doc_id, _, metadata = item
         source_name = metadata.get("source", "unknown")
         section_name = metadata.get("section", "") or "__none__"
-        if source_counts.get(source_name, 0) >= MAX_CHUNKS_PER_SOURCE:
+        if diversity_target and len(source_counts) < diversity_target and source_name in source_counts:
             continue
-        if section_counts.get((source_name, section_name), 0) >= 2:
+        if source_counts.get(source_name, 0) >= source_cap:
+            continue
+        if section_counts.get((source_name, section_name), 0) >= section_cap:
             continue
         selected.append(item)
         selected_ids.add(doc_id)
@@ -792,6 +919,7 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
     context_parts = []
     sources = []
     seen_sources = set()
+    matched_domains = 0
     for _, _, document, metadata in selected:
         clean_section = _sanitize_section_label(str(metadata.get("section", "")))
         section_suffix = f", {clean_section}" if clean_section else ""
@@ -800,5 +928,23 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
         if source_label not in seen_sources:
             sources.append(source_label)
             seen_sources.add(source_label)
+        if expected_domains and _source_domain_key(str(metadata.get("source", ""))) in expected_domains:
+            matched_domains += 1
 
-    return "\n\n".join(context_parts), sources
+    source_names = [str(item[3].get("source", "unknown")) for item in selected]
+    unique_source_names = sorted(set(source_names))
+    retrieval_stats = {
+        "candidate_count": candidate_count,
+        "selected_count": len(selected),
+        "source_diversity": len(unique_source_names),
+        "top_sources": unique_source_names[:5],
+        "expected_domains": expected_domains,
+        "domain_match_ratio": round(matched_domains / max(len(selected), 1), 4) if expected_domains else 1.0,
+        "broad_query": broad_query,
+    }
+    return "\n\n".join(context_parts), sources, retrieval_stats
+
+
+def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str]]:
+    context, sources, _ = search_documents_detailed(question, n_results=n_results)
+    return context, sources

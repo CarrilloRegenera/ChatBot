@@ -31,7 +31,7 @@ TRUNCATED_ENDING_PATTERN = re.compile(
     re.IGNORECASE,
 )
 UNSAFE_LAST_FRAGMENT_PATTERN = re.compile(
-    r"(?:[:;,]\s*$|(?:\b(?:a|al|de|del|en|la|el|los|las|un|una|y|o|con|para|por|que|su|sus)\s*)$)",
+    r"(?:[:;,]\s*$|(?:\b(?:a|al|de|del|en|la|el|los|las|un|una|y|o|con|para|por|que|su|sus|no|ni|sino|aunque|como|cuando|donde|si)\s*)$)",
     re.IGNORECASE,
 )
 MARKDOWN_PATTERN = re.compile(r"\*{1,3}([^*\n]*)\*{1,3}|\*+|^#{1,6}\s+", re.MULTILINE)
@@ -81,6 +81,11 @@ TRAILING_METADATA_PATTERN = re.compile(
     r"(?:(?:^|\n)[ \t]*|(?<=[.!?])\s+)(?:Base documental:|Fuentes:).*",
     re.IGNORECASE | re.DOTALL,
 )
+PROMPT_LEAK_LINE_PATTERN = re.compile(
+    r"^(?:wait,\s*rule\b|reglas?\s+obligatorias:|formato\s+de\s+salida\s+obligatorio:|contexto:|pregunta:|historial\s+reciente:)\b",
+    re.IGNORECASE,
+)
+PROMPT_LEAK_INLINE_PATTERN = re.compile(r"wait,\s*rule\s*\d+.*", re.IGNORECASE)
 LABELED_TERM_PATTERNS = {
     "clase": re.compile(r"\bclase\s+(i{1,3}|iv|v|vi|vii|viii|ix|x|\d+|[a-z])\b", re.IGNORECASE),
     "tipo": re.compile(r"\btipo\s+([a-z0-9]+)\b", re.IGNORECASE),
@@ -307,6 +312,13 @@ def _trim_unsafe_last_line(line: str) -> str:
     if not candidate:
         return candidate
 
+    # Mid-word cut: ends with a letter but no sentence terminator → trim to last sentence
+    if candidate[-1].isalpha() and not re.search(r"[.!?]\s*$", candidate):
+        for sep in (". ", "? ", "! ", "; "):
+            if sep in candidate:
+                candidate = candidate.rsplit(sep, 1)[0] + sep.rstrip()
+                break
+
     if TRUNCATED_ENDING_PATTERN.search(candidate) or UNSAFE_LAST_FRAGMENT_PATTERN.search(candidate):
         trimmed = False
         for separator in (". ", "? ", "! ", "; ", ": ", ", "):
@@ -315,7 +327,6 @@ def _trim_unsafe_last_line(line: str) -> str:
                 trimmed = True
                 break
         if not trimmed:
-            # No clause boundary found: remove only the trailing unsafe word
             candidate = re.sub(r"\s+\S+\s*$", "", candidate).rstrip(" ,;:")
 
     candidate = re.sub(r"\s+", " ", candidate).strip(" \t,;:")
@@ -393,6 +404,7 @@ def postprocess_answer(text: str, question: str = "") -> str:
     raw = re.sub(r'^#{1,6}\s+', '', raw, flags=re.MULTILINE)  # ## headings → plain text
 
     raw = TRAILING_METADATA_PATTERN.sub("", raw).strip()
+    raw = PROMPT_LEAK_INLINE_PATTERN.sub("", raw).strip()
 
     lines = [line.rstrip() for line in raw.splitlines()]
     processed = []
@@ -401,6 +413,8 @@ def postprocess_answer(text: str, question: str = "") -> str:
         if not stripped:
             if processed and processed[-1] != "":
                 processed.append("")
+            continue
+        if PROMPT_LEAK_LINE_PATTERN.match(stripped):
             continue
 
         if idx == len(lines) - 1 and not stripped.lower().startswith("fuentes:"):
@@ -596,19 +610,12 @@ def _has_critical_term_conflict(question: str, answer: str, context: str) -> boo
         return False
     if _find_labeled_term_conflicts(question, answer, context):
         return True
-    return not _has_chunk_support_for_labeled_terms(question, answer, context)
+    return not _has_chunk_support_for_labeled_terms(question, answer, context) and _best_chunk_support_score(question, answer, context) < 0.25
 
 
 def format_answer_for_user(answer: str, sources: Optional[List[str]], question: str = "") -> str:
     clean_answer = postprocess_answer(answer, question=question)
-    if not clean_answer:
-        return clean_answer
-
-    basis = _infer_document_basis(clean_answer)
-    metadata_lines = [f"Base documental: La respuesta es {basis} en el contexto."]
-    if sources:
-        metadata_lines.append(f"Fuentes: {', '.join(sources)}")
-    return f"{clean_answer}\n" + "\n".join(metadata_lines)
+    return clean_answer
 
 
 _RETRY_WAITS = [2, 5, 10, 20]  # segundos entre intentos (backoff para errores transitorios)
@@ -678,6 +685,60 @@ def _is_complex_question(question: str) -> bool:
     return is_very_long or is_multi_part or is_long_and_analytical
 
 
+def _effective_confidence_threshold(question: str) -> float:
+    profile = _infer_answer_profile(question)
+    threshold = CONFIDENCE_FALLBACK_THRESHOLD
+    if profile["comparison"] or profile["summary"] or profile["table"]:
+        threshold -= 0.08
+    elif profile["list"] or profile["procedure"]:
+        threshold -= 0.06
+    elif profile["definition"] or profile["direct_fact"]:
+        threshold -= 0.04
+    return max(0.5, round(threshold, 2))
+
+
+def _retrieval_quality(retrieval_stats: Optional[Dict[str, object]]) -> str:
+    if not retrieval_stats:
+        return "unknown"
+    domain_match_ratio = float(retrieval_stats.get("domain_match_ratio", 1.0) or 0.0)
+    source_diversity = int(retrieval_stats.get("source_diversity", 0) or 0)
+    selected_count = int(retrieval_stats.get("selected_count", 0) or 0)
+    expected_domains = retrieval_stats.get("expected_domains") or []
+    if selected_count == 0:
+        return "empty"
+    if expected_domains and domain_match_ratio < 0.34:
+        return "poor"
+    if source_diversity == 0:
+        return "poor"
+    if domain_match_ratio >= 0.67 or not expected_domains:
+        return "good"
+    return "mixed"
+
+
+def _should_escalate(
+    question: str,
+    base_text: str,
+    confidence: float,
+    confidence_threshold: float,
+    primary_has_conflict: bool,
+    retrieval_stats: Optional[Dict[str, object]],
+) -> Optional[str]:
+    lower_text = (base_text or "").lower()
+    retrieval_quality = _retrieval_quality(retrieval_stats)
+    explicit_insufficient = "no hay informacion suficiente" in lower_text
+    if primary_has_conflict and confidence < max(0.45, confidence_threshold - 0.1):
+        return "conflict"
+    if explicit_insufficient and retrieval_quality in {"good", "mixed"}:
+        return "insufficient_with_context"
+    if retrieval_quality == "poor":
+        return None
+    if _is_complex_question(question) and confidence < confidence_threshold:
+        return "complex_low_confidence"
+    if confidence < max(0.42, confidence_threshold - 0.12):
+        return "low_confidence"
+    return None
+
+
 def generate_ai_response(question: str, context: str = "", history: Optional[List[Dict]] = None, *, model: Optional[str] = None) -> Dict:
     prompt = _build_prompt(question=question, context=context, history=history)
     active_model = model or OPENAI_MODEL
@@ -697,6 +758,11 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
             )
             text = _extract_response_text(response)
             if text and text.strip():
+                candidates_list = getattr(response, "candidates", None) or []
+                if candidates_list:
+                    finish_reason = getattr(candidates_list[0], "finish_reason", None)
+                    if finish_reason and str(finish_reason) not in ("STOP", "FinishReason.STOP", "1"):
+                        logger.warning("[FINISH_REASON] %s model=%s", finish_reason, active_model)
                 return {
                     "text": postprocess_answer(text, question=question),
                     "usage": _extract_usage(response),
@@ -737,7 +803,14 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
     )
 
 
-def generate_ai_response_with_fallback(question: str, context: str = "", sources: Optional[List[str]] = None, history: Optional[List[Dict]] = None) -> Dict:
+def generate_ai_response_with_fallback(
+    question: str,
+    context: str = "",
+    sources: Optional[List[str]] = None,
+    history: Optional[List[Dict]] = None,
+    retrieval_stats: Optional[Dict[str, object]] = None,
+) -> Dict:
+    confidence_threshold = _effective_confidence_threshold(question)
     try:
         result = generate_ai_response(question, context=context, history=history)
     except AIResponseError as exc:
@@ -766,23 +839,45 @@ def generate_ai_response_with_fallback(question: str, context: str = "", sources
 
     _, confidence = validate_answer(question, result["text"], context, sources)
     primary_has_conflict = _has_critical_term_conflict(question, result["text"], context)
-    complex_q = _is_complex_question(question)
+    escalation_reason = _should_escalate(
+        question,
+        result["text"],
+        confidence,
+        confidence_threshold,
+        primary_has_conflict,
+        retrieval_stats,
+    )
+    result["base_model"] = result.get("source_model") or OPENAI_MODEL
+    result["base_confidence"] = round(confidence, 4)
+    result["confidence_threshold"] = confidence_threshold
+    result["base_conflict"] = primary_has_conflict
+    result["retrieval_quality"] = _retrieval_quality(retrieval_stats)
+    result["escalation_reason"] = escalation_reason or ""
 
-    if confidence >= CONFIDENCE_FALLBACK_THRESHOLD and not complex_q and not primary_has_conflict:
+    if not escalation_reason:
         result["confidence"] = round(confidence, 4)
+        result["final_model"] = result.get("model", OPENAI_MODEL)
         return result
 
     logger.info(
-        "[MODEL_FALLBACK] conf=%.2f complex=%s modelo_secundario=%s q='%s'",
-        confidence, complex_q, GEMINI_SECONDARY_MODEL, question[:80],
+        "[MODEL_FALLBACK] conf=%.2f reason=%s retrieval=%s modelo_secundario=%s q='%s'",
+        confidence, escalation_reason, result["retrieval_quality"], GEMINI_SECONDARY_MODEL, question[:80],
     )
     try:
         result_pro = generate_ai_response(question, context=context, history=history, model=GEMINI_SECONDARY_MODEL)
         result_pro["escalated"] = True
         result_pro["flash_confidence"] = round(confidence, 4)
+        result_pro["base_confidence"] = round(confidence, 4)
+        result_pro["confidence_threshold"] = confidence_threshold
+        result_pro["base_conflict"] = primary_has_conflict
+        result_pro["escalation_reason"] = escalation_reason
+        result_pro["retrieval_quality"] = _retrieval_quality(retrieval_stats)
+        result_pro["base_model"] = result.get("source_model") or OPENAI_MODEL
+        result_pro["final_model"] = GEMINI_SECONDARY_MODEL
         _, secondary_confidence = validate_answer(question, result_pro["text"], context, sources)
         secondary_has_conflict = _has_critical_term_conflict(question, result_pro["text"], context)
-        if secondary_has_conflict and secondary_confidence < CONFIDENCE_FALLBACK_THRESHOLD:
+        result_pro["secondary_conflict"] = secondary_has_conflict
+        if secondary_has_conflict and secondary_confidence < max(0.45, confidence_threshold - 0.12):
             logger.warning(
                 "[MODEL_FALLBACK_REJECT] respuesta inconsistente tras fallback en %s; devolviendo insuficiencia",
                 GEMINI_SECONDARY_MODEL,
@@ -797,12 +892,13 @@ def generate_ai_response_with_fallback(question: str, context: str = "", sources
             GEMINI_SECONDARY_MODEL,
             str(exc),
         )
-        if primary_has_conflict and confidence < CONFIDENCE_FALLBACK_THRESHOLD:
+        if primary_has_conflict and confidence < max(0.45, confidence_threshold - 0.12):
             logger.warning("[PRIMARY_REJECT] respuesta base inconsistente con el contexto; devolviendo insuficiencia")
             result["text"] = "No hay informacion suficiente en el contexto recuperado"
         result["pro_fallback_failed"] = True
         result["flash_confidence"] = round(confidence, 4)
         result["confidence"] = round(confidence, 4)
+        result["final_model"] = result.get("model", OPENAI_MODEL)
         result["retries"] = max(int(result.get("retries", 0) or 0), int(getattr(exc, "retries", 0) or 0))
         return result
 
@@ -831,9 +927,6 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence += 0.2
         if len(source_list) >= 2:
             confidence += 0.05
-        if "fuentes:" not in lower_text:
-            text = f"{text}\nFuentes: {', '.join(source_list)}"
-            lower_text = text.lower()
 
     significant_tokens = [
         token for token in re.findall(r"[A-Za-z0-9]{5,}", lower_text)
@@ -908,9 +1001,9 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     elif list_question and len(text) < 40:
         confidence -= 0.08
     if (list_question or summary_question or table_question) and expects_multiple_items and structured_item_count < 2 and not uncertainty_signal:
-        confidence -= 0.2
-    if table_question and "tabla" in lower_text and structured_item_count < 2 and not uncertainty_signal:
         confidence -= 0.12
+    if table_question and "tabla" in lower_text and structured_item_count < 2 and not uncertainty_signal:
+        confidence -= 0.08
     if comparison_question and comparison_markers:
         confidence += 0.06
     elif comparison_question and not uncertainty_signal:
@@ -921,10 +1014,12 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence += 0.12
     elif chunk_support_score >= 0.55:
         confidence += 0.06
+    elif chunk_support_score >= 0.4 and (definition_question or direct_fact_question or numeric_question):
+        confidence += 0.03
     elif (definition_question or direct_fact_question or numeric_question or list_question) and chunk_support_score < 0.35:
-        confidence -= 0.22
-    elif chunk_support_score < 0.22:
         confidence -= 0.12
+    elif chunk_support_score < 0.22:
+        confidence -= 0.08
     if definition_question and direct_definition_opening:
         confidence += 0.08
     elif definition_question and weak_definition_opening:
@@ -955,15 +1050,15 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     if formula_fragment_signal:
         cap = min(cap, 0.7)
     if definition_question and (weak_definition_opening or vague_definition_signal) and not direct_definition_opening:
-        cap = min(cap, 0.55)
+        cap = min(cap, 0.62)
     if direct_fact_question and weak_definition_opening and not direct_definition_opening:
-        cap = min(cap, 0.65)
+        cap = min(cap, 0.68)
     if labeled_term_conflicts:
-        cap = min(cap, 0.55)
+        cap = min(cap, 0.58)
     if (list_question or summary_question or table_question) and expects_multiple_items and structured_item_count < 2:
-        cap = min(cap, 0.55)
+        cap = min(cap, 0.62)
     if (definition_question or direct_fact_question or numeric_question or list_question) and chunk_support_score < 0.35:
-        cap = min(cap, 0.55)
+        cap = min(cap, 0.6)
 
     confidence = min(max(confidence, 0.0), cap)
     return text, confidence

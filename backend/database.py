@@ -91,5 +91,25 @@ def ensure_app_schema():
         """
     )
 
+    cursor.execute(
+        """
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InteraccionesRAG_Estado'
+                       AND object_id = OBJECT_ID('dbo.InteraccionesRAG'))
+            CREATE INDEX IX_InteraccionesRAG_Estado
+                ON dbo.InteraccionesRAG (Estado);
+
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InteraccionesRAG_FechaCreacion'
+                       AND object_id = OBJECT_ID('dbo.InteraccionesRAG'))
+            CREATE INDEX IX_InteraccionesRAG_FechaCreacion
+                ON dbo.InteraccionesRAG (FechaCreacion);
+
+        IF OBJECT_ID('dbo.Mensajes', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Mensajes_ConversacionId'
+                           AND object_id = OBJECT_ID('dbo.Mensajes'))
+            CREATE INDEX IX_Mensajes_ConversacionId
+                ON dbo.Mensajes (ConversacionId);
+        """
+    )
+
     conn.commit()
     conn.close()
