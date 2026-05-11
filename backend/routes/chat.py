@@ -5,7 +5,7 @@ from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException
 
-from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback, validate_answer
+from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from database import get_connection
 from memory_service import (
     get_admin_metrics,
@@ -224,7 +224,7 @@ def send_message(data: MessageRequest):
                     llm_ms = int((time.time() - stage_llm_start) * 1000)
                 response = generated["text"]
                 llm_retries = int(generated.get("retries", 0))
-                response, confidence = validate_answer(data.question, response, context=context, sources=sources)
+                confidence = generated.get("confidence", 0.0)
                 response = format_answer_for_user(response, sources, question=data.question)
                 elapsed_partial = int((time.time() - start) * 1000)
                 try:

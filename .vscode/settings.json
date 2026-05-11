@@ -1,0 +1,14 @@
+{
+  "liveServer.settings.ignoreFiles": [
+    "**/.vscode/**",
+    "**/.git/**",
+    "**/.vs/**",
+    "**/.claude/**",
+    "**/backend/**",
+    "**/chroma_db/**",
+    "**/documentos/**",
+    "**/__pycache__/**",
+    "**/*.py",
+    "**/*.pyc"
+  ]
+}

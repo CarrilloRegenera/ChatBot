@@ -769,6 +769,7 @@ def generate_ai_response_with_fallback(question: str, context: str = "", sources
     complex_q = _is_complex_question(question)
 
     if confidence >= CONFIDENCE_FALLBACK_THRESHOLD and not complex_q and not primary_has_conflict:
+        result["confidence"] = round(confidence, 4)
         return result
 
     logger.info(
@@ -787,6 +788,8 @@ def generate_ai_response_with_fallback(question: str, context: str = "", sources
                 GEMINI_SECONDARY_MODEL,
             )
             result_pro["text"] = "No hay informacion suficiente en el contexto recuperado"
+            secondary_confidence = 0.0
+        result_pro["confidence"] = round(secondary_confidence, 4)
         return result_pro
     except AIResponseError as exc:
         logger.warning(
@@ -799,6 +802,7 @@ def generate_ai_response_with_fallback(question: str, context: str = "", sources
             result["text"] = "No hay informacion suficiente en el contexto recuperado"
         result["pro_fallback_failed"] = True
         result["flash_confidence"] = round(confidence, 4)
+        result["confidence"] = round(confidence, 4)
         result["retries"] = max(int(result.get("retries", 0) or 0), int(getattr(exc, "retries", 0) or 0))
         return result
 
