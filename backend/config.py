@@ -32,7 +32,7 @@ CONFIDENCE_FALLBACK_THRESHOLD = float(os.getenv("CONFIDENCE_FALLBACK_THRESHOLD",
 # Keep a Gemini baseline by default so historical cost/quality comparisons
 # remain meaningful after moving the live traffic to OpenAI.
 OPENAI_BASELINE_MODEL = (os.getenv("GEMINI_BASELINE_MODEL") or os.getenv("OPENAI_BASELINE_MODEL", "gemini-2.5-flash")).strip()
-TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", "3"))
+TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", "6"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "reglamentos").strip()
 RECURSIVE_PDF_SCAN = os.getenv("RECURSIVE_PDF_SCAN", "true").strip().lower() in {"1", "true", "yes", "on"}
 ENABLE_RERANK = os.getenv("ENABLE_RERANK", "true").strip().lower() in {"1", "true", "yes", "on"}

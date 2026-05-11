@@ -570,14 +570,14 @@ def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str
         if collection.count() == 0:
             return "", []
 
-    n_results = max(n_results, 5)
+    n_results = max(n_results, 6)
     question_tokens = set(_tokenize(clean_question))
     question_keywords = {token for token in question_tokens if token not in STOPWORDS and len(token) >= 5}
     core_terms = [_normalize_text(term) for term in _extract_core_terms(question_keywords)]
     query_profile = _build_query_profile(clean_question, question_keywords)
     normalized_question = query_profile["normalized_question"]
     if query_profile["summary_query"] or query_profile["list_query"] or query_profile["table_query"]:
-        n_results = max(n_results, 7 if not query_profile["table_query"] else 8)
+        n_results = max(n_results, 8 if not query_profile["table_query"] else 10)
 
     candidate_count = _candidate_window(n_results, question_keywords, clean_question)
     results = collection.query(query_texts=[clean_question], n_results=candidate_count)
