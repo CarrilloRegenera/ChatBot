@@ -1,4 +1,4 @@
-from google import genai
+from openai import OpenAI
 import logging
 import re
 import time
@@ -6,8 +6,8 @@ from typing import Dict, List, Optional, Tuple
 
 from config import (
     CONFIDENCE_FALLBACK_THRESHOLD,
-    GEMINI_FLASH_503_FALLBACK_MODEL,
-    GEMINI_SECONDARY_MODEL,
+    LLM_FALLBACK_MODEL,
+    LLM_SECONDARY_MODEL,
     OPENAI_API_KEY,
     OPENAI_MODEL,
 )
@@ -16,7 +16,7 @@ from config import (
 if not OPENAI_API_KEY:
     raise ValueError("Falta OPENAI_API_KEY en el archivo .env")
 
-client = genai.Client(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
 logger = logging.getLogger(__name__)
 NUMERIC_ASK_PATTERN = re.compile(
     r"\b(cuanto|cuantos|cuantas|valor|valores|limite|limites|maximo|minimo|potencia|resistencia|"
@@ -245,10 +245,10 @@ PREGUNTA:
 
 
 def _extract_usage(response) -> Dict[str, int]:
-    usage = getattr(response, "usage_metadata", None)
-    prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
-    completion_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
-    total_tokens = int(getattr(usage, "total_token_count", 0) or 0)
+    usage = getattr(response, "usage", None)
+    prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
@@ -257,53 +257,21 @@ def _extract_usage(response) -> Dict[str, int]:
 
 
 def _extract_response_text(response) -> str:
-    try:
-        text = response.text
-    except (AttributeError, ValueError):
-        text = None
-    if text and text.strip():
-        return text.strip()
-
-    parts = getattr(response, "parts", None) or []
-    collected_parts = []
-    for part in parts:
-        part_text = getattr(part, "text", None)
-        if part_text and str(part_text).strip():
-            collected_parts.append(str(part_text).strip())
-    if collected_parts:
-        return "\n".join(collected_parts).strip()
-
-    candidates = getattr(response, "candidates", None) or []
-    for candidate in candidates:
-        content = getattr(candidate, "content", None)
-        content_parts = getattr(content, "parts", None) or []
-        candidate_text = []
-        for part in content_parts:
-            part_text = getattr(part, "text", None)
-            if part_text and str(part_text).strip():
-                candidate_text.append(str(part_text).strip())
-        if candidate_text:
-            return "\n".join(candidate_text).strip()
-
+    choices = getattr(response, "choices", None) or []
+    if choices:
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None)
+        if content and str(content).strip():
+            return str(content).strip()
     return ""
 
 
 def _describe_empty_response(response) -> str:
-    prompt_feedback = getattr(response, "prompt_feedback", None) or getattr(response, "promptFeedback", None)
-    if prompt_feedback:
-        block_reason = getattr(prompt_feedback, "block_reason", None) or getattr(prompt_feedback, "blockReason", None)
-        if block_reason:
-            return f"Respuesta bloqueada por prompt_feedback={block_reason}"
-
-    candidates = getattr(response, "candidates", None) or []
-    if candidates:
-        finish_reason = getattr(candidates[0], "finish_reason", None) or getattr(candidates[0], "finishReason", None)
-        finish_message = getattr(candidates[0], "finish_message", None) or getattr(candidates[0], "finishMessage", None)
-        if finish_reason and finish_message:
-            return f"Respuesta vacia del modelo (finish_reason={finish_reason}: {finish_message})"
+    choices = getattr(response, "choices", None) or []
+    if choices:
+        finish_reason = getattr(choices[0], "finish_reason", None)
         if finish_reason:
             return f"Respuesta vacia del modelo (finish_reason={finish_reason})"
-
     return "Respuesta vacia del modelo"
 
 
@@ -643,12 +611,13 @@ def _extract_status_code(exc: Exception) -> Optional[int]:
     return None
 
 
-def _record_model_error_503_event(model: str) -> None:
+def _record_model_avail_error_event(model: str, status_code: int) -> None:
     try:
         from memory_service import record_model_error_event
-        record_model_error_event(model, 503, error_kind="http_503", origin="generate_ai_response")
+        error_kind = f"http_{status_code}"
+        record_model_error_event(model, status_code, error_kind=error_kind, origin="generate_ai_response")
     except Exception:
-        logger.exception("No se pudo registrar el error 503 del modelo %s", model)
+        logger.exception("No se pudo registrar el error %s del modelo %s", status_code, model)
 
 
 def _is_transient_error(exc: Exception) -> bool:
@@ -745,23 +714,21 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
 
     last_error = None
     retries = 0
-    consecutive_503 = 0
+    consecutive_avail_errors = 0
     for attempt in range(_MAX_ATTEMPTS):
         try:
-            response = client.models.generate_content(
+            response = client.chat.completions.create(
                 model=active_model,
-                contents=prompt,
-                config={
-                    "temperature": 0.2,
-                    "max_output_tokens": 2048,
-                },
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=2048,
             )
             text = _extract_response_text(response)
             if text and text.strip():
-                candidates_list = getattr(response, "candidates", None) or []
-                if candidates_list:
-                    finish_reason = getattr(candidates_list[0], "finish_reason", None)
-                    if finish_reason and str(finish_reason) not in ("STOP", "FinishReason.STOP", "1"):
+                choices = getattr(response, "choices", None) or []
+                if choices:
+                    finish_reason = getattr(choices[0], "finish_reason", None)
+                    if finish_reason and finish_reason not in ("stop",):
                         logger.warning("[FINISH_REASON] %s model=%s", finish_reason, active_model)
                 return {
                     "text": postprocess_answer(text, question=question),
@@ -771,19 +738,19 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
                 }
 
             last_error = ValueError(_describe_empty_response(response))
-            consecutive_503 = 0
+            consecutive_avail_errors = 0
         except Exception as exc:
             last_error = exc
-            logger.warning("Fallo Gemini %s (intento %s/%s): %s", active_model, attempt + 1, _MAX_ATTEMPTS, str(exc))
+            logger.warning("Fallo OpenAI %s (intento %s/%s): %s", active_model, attempt + 1, _MAX_ATTEMPTS, str(exc))
             status_code = _extract_status_code(exc)
-            if status_code == 503:
-                _record_model_error_503_event(active_model)
-                consecutive_503 += 1
-                if consecutive_503 >= _MAX_CONSECUTIVE_503:
-                    logger.warning("[503_ABORT] %s consecutivos en %s; abandonando para usar fallback", consecutive_503, active_model)
+            if status_code in (429, 503):
+                _record_model_avail_error_event(active_model, status_code)
+                consecutive_avail_errors += 1
+                if consecutive_avail_errors >= _MAX_CONSECUTIVE_503:
+                    logger.warning("[AVAIL_ABORT] %s errores consecutivos en %s; abandonando para usar fallback", consecutive_avail_errors, active_model)
                     break
             else:
-                consecutive_503 = 0
+                consecutive_avail_errors = 0
 
         if isinstance(last_error, ValueError) and "finish_reason=" in str(last_error).lower():
             break
@@ -792,11 +759,11 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
             retries += 1
             time.sleep(_RETRY_WAITS[attempt])
 
-    logger.error("[ALERT][LLM_ERROR] agotados intentos en Gemini %s: %s", active_model, str(last_error))
+    logger.error("[ALERT][LLM_ERROR] agotados intentos en OpenAI %s: %s", active_model, str(last_error))
     status_code = _extract_status_code(last_error) if isinstance(last_error, Exception) else None
     transient = _is_transient_error(last_error) if isinstance(last_error, Exception) else False
     raise AIResponseError(
-        f"No se pudo obtener respuesta de Gemini ({active_model}): {str(last_error)}",
+        f"No se pudo obtener respuesta de OpenAI ({active_model}): {str(last_error)}",
         retries=retries,
         transient=transient,
         status_code=status_code,
@@ -814,27 +781,28 @@ def generate_ai_response_with_fallback(
     try:
         result = generate_ai_response(question, context=context, history=history)
     except AIResponseError as exc:
-        should_try_flash_503_fallback = (
-            OPENAI_MODEL == "gemini-2.5-flash"
-            and GEMINI_FLASH_503_FALLBACK_MODEL
-            and GEMINI_FLASH_503_FALLBACK_MODEL != OPENAI_MODEL
-            and getattr(exc, "status_code", None) == 503
+        avail_error = getattr(exc, "status_code", None) in (429, 503)
+        should_try_avail_fallback = (
+            avail_error
+            and LLM_FALLBACK_MODEL
+            and LLM_FALLBACK_MODEL != OPENAI_MODEL
         )
-        if not should_try_flash_503_fallback:
+        if not should_try_avail_fallback:
             raise
 
         logger.warning(
-            "[FLASH_503_FALLBACK] %s devolvio 503; probando %s",
+            "[AVAIL_FALLBACK] %s devolvio %s; probando %s",
             OPENAI_MODEL,
-            GEMINI_FLASH_503_FALLBACK_MODEL,
+            getattr(exc, "status_code", None),
+            LLM_FALLBACK_MODEL,
         )
         result = generate_ai_response(
             question,
             context=context,
             history=history,
-            model=GEMINI_FLASH_503_FALLBACK_MODEL,
+            model=LLM_FALLBACK_MODEL,
         )
-        result["flash_503_fallback"] = True
+        result["avail_fallback"] = True
         result["source_model"] = OPENAI_MODEL
 
     _, confidence = validate_answer(question, result["text"], context, sources)
@@ -861,10 +829,10 @@ def generate_ai_response_with_fallback(
 
     logger.info(
         "[MODEL_FALLBACK] conf=%.2f reason=%s retrieval=%s modelo_secundario=%s q='%s'",
-        confidence, escalation_reason, result["retrieval_quality"], GEMINI_SECONDARY_MODEL, question[:80],
+        confidence, escalation_reason, result["retrieval_quality"], LLM_SECONDARY_MODEL, question[:80],
     )
     try:
-        result_pro = generate_ai_response(question, context=context, history=history, model=GEMINI_SECONDARY_MODEL)
+        result_pro = generate_ai_response(question, context=context, history=history, model=LLM_SECONDARY_MODEL)
         result_pro["escalated"] = True
         result_pro["flash_confidence"] = round(confidence, 4)
         result_pro["base_confidence"] = round(confidence, 4)
@@ -873,14 +841,14 @@ def generate_ai_response_with_fallback(
         result_pro["escalation_reason"] = escalation_reason
         result_pro["retrieval_quality"] = _retrieval_quality(retrieval_stats)
         result_pro["base_model"] = result.get("source_model") or OPENAI_MODEL
-        result_pro["final_model"] = GEMINI_SECONDARY_MODEL
+        result_pro["final_model"] = LLM_SECONDARY_MODEL
         _, secondary_confidence = validate_answer(question, result_pro["text"], context, sources)
         secondary_has_conflict = _has_critical_term_conflict(question, result_pro["text"], context)
         result_pro["secondary_conflict"] = secondary_has_conflict
         if secondary_has_conflict and secondary_confidence < max(0.45, confidence_threshold - 0.12):
             logger.warning(
                 "[MODEL_FALLBACK_REJECT] respuesta inconsistente tras fallback en %s; devolviendo insuficiencia",
-                GEMINI_SECONDARY_MODEL,
+                LLM_SECONDARY_MODEL,
             )
             result_pro["text"] = "No hay informacion suficiente en el contexto recuperado"
             secondary_confidence = 0.0
@@ -889,7 +857,7 @@ def generate_ai_response_with_fallback(
     except AIResponseError as exc:
         logger.warning(
             "[MODEL_FALLBACK_FAIL] devolviendo respuesta base tras fallo en %s: %s",
-            GEMINI_SECONDARY_MODEL,
+            LLM_SECONDARY_MODEL,
             str(exc),
         )
         if primary_has_conflict and confidence < max(0.45, confidence_threshold - 0.12):

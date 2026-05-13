@@ -14,10 +14,10 @@ __pycache__/
 *.py[cod]
 
 # Local environment config
-backend/.env
+src/backend/.env
 
 # RAG local artifacts
 chroma_db/
-documentos/
+data/documentos/
 *.bin
 *.pkl

@@ -6,7 +6,7 @@ import chromadb
 
 from chroma_client import get_chroma_client
 from config import (
-    GEMINI_SECONDARY_MODEL,
+    LLM_SECONDARY_MODEL,
     OPENAI_MODEL,
     MEMORY_COLLECTION_NAME,
     MEMORY_MAX_DISTANCE,
@@ -40,31 +40,30 @@ chroma_client = get_chroma_client()
 memory_collection = _get_memory_collection(chroma_client, MEMORY_COLLECTION_NAME, _embedding_fn)
 
 MODEL_PRICING_USD_PER_MILLION = {
+    "gpt-5.4-nano": {
+        "input": 0.10,
+        "output": 0.40,
+        "notes": "Tarifa pendiente confirmar OpenAI gpt-5.4-nano",
+    },
+    "gpt-4.1-mini": {
+        "input": 0.40,
+        "output": 1.60,
+        "notes": "Tarifa estandar OpenAI gpt-4.1-mini",
+    },
     "gpt-4o-mini": {
         "input": 0.15,
         "output": 0.60,
-        "notes": "Tarifa estandar OpenAI",
-    },
-    "gpt-5.4-mini": {
-        "input": 0.15,
-        "output": 0.60,
-        "notes": "Tarifa pendiente confirmar OpenAI",
+        "notes": "Tarifa estandar OpenAI gpt-4o-mini",
     },
     "gpt-4o": {
         "input": 2.50,
         "output": 10.00,
-        "notes": "Tarifa estandar OpenAI",
+        "notes": "Tarifa estandar OpenAI gpt-4o",
     },
-    "gemini-2.5-flash": {
-        "input": 0.30,
-        "output": 2.50,
-        "notes": "Tarifa estandar Google Gemini 2.5 Flash",
-    },
-   
-    "gemini-3-flash-preview": {
-        "input": 0.50,
-        "output": 3.00,
-        "notes": "Tarifa estandar Google Gemini 3 Flash Preview",
+    "gpt-4.1": {
+        "input": 2.00,
+        "output": 8.00,
+        "notes": "Tarifa estandar OpenAI gpt-4.1",
     },
 }
 
@@ -294,9 +293,9 @@ def get_admin_metrics(days: int = 30) -> Dict:
         model_index[(stats["model"] or "").strip().lower()] = stats
 
     primary_model_key = (OPENAI_MODEL or "").strip().lower()
-    secondary_model_key = (GEMINI_SECONDARY_MODEL or "").strip().lower()
+    secondary_model_key = (LLM_SECONDARY_MODEL or "").strip().lower()
     current_model_stats = model_index.get(primary_model_key, _empty_model_stats(OPENAI_MODEL, "base"))
-    baseline_model_stats = model_index.get(secondary_model_key, _empty_model_stats(GEMINI_SECONDARY_MODEL, "escalado"))
+    baseline_model_stats = model_index.get(secondary_model_key, _empty_model_stats(LLM_SECONDARY_MODEL, "escalado"))
     current_model_stats["role"] = "base"
     baseline_model_stats["role"] = "escalado"
 
@@ -324,7 +323,7 @@ def get_admin_metrics(days: int = 30) -> Dict:
         "avg_latency_ms": round(avg_latency, 2),
         "estimated_cost_usd": round(cost_estimated_usd, 6),
         "model": OPENAI_MODEL,
-        "baseline_model": GEMINI_SECONDARY_MODEL,
+        "baseline_model": LLM_SECONDARY_MODEL,
         "model_breakdown": model_breakdown,
         "model_comparison": comparison_summary,
     }
@@ -362,9 +361,9 @@ def get_admin_503_metrics(hours: int = 24) -> Dict:
             """
             SELECT
                 Modelo,
-                COUNT(*) AS total_503
+                COUNT(*) AS total_avail_errors
             FROM dbo.ModelErrorEvents
-            WHERE StatusCode = 503
+            WHERE StatusCode IN (429, 503)
               AND FechaCreacion >= DATEADD(hour, ?, SYSUTCDATETIME())
             GROUP BY Modelo
             """,
@@ -376,22 +375,22 @@ def get_admin_503_metrics(hours: int = 24) -> Dict:
 
     counts_by_model = {(row[0] or "").strip().lower(): int(row[1] or 0) for row in rows}
     primary_model = OPENAI_MODEL
-    secondary_model = GEMINI_SECONDARY_MODEL
+    secondary_model = LLM_SECONDARY_MODEL
     primary_count = counts_by_model.get(primary_model.strip().lower(), 0)
     secondary_count = counts_by_model.get(secondary_model.strip().lower(), 0)
 
     return {
         "window_hours": window_hours,
         "models": [
-            {"model": primary_model, "role": "base", "count_503": primary_count},
-            {"model": secondary_model, "role": "secundario", "count_503": secondary_count},
+            {"model": primary_model, "role": "base", "count_avail_errors": primary_count},
+            {"model": secondary_model, "role": "secundario", "count_avail_errors": secondary_count},
         ],
         "comparison": {
             "base_model": primary_model,
             "secondary_model": secondary_model,
-            "base_count_503": primary_count,
-            "secondary_count_503": secondary_count,
-            "delta_503": primary_count - secondary_count,
+            "base_count_avail_errors": primary_count,
+            "secondary_count_avail_errors": secondary_count,
+            "delta_avail_errors": primary_count - secondary_count,
         },
     }
 
