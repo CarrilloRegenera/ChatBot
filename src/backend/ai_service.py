@@ -6,6 +6,9 @@ from typing import Dict, List, Optional, Tuple
 
 from config import (
     CONFIDENCE_FALLBACK_THRESHOLD,
+    FALLBACK_MAX_BASE_CONFIDENCE,
+    FALLBACK_MIN_CONFIDENCE_GAP,
+    FALLBACK_MIN_RETRIEVAL_QUALITY,
     LLM_FALLBACK_MODEL,
     LLM_SECONDARY_MODEL,
     OPENAI_API_KEY,
@@ -119,6 +122,18 @@ LABELED_TERM_PATTERNS = {
 }
 MULTI_ITEM_ASK_PATTERN = re.compile(
     r"(?:\bclases\s+de\b|\btipos\s+de\b|\bcuales\s+son\b|\btodos?\s+los\b|\btodas?\s+las\b)",
+    re.IGNORECASE,
+)
+SCOPE_ASK_PATTERN = re.compile(
+    r"(?:\bobjeto\b|\bambito\b|\bámbito\b|\bfinalidad\b|\bfuncion\b|\bfunción\b|\bpapel\b|\balcance\b)",
+    re.IGNORECASE,
+)
+INCOMPLETE_EVIDENCE_PATTERN = re.compile(
+    r"(?:\bsolo\b.{0,40}\b(aparece|indica|menciona|consta)\b|\bno\s+aparece\b|\bno\s+se\s+incluye\b|\bno\s+se\s+describe\b)",
+    re.IGNORECASE,
+)
+NARROW_SUBSECTION_PATTERN = re.compile(
+    r"\b(itc[-\s]*[a-z]{1,4}[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b",
     re.IGNORECASE,
 )
 
@@ -728,16 +743,24 @@ def _should_escalate(
 ) -> Optional[str]:
     lower_text = (base_text or "").lower()
     retrieval_quality = _retrieval_quality(retrieval_stats)
+    retrieval_rank = {"empty": 0, "poor": 1, "mixed": 2, "good": 3}
+    required_quality_rank = retrieval_rank.get(FALLBACK_MIN_RETRIEVAL_QUALITY, 2)
+    current_quality_rank = retrieval_rank.get(retrieval_quality, 0)
+    confidence_gap = max(0.0, confidence_threshold - confidence)
     explicit_insufficient = "no hay informacion suficiente" in lower_text
+
     if primary_has_conflict and confidence < max(0.45, confidence_threshold - 0.1):
         return "conflict"
     if explicit_insufficient and retrieval_quality in {"good", "mixed"}:
         return "insufficient_with_context"
-    if retrieval_quality == "poor":
+    if current_quality_rank < required_quality_rank:
         return None
     if _is_complex_question(question) and confidence < confidence_threshold:
         return "complex_low_confidence"
-    if confidence < max(0.42, confidence_threshold - 0.12):
+    # Escala por baja confianza de base, pero con freno para evitar sobreuso:
+    # 1) solo si esta realmente por debajo del umbral (gap minimo)
+    # 2) solo si la confianza absoluta no es ya alta
+    if confidence_gap >= FALLBACK_MIN_CONFIDENCE_GAP and confidence <= FALLBACK_MAX_BASE_CONFIDENCE:
         return "low_confidence"
     return None
 
@@ -981,6 +1004,7 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     direct_fact_question = bool(profile["direct_fact"])
     summary_question = bool(profile["summary"])
     table_question = bool(profile["table"])
+    scope_question = bool(SCOPE_ASK_PATTERN.search(question or "")) or bool(profile["generalization"])
     expects_multiple_items = bool(MULTI_ITEM_ASK_PATTERN.search(question or ""))
     partial_signal = bool(PARTIAL_SIGNAL_PATTERN.search(lower_text)) or "base documental: parcial" in lower_text
     explicit_signal = bool(EXPLICIT_SIGNAL_PATTERN.search(lower_text)) or "base documental: explic" in lower_text
@@ -997,6 +1021,8 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     structured_item_count = _count_structured_items(text)
     has_step_markers = bool(re.search(r"\b(paso|primero|segundo|despues|a continuacion)\b", lower_text))
     comparison_markers = bool(re.search(r"\b(mientras que|por el contrario|en cambio|diferencia|frente a)\b", lower_text))
+    incomplete_evidence_signal = bool(INCOMPLETE_EVIDENCE_PATTERN.search(lower_text))
+    narrow_subsection_signal = bool(NARROW_SUBSECTION_PATTERN.search(lower_text))
     labeled_term_conflicts = _find_labeled_term_conflicts(question, text, context)
     chunk_support_score = _best_chunk_support_score(question, text, context)
 
@@ -1052,6 +1078,15 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence -= 0.15
     if context and overlap_ratio < 0.08:
         confidence -= 0.15
+    # Penaliza respuestas "parcialmente correctas" en preguntas de alcance/objeto:
+    # si la salida indica evidencia incompleta y se apoya en una subseccion concreta,
+    # la completitud de intencion es baja aunque haya grounding lexico alto.
+    if scope_question and incomplete_evidence_signal:
+        confidence -= 0.12
+    if scope_question and incomplete_evidence_signal and narrow_subsection_signal:
+        confidence -= 0.1
+    if scope_question and uncertainty_signal and narrow_subsection_signal:
+        confidence -= 0.08
 
     cap = 0.9
     if len(source_list) >= 2 and overlap_ratio >= 0.25 and has_reference_evidence:
@@ -1075,6 +1110,10 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         cap = min(cap, 0.62)
     if (definition_question or direct_fact_question or numeric_question or list_question) and chunk_support_score < 0.35:
         cap = min(cap, 0.6)
+    if scope_question and incomplete_evidence_signal:
+        cap = min(cap, 0.72)
+    if scope_question and incomplete_evidence_signal and narrow_subsection_signal:
+        cap = min(cap, 0.68)
 
     confidence = min(max(confidence, 0.0), cap)
     return text, confidence

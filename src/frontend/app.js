@@ -8,6 +8,37 @@ let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
 const PENDING_MESSAGE_KEY = "chatbot_pending_message";
 const LAST_UNLOAD_KEY = "chatbot_last_unload";
+const MOJIBAKE_REPLACEMENTS = [
+    ["Ã¡", "á"], ["Ã©", "é"], ["Ã­", "í"], ["Ã³", "ó"], ["Ãº", "ú"],
+    ["Ã", "Á"], ["Ã‰", "É"], ["Ã", "Í"], ["Ã“", "Ó"], ["Ãš", "Ú"],
+    ["Ã±", "ñ"], ["Ã‘", "Ñ"], ["Ã¼", "ü"], ["Ãœ", "Ü"],
+    ["Â¿", "¿"], ["Â¡", "¡"],
+];
+
+function normalizeMojibakeText(input) {
+    let text = String(input ?? "");
+    for (const [bad, good] of MOJIBAKE_REPLACEMENTS) {
+        text = text.split(bad).join(good);
+    }
+    return text;
+}
+
+function normalizeStaticTexts(root = document.body) {
+    if (!root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let current = walker.nextNode();
+    while (current) {
+        nodes.push(current);
+        current = walker.nextNode();
+    }
+    for (const node of nodes) {
+        const fixed = normalizeMojibakeText(node.nodeValue || "");
+        if (fixed !== node.nodeValue) {
+            node.nodeValue = fixed;
+        }
+    }
+}
 
 // ===== SESSION PERSISTENCE =====
 
@@ -390,7 +421,7 @@ function appendMessage(role, text) {
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
-    bubble.textContent = text;
+    bubble.textContent = normalizeMojibakeText(text);
 
     row.appendChild(bubble);
     messagesDiv.appendChild(row);
@@ -950,6 +981,7 @@ async function rejectInteraction(interactionId) {
 // ===== INIT =====
 
 document.addEventListener("DOMContentLoaded", () => {
+    normalizeStaticTexts();
     const unloadMark = consumePageUnloadMark();
     if (unloadMark) {
         console.warn("La pagina se recargo o descargo durante la sesion:", unloadMark);
