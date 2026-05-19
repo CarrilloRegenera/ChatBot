@@ -6,6 +6,7 @@ from typing import Dict, List
 from fastapi import APIRouter, HTTPException
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
+from config import CONVERSATION_LOCK_TIMEOUT_SECS
 from database import get_connection
 from memory_service import (
     get_admin_metrics,
@@ -167,8 +168,23 @@ def delete_conversation(conversation_id: int):
 @router.post("/messages")
 def send_message(data: MessageRequest):
     conversation_lock = _get_conversation_lock(data.conversation_id)
+    acquired = conversation_lock.acquire(timeout=CONVERSATION_LOCK_TIMEOUT_SECS)
+    if not acquired:
+        logger.warning(
+            "[LOCK_TIMEOUT] conv=%s waited=%ss q=\"%s\"",
+            data.conversation_id,
+            CONVERSATION_LOCK_TIMEOUT_SECS,
+            _q_preview(data.question),
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "La conversacion sigue procesando una solicitud anterior. "
+                "Vuelve a intentarlo en unos segundos."
+            ),
+        )
 
-    with conversation_lock:
+    try:
         start = time.time()
         stage_router_start = time.time()
         route_info = classify_question(data.question)
@@ -203,6 +219,7 @@ def send_message(data: MessageRequest):
         retrieval_stats = {}
         confidence = 0.0
         from_memory = False
+        trace = {}
         rag_ms = 0
         llm_ms = 0
         db_ms = 0
@@ -247,6 +264,14 @@ def send_message(data: MessageRequest):
                 response = generated["text"]
                 llm_retries = int(generated.get("retries", 0))
                 confidence = generated.get("confidence", 0.0)
+                trace = {
+                    "base_model": generated.get("base_model", ""),
+                    "final_model": generated.get("final_model") or generated.get("model", ""),
+                    "base_confidence": generated.get("base_confidence"),
+                    "final_confidence": generated.get("final_confidence", confidence),
+                    "escalated": bool(generated.get("escalated", False)),
+                    "escalation_reason": generated.get("escalation_reason", ""),
+                }
                 response = format_answer_for_user(response, sources, question=data.question)
                 elapsed_partial = int((time.time() - start) * 1000)
                 try:
@@ -261,7 +286,13 @@ def send_message(data: MessageRequest):
                         prompt_tokens=generated["usage"]["prompt_tokens"],
                         completion_tokens=generated["usage"]["completion_tokens"],
                         total_tokens=generated["usage"]["total_tokens"],
-                        model=generated.get("model", ""),
+                        model=trace["final_model"],
+                        base_model=trace["base_model"],
+                        final_model=trace["final_model"],
+                        base_confidence=trace["base_confidence"],
+                        final_confidence=trace["final_confidence"],
+                        escalated=trace["escalated"],
+                        escalation_reason=trace["escalation_reason"],
                         route="knowledge",
                         from_memory=False,
                         elapsed_ms=elapsed_partial,
@@ -326,7 +357,10 @@ def send_message(data: MessageRequest):
             "from_memory": from_memory,
             "sources": sources,
             "route": "knowledge",
+            "trace": trace,
         }
+    finally:
+        conversation_lock.release()
 
 
 @router.post("/admin/sync")

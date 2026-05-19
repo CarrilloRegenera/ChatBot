@@ -21,6 +21,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 DOCUMENTS_PATH = _to_absolute_path(os.getenv("DOCUMENTS_PATH", "../../data/documentos"))
 CHROMA_DB_PATH = _to_absolute_path(os.getenv("CHROMA_DB_PATH", "../../chroma_db"))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-nano").strip()
+OPENAI_TIMEOUT_SECS = float(os.getenv("OPENAI_TIMEOUT_SECS", "45"))
+OPENAI_MAX_RETRIES = int(os.getenv("OPENAI_MAX_RETRIES", "1"))
 LLM_SECONDARY_MODEL = (
     os.getenv("LLM_SECONDARY_MODEL")
     or os.getenv("GEMINI_SECONDARY_MODEL")
@@ -45,6 +47,7 @@ MIN_QUERY_LENGTH = int(os.getenv("MIN_QUERY_LENGTH", "4"))
 MEMORY_COLLECTION_NAME = os.getenv("MEMORY_COLLECTION_NAME", f"{COLLECTION_NAME}_memoria_validada").strip()
 MEMORY_MAX_RESULTS = int(os.getenv("MEMORY_MAX_RESULTS", "3"))
 MEMORY_MAX_DISTANCE = float(os.getenv("MEMORY_MAX_DISTANCE", "0.35"))
+CONVERSATION_LOCK_TIMEOUT_SECS = float(os.getenv("CONVERSATION_LOCK_TIMEOUT_SECS", "60"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
 # Keep only general language stopwords by default; domain-specific words

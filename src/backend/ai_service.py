@@ -9,14 +9,20 @@ from config import (
     LLM_FALLBACK_MODEL,
     LLM_SECONDARY_MODEL,
     OPENAI_API_KEY,
+    OPENAI_MAX_RETRIES,
     OPENAI_MODEL,
+    OPENAI_TIMEOUT_SECS,
 )
 
 
 if not OPENAI_API_KEY:
     raise ValueError("Falta OPENAI_API_KEY en el archivo .env")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    timeout=OPENAI_TIMEOUT_SECS,
+    max_retries=OPENAI_MAX_RETRIES,
+)
 logger = logging.getLogger(__name__)
 NUMERIC_ASK_PATTERN = re.compile(
     r"\b(cuanto|cuantos|cuantas|valor|valores|limite|limites|maximo|minimo|potencia|resistencia|"
@@ -36,7 +42,9 @@ UNSAFE_LAST_FRAGMENT_PATTERN = re.compile(
 )
 MARKDOWN_PATTERN = re.compile(r"\*{1,3}([^*\n]*)\*{1,3}|\*+|^#{1,6}\s+", re.MULTILINE)
 DEFINITION_ASK_PATTERN = re.compile(
-    r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bque\s+se\s+entiende\s+por\b|\bdefinicion\b)",
+    r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bque\s+se\s+entiende\s+por\b|\bdefinicion\b|"
+    r"\bque\s+funcion\s+cumple[n]?\b|\bpara\s+que\s+sirve[n]?\b|\bcual\s+es\s+su\s+funcion\b|"
+    r"\bque\s+papel\s+cumple[n]?\b)",
     re.IGNORECASE,
 )
 LIST_ASK_PATTERN = re.compile(
@@ -57,6 +65,12 @@ COMPARISON_ASK_PATTERN = re.compile(
 )
 PROCEDURE_ASK_PATTERN = re.compile(
     r"(?:\bcomo\s+se\s+calcula\b|\bcomo\s+debe\b|\bcomo\s+puede\b|\bprocedimiento\b|\bpasos\b)",
+    re.IGNORECASE,
+)
+GENERALIZATION_ASK_PATTERN = re.compile(
+    r"(?:\ben\s+general\b|\bprincipales\b|\bcriterios?\b|\brequisitos?\b|\bexcepciones?\b|"
+    r"\balcance\b|\baplicacion\b|\baplicación\b|\bfuncion\b|\bfunción\b|\bfinalidad\b|"
+    r"\bobjetivo\b|\bcambios?\b|\bmodifica\b|\bintroduce\b|\bafecta\b|\bimplica\b)",
     re.IGNORECASE,
 )
 DIRECT_FACT_ASK_PATTERN = re.compile(
@@ -80,6 +94,15 @@ LIST_MARKER_PATTERN = re.compile(r"^(?:[-*•]\s+|\d+[\.\)]\s+|[a-z][\.\)]\s+)",
 TRAILING_METADATA_PATTERN = re.compile(
     r"(?:(?:^|\n)[ \t]*|(?<=[.!?])\s+)(?:Base documental:|Fuentes:).*",
     re.IGNORECASE | re.DOTALL,
+)
+TRAILING_FRAGMENT_REF_PATTERN = re.compile(
+    r"\b("
+    r"primera|segunda|tercera|cuarta|quinta|sexta|septima|séptima|octava|novena|decima|décima|"
+    r"disposicion\s+(?:transitoria|adicional|final)\s+(?:primera|segunda|tercera|cuarta|quinta|sexta|septima|séptima|octava|novena|decima|décima)|"
+    r"disposición\s+(?:transitoria|adicional|final)\s+(?:primera|segunda|tercera|cuarta|quinta|sexta|septima|séptima|octava|novena|decima|décima)|"
+    r"apartado|parrafo|párrafo"
+    r")\.\s*\d+\.$",
+    re.IGNORECASE,
 )
 PROMPT_LEAK_LINE_PATTERN = re.compile(
     r"^(?:wait,\s*rule\b|reglas?\s+obligatorias:|formato\s+de\s+salida\s+obligatorio:|contexto:|pregunta:|historial\s+reciente:)\b",
@@ -109,6 +132,7 @@ def _infer_answer_profile(question: str) -> Dict[str, object]:
         "table": bool(TABLE_ASK_PATTERN.search(q)),
         "comparison": bool(COMPARISON_ASK_PATTERN.search(q)),
         "procedure": bool(PROCEDURE_ASK_PATTERN.search(q)),
+        "generalization": bool(GENERALIZATION_ASK_PATTERN.search(q)),
         "numeric": bool(NUMERIC_ASK_PATTERN.search(q)),
         "direct_fact": bool(DIRECT_FACT_ASK_PATTERN.search(q)),
     }
@@ -128,12 +152,12 @@ def _build_output_instruction(profile: Dict[str, object]) -> str:
     if profile["summary"]:
         return (
             "Resume solo las ideas principales del contexto, normalmente en 3-6 lineas breves. "
-            "Sintetiza sin copiar fragmentos largos ni dejar frases truncadas."
+            "Sintetiza sin copiar fragmentos largos ni dejar frases truncadas, y separa lo principal de lo accesorio."
         )
     if profile["definition"]:
         return (
             "Responde de forma breve y directa, normalmente en 1-3 frases. "
-            "La primera frase debe contener el termino exacto si aparece en el contexto."
+            "Si la pregunta pide funcion, papel o finalidad, explica primero para que sirve en la practica y luego cita el alcance concreto que aparezca en el contexto."
         )
     if profile["numeric"]:
         return (
@@ -164,33 +188,39 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
         definition_hint = ""
         if profile["definition"]:
             definition_hint = (
-                "13. Si la pregunta pide como se denomina o una definicion, empieza por el termino exacto en la primera frase.\n"
-                "14. En preguntas definicionales, evita respuestas vagas como 'es una caracteristica' si el contexto permite nombrar el termino.\n"
+                "- Si la pregunta pide como se denomina o una definicion, empieza por el termino exacto en la primera frase.\n"
+                "- Si la pregunta pide funcion, papel o finalidad, responde con la funcion practica dentro del reglamento; no te limites a decir que forma parte de el.\n"
+                "- En preguntas definicionales, evita respuestas vagas como 'es una caracteristica' si el contexto permite nombrar el termino.\n"
             )
         intent_hint = ""
         if profile["list"]:
             intent_hint += (
-                "15. Si la pregunta pide tipos, clases o enumeraciones, devuelve todos los elementos recuperados que respondan a la pregunta.\n"
-                "16. En preguntas de lista, escribe un elemento por linea con numeracion simple 1. 2. 3. y evita repetir el enunciado.\n"
+                "- Si la pregunta pide tipos, clases o enumeraciones, devuelve todos los elementos recuperados que respondan a la pregunta.\n"
+                "- En preguntas de lista, escribe un elemento por linea con numeracion simple 1. 2. 3. y evita repetir el enunciado.\n"
             )
         if profile["summary"]:
             intent_hint += (
-                "17. Si la pregunta pide un resumen, sintetiza el contenido relevante en vez de copiar un unico fragmento.\n"
-                "18. Si el resumen trata sobre clases, tipos o categorias, incluye todos los elementos distintos presentes en el contexto con una descripcion breve de cada uno.\n"
-                "19. No devuelvas una sola clase o un solo fragmento si la pregunta pide un conjunto en plural, salvo que el contexto solo contenga ese unico elemento.\n"
+                "- Si la pregunta pide un resumen, sintetiza el contenido relevante en vez de copiar un unico fragmento.\n"
+                "- Si el resumen trata sobre clases, tipos o categorias, incluye todos los elementos distintos presentes en el contexto con una descripcion breve de cada uno.\n"
+                "- No devuelvas una sola clase o un solo fragmento si la pregunta pide un conjunto en plural, salvo que el contexto solo contenga ese unico elemento.\n"
             )
         if profile["table"]:
             intent_hint += (
-                "20. Si la pregunta depende de una tabla o listado completo, solo enumera los elementos si aparecen de forma recuperada y legible en el contexto.\n"
-                "21. Si el contexto menciona la tabla pero no contiene su contenido completo, di expresamente que no se puede reconstruir la lista completa con seguridad.\n"
-                "22. Evita responder con un unico elemento aislado si la pregunta pide un conjunto completo.\n"
+                "- Si la pregunta depende de una tabla o listado completo, solo enumera los elementos si aparecen de forma recuperada y legible en el contexto.\n"
+                "- Si el contexto menciona la tabla pero no contiene su contenido completo, di expresamente que no se puede reconstruir la lista completa con seguridad.\n"
+                "- Evita responder con un unico elemento aislado si la pregunta pide un conjunto completo.\n"
             )
         if profile["comparison"]:
-            intent_hint += "23. Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
+            intent_hint += "- Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
         if profile["procedure"]:
-            intent_hint += "24. Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
+            intent_hint += "- Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
         if profile["numeric"]:
-            intent_hint += "25. Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
+            intent_hint += "- Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
+        if profile["generalization"]:
+            intent_hint += (
+                "- Si la pregunta pide una sintesis, alcance, funcion, criterio, cambio o consecuencia, generaliza solo a partir de hechos repetidos o explicitamente conectados en el contexto.\n"
+                "- Cuando generalices, conserva las condiciones, excepciones y limites que aparezcan; no conviertas un caso particular en regla general.\n"
+            )
 
         history_section = ""
         if history:
@@ -225,6 +255,8 @@ Reglas obligatorias:
 11. Si hay varias fuentes y aportan datos distintos o parciales, integralo sin inventar relaciones entre ellas.
 12. No copies fragmentos incompletos del contexto; si una frase esta truncada, reformulala solo con la parte segura.
 13. Responde en texto plano. No uses formato markdown: sin asteriscos ni cabeceras. Si la respuesta es una lista, usa lineas numeradas simples 1. 2. 3.; si no es una lista, escribe frases completas que terminen con punto.
+14. Maxima precision: distingue entre dato literal, sintesis razonable y falta de evidencia. No presentes una inferencia como si fuera una cita literal.
+15. Generalizacion controlada: puedes sintetizar una regla, funcion o criterio comun solo cuando el contexto lo soporte; conserva siempre condiciones, excepciones, ambito y vigencia.
 {definition_hint}
 {intent_hint}
 
@@ -279,6 +311,8 @@ def _trim_unsafe_last_line(line: str) -> str:
     candidate = line.rstrip()
     if not candidate:
         return candidate
+
+    candidate = TRAILING_FRAGMENT_REF_PATTERN.sub(r"\1.", candidate)
 
     # Mid-word cut: ends with a letter but no sentence terminator → trim to last sentence
     if candidate[-1].isalpha() and not re.search(r"[.!?]\s*$", candidate):
@@ -717,11 +751,19 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
     consecutive_avail_errors = 0
     for attempt in range(_MAX_ATTEMPTS):
         try:
+            logger.info(
+                "[LLM_REQUEST] model=%s attempt=%s/%s timeout=%ss prompt_chars=%s",
+                active_model,
+                attempt + 1,
+                _MAX_ATTEMPTS,
+                OPENAI_TIMEOUT_SECS,
+                len(prompt),
+            )
             response = client.chat.completions.create(
                 model=active_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=2048,
+                max_completion_tokens=2048,
             )
             text = _extract_response_text(response)
             if text and text.strip():
@@ -730,6 +772,7 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
                     finish_reason = getattr(choices[0], "finish_reason", None)
                     if finish_reason and finish_reason not in ("stop",):
                         logger.warning("[FINISH_REASON] %s model=%s", finish_reason, active_model)
+                logger.info("[LLM_RESPONSE] model=%s chars=%s retries=%s", active_model, len(text), retries)
                 return {
                     "text": postprocess_answer(text, question=question),
                     "usage": _extract_usage(response),
@@ -823,8 +866,10 @@ def generate_ai_response_with_fallback(
     result["escalation_reason"] = escalation_reason or ""
 
     if not escalation_reason:
-        result["confidence"] = round(confidence, 4)
         result["final_model"] = result.get("model", OPENAI_MODEL)
+        result["final_confidence"] = round(confidence, 4)
+        result["confidence"] = result["final_confidence"]
+        result["escalated"] = False
         return result
 
     logger.info(
@@ -852,7 +897,8 @@ def generate_ai_response_with_fallback(
             )
             result_pro["text"] = "No hay informacion suficiente en el contexto recuperado"
             secondary_confidence = 0.0
-        result_pro["confidence"] = round(secondary_confidence, 4)
+        result_pro["final_confidence"] = round(secondary_confidence, 4)
+        result_pro["confidence"] = result_pro["final_confidence"]
         return result_pro
     except AIResponseError as exc:
         logger.warning(
@@ -865,8 +911,10 @@ def generate_ai_response_with_fallback(
             result["text"] = "No hay informacion suficiente en el contexto recuperado"
         result["pro_fallback_failed"] = True
         result["flash_confidence"] = round(confidence, 4)
-        result["confidence"] = round(confidence, 4)
         result["final_model"] = result.get("model", OPENAI_MODEL)
+        result["final_confidence"] = round(confidence, 4)
+        result["confidence"] = result["final_confidence"]
+        result["escalated"] = False
         result["retries"] = max(int(result.get("retries", 0) or 0), int(getattr(exc, "retries", 0) or 0))
         return result
 

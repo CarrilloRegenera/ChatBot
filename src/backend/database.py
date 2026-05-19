@@ -82,6 +82,18 @@ def ensure_app_schema():
             ALTER TABLE dbo.InteraccionesRAG ADD TotalTokens INT NULL;
         IF COL_LENGTH('dbo.InteraccionesRAG', 'Modelo') IS NULL
             ALTER TABLE dbo.InteraccionesRAG ADD Modelo NVARCHAR(120) NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'ModeloBase') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD ModeloBase NVARCHAR(120) NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'ModeloFinal') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD ModeloFinal NVARCHAR(120) NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'ConfianzaBase') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD ConfianzaBase FLOAT NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'ConfianzaFinal') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD ConfianzaFinal FLOAT NULL;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'Escalado') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD Escalado BIT NOT NULL CONSTRAINT DF_InteraccionesRAG_Escalado DEFAULT 0;
+        IF COL_LENGTH('dbo.InteraccionesRAG', 'MotivoEscalado') IS NULL
+            ALTER TABLE dbo.InteraccionesRAG ADD MotivoEscalado NVARCHAR(80) NULL;
         IF COL_LENGTH('dbo.InteraccionesRAG', 'Ruta') IS NULL
             ALTER TABLE dbo.InteraccionesRAG ADD Ruta NVARCHAR(40) NULL;
         IF COL_LENGTH('dbo.InteraccionesRAG', 'DesdeMemoria') IS NULL

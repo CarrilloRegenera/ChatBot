@@ -157,20 +157,33 @@ def record_interaction_pending(
     completion_tokens: int = 0,
     total_tokens: int = 0,
     model: str = "",
+    base_model: str = "",
+    final_model: str = "",
+    base_confidence: Optional[float] = None,
+    final_confidence: Optional[float] = None,
+    escalated: bool = False,
+    escalation_reason: str = "",
     route: str = "knowledge",
     from_memory: bool = False,
     elapsed_ms: int = 0,
 ) -> int:
+    final_confidence = confidence if final_confidence is None else final_confidence
+    base_confidence = final_confidence if base_confidence is None else base_confidence
+    final_model = final_model or model
+    base_model = base_model or final_model
+
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
         INSERT INTO dbo.InteraccionesRAG (
             ConversacionId, Pregunta, Respuesta, Fuentes, Contexto, Estado, Confianza,
-            PromptTokens, CompletionTokens, TotalTokens, Modelo, Ruta, DesdeMemoria, TiempoRespuestaMs
+            PromptTokens, CompletionTokens, TotalTokens, Modelo, ModeloBase, ModeloFinal,
+            ConfianzaBase, ConfianzaFinal, Escalado, MotivoEscalado, Ruta, DesdeMemoria,
+            TiempoRespuestaMs
         )
         OUTPUT INSERTED.Id
-        VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         conversation_id,
         question,
@@ -181,7 +194,13 @@ def record_interaction_pending(
         prompt_tokens,
         completion_tokens,
         total_tokens,
-        model,
+        final_model,
+        base_model,
+        final_model,
+        base_confidence,
+        final_confidence,
+        1 if escalated else 0,
+        (escalation_reason or "")[:80],
         route,
         1 if from_memory else 0,
         elapsed_ms,

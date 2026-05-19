@@ -27,7 +27,7 @@ from config import (
 
 
 CHUNK_SIZE = 950
-CHUNK_OVERLAP = 200
+CHUNK_OVERLAP = 375
 MIN_CHUNK_LENGTH = 80
 CORE_TERM_PENALTY = 4
 MAX_TOPIC_TOKENS = 6
@@ -44,11 +44,15 @@ HEADING_PATTERN = re.compile(r"^(?:\d+(?:\.\d+)*[\.\)]?\s+)?[A-ZÁÉÍÓÚÜÑ][
 REFERENCE_PATTERN = re.compile(r"\b(?:itc[-\s]*bt[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b", re.IGNORECASE)
 NUMERIC_PATTERN = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:m2|mm2|kw|w|v|a|ma|kv|hz|ohmios?|ohm|%)?\b", re.IGNORECASE)
 DEFINITION_QUERY_PATTERN = re.compile(
-    r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bque\s+se\s+entiende\s+por\b|\bdefinicion\b)",
+    r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bque\s+se\s+entiende\s+por\b|\bdefinicion\b|"
+    r"\bque\s+funcion\s+cumple[n]?\b|\bpara\s+que\s+sirve[n]?\b|\bcual\s+es\s+su\s+funcion\b|"
+    r"\bque\s+papel\s+cumple[n]?\b)",
     re.IGNORECASE,
 )
 DEFINITION_CUE_PATTERN = re.compile(
-    r"\b(?:se denomina|se define como|es la|es el|recibe el nombre de|definicion)\b",
+    r"\b(?:se denomina|se define como|es la|es el|recibe el nombre de|definicion|"
+    r"tiene por objeto|objeto|campo de aplicacion|condiciones tecnicas|garantias de seguridad|"
+    r"ejecucion|verificaciones|inspecciones|instrucciones tecnicas complementarias)\b",
     re.IGNORECASE,
 )
 LIST_QUERY_PATTERN = re.compile(
@@ -75,6 +79,12 @@ COMPARISON_CUE_PATTERN = re.compile(
 )
 PROCEDURE_QUERY_PATTERN = re.compile(
     r"(?:\bcomo\s+se\s+calcula\b|\bcomo\s+debe\b|\bcomo\s+puede\b|\bprocedimiento\b|\bpasos\b)",
+    re.IGNORECASE,
+)
+GENERALIZATION_QUERY_PATTERN = re.compile(
+    r"(?:\ben\s+general\b|\bprincipales\b|\bcriterios?\b|\brequisitos?\b|\bexcepciones?\b|"
+    r"\balcance\b|\baplicacion\b|\baplicación\b|\bfuncion\b|\bfunción\b|\bfinalidad\b|"
+    r"\bobjetivo\b|\bcambios?\b|\bmodifica\b|\bintroduce\b|\bafecta\b|\bimplica\b)",
     re.IGNORECASE,
 )
 PROCEDURE_CUE_PATTERN = re.compile(
@@ -108,14 +118,21 @@ TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
 LABELED_CONTEXT_PENALTY = 10
 DOMAIN_SOURCE_HINTS = {
-    "alta_tension": ("a16436-16554", "alta tension", "itc-lat", "lat"),
-    "rite": ("a35931-35984", "rite", "instalaciones termicas"),
-    "baja_tension": ("boe-326_reglamento_electrotecnico_para_baja_tension_e_itc", "rebt", "baja tension", "itc-bt"),
+    "alta_tension": ("a16436-16554", "alta tension", "alta_tension", "itc-lat", "lat"),
+    "rite": ("a35931-35984", "rite", "instalaciones termicas", "termicas"),
+    "baja_tension": ("boe-326_reglamento_electrotecnico_para_baja_tension_e_itc", "rebt", "baja tension", "baja_tension", "itc-bt"),
+    "guias_tecnicas": ("guia", "guias", "guia_bt", "bt-40", "iluminacion", "une-12464", "12464"),
+    "fotovoltaica_om": ("fotovoltaica", "fotovoltaico", "fv", "operacion", "mantenimiento", "o&m", "om-fv"),
+    "grupos_electrogenos": ("grupo electrogeno", "grupos electrogenos", "iso-8528", "8528", "generating sets"),
 }
-DOMAIN_SOURCES = {
-    "alta_tension": "A16436-16554.pdf",
-    "rite": "A35931-35984.pdf",
-    "baja_tension": "BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf",
+DOMAIN_FOLDER_PREFIXES = {
+    "alta_tension": ("alta_tension", "lat", "lineas_alta_tension"),
+    "rite": ("rite", "instalaciones_termicas", "termicas"),
+    "baja_tension": ("baja_tension", "rebt"),
+    "guias_tecnicas": ("guias_tecnicas", "guias", "iluminacion"),
+    "fotovoltaica_om": ("fotovoltaica_om", "fotovoltaica", "fv", "operacion_mantenimiento"),
+    "grupos_electrogenos": ("grupos_electrogenos", "grupos", "electrogenos"),
+    "pendiente_ocr": ("pendiente_ocr", "ocr"),
 }
 
 
@@ -123,9 +140,13 @@ logger = logging.getLogger(__name__)
 
 _st_model = None
 try:
-    _st_model = SentenceTransformer(RERANK_MODEL)
+    _st_model = SentenceTransformer(RERANK_MODEL, local_files_only=True)
 except Exception as exc:
-    logger.warning("No se pudo cargar modelo multilingüe '%s': %s", RERANK_MODEL, str(exc))
+    logger.warning("Modelo '%s' no disponible en cache local: %s", RERANK_MODEL, str(exc))
+    try:
+        _st_model = SentenceTransformer(RERANK_MODEL)
+    except Exception as net_exc:
+        logger.warning("No se pudo cargar modelo multilingüe '%s': %s", RERANK_MODEL, str(net_exc))
 
 rerank_model = _st_model if ENABLE_RERANK else None
 
@@ -149,7 +170,7 @@ class _MultilingualEF:
         return self._encode(input)
 
 
-_EF_VERSION = f"multilingual-minilm-v1-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
+_EF_VERSION = f"multilingual-minilm-v2-domain-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
@@ -419,6 +440,7 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "table_query": bool(TABLE_QUERY_PATTERN.search(normalized)),
         "comparison_query": bool(COMPARISON_QUERY_PATTERN.search(normalized)),
         "procedure_query": bool(PROCEDURE_QUERY_PATTERN.search(normalized)),
+        "generalization_query": bool(GENERALIZATION_QUERY_PATTERN.search(normalized)),
         "temporal_query": bool(TEMPORAL_QUERY_PATTERN.search(normalized)),
         "question_keywords": question_keywords,
         "section_terms": _extract_topic_terms(clean_question, limit=MAX_TOPIC_TOKENS),
@@ -450,17 +472,39 @@ def _metadata_text(metadata: Dict[str, object]) -> str:
     return _normalize_text(
         " ".join(
             str(metadata.get(key, ""))
-            for key in ("source", "section", "topics")
+            for key in ("source", "folder", "domain", "section", "topics")
         )
     )
 
 
-def _source_domain_key(source_name: str) -> str:
-    normalized_source = _normalize_text(source_name or "")
+def _domain_from_source(source_name: str) -> str:
+    normalized_source = _normalize_text((source_name or "").replace("/", " "))
     for domain_key, hints in DOMAIN_SOURCE_HINTS.items():
         if any(hint in normalized_source for hint in hints):
             return domain_key
     return "general"
+
+
+def _domain_from_folder(source_name: str) -> str:
+    parts = [
+        _normalize_text(part)
+        for part in (source_name or "").replace("\\", "/").split("/")[:-1]
+        if part.strip()
+    ]
+    for part in parts:
+        compact = re.sub(r"^\d+[_\-\s]*", "", part).replace("-", "_").replace(" ", "_")
+        for domain_key, prefixes in DOMAIN_FOLDER_PREFIXES.items():
+            if any(prefix in compact for prefix in prefixes):
+                return domain_key
+    return ""
+
+
+def _source_domain_key(source_name: str, metadata: Dict[str, object] | None = None) -> str:
+    if metadata:
+        explicit_domain = str(metadata.get("domain", "") or "").strip()
+        if explicit_domain:
+            return explicit_domain
+    return _domain_from_folder(source_name) or _domain_from_source(source_name)
 
 
 def _expected_domains(question: str) -> List[str]:
@@ -472,6 +516,12 @@ def _expected_domains(question: str) -> List[str]:
         domains.append("rite")
     if any(term in normalized for term in ("rebt", "baja tension", "itc-bt")):
         domains.append("baja_tension")
+    if any(term in normalized for term in ("bt-40", "guia bt 40", "guia-bt-40", "instalaciones generadoras", "generadoras de baja tension", "iluminacion", "alumbrado", "une 12464", "12464")):
+        domains.append("guias_tecnicas")
+    if any(term in normalized for term in ("fotovoltaica", "fotovoltaico", "paneles solares", "planta solar", "operacion y mantenimiento", "mantenimiento fv", "o&m")):
+        domains.append("fotovoltaica_om")
+    if any(term in normalized for term in ("grupo electrogeno", "grupos electrogenos", "generador diesel", "iso 8528", "8528")):
+        domains.append("grupos_electrogenos")
     return domains
 
 
@@ -513,6 +563,7 @@ def _delete_source_chunks(source_name: str) -> None:
 
 def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     source_name = str(filepath.relative_to(root_path)).replace("\\", "/")
+    domain = _source_domain_key(source_name)
     documents, metadatas, ids = [], [], []
 
     pdf = fitz.open(str(filepath))
@@ -549,6 +600,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 metadatas.append({
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
+                    "domain": domain,
                     "page": page_index + 1,
                     "chunk": chunk_index,
                     "section": _sanitize_section_label(section_name[:SECTION_LABEL_MAX_LENGTH]),
@@ -566,6 +618,11 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
 
 
 def sync_documents(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
+    if _embedding_fn is None:
+        raise RuntimeError(
+            "Embedding model no disponible. Descarga/cacha localmente "
+            f"'{RERANK_MODEL}' antes de indexar."
+        )
     if not os.path.isdir(folder_path):
         raise FileNotFoundError(f"No existe la carpeta de documentos: {folder_path}")
 
@@ -617,6 +674,9 @@ def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> in
 def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
         return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+    if _embedding_fn is None:
+        logger.error("Busqueda RAG deshabilitada: embedding model '%s' no disponible", RERANK_MODEL)
+        return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
 
     clean_question = _clean_question(question)
     if collection.count() == 0:
@@ -632,11 +692,19 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
     question_keywords = {token for token in question_tokens if token not in STOPWORDS and len(token) >= 5}
     core_terms = [_normalize_text(term) for term in _extract_core_terms(question_keywords)]
     query_profile = _build_query_profile(clean_question, question_keywords)
+    normalized_question = query_profile["normalized_question"]
     if query_profile["temporal_query"]:
         for t in TEMPORAL_INJECT_TERMS:
             if t not in core_terms:
                 core_terms.append(t)
-    normalized_question = query_profile["normalized_question"]
+    if query_profile["definition_query"] and any(term in normalized_question for term in ("funcion", "sirve", "papel")):
+        for t in ("objeto", "aplicacion", "condiciones", "ejecucion", "verificaciones", "inspecciones"):
+            if t not in core_terms:
+                core_terms.append(t)
+    if query_profile["generalization_query"]:
+        for t in ("objeto", "ambito", "aplicacion", "condiciones", "requisitos", "excepciones", "criterios"):
+            if t not in core_terms:
+                core_terms.append(t)
     expected_domains = _expected_domains(clean_question)
     broad_query = any((
         query_profile["definition_query"],
@@ -644,11 +712,14 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
         query_profile["summary_query"],
         query_profile["table_query"],
         query_profile["comparison_query"],
+        query_profile["generalization_query"],
     ))
     if query_profile["summary_query"] or query_profile["list_query"] or query_profile["table_query"]:
         n_results = max(n_results, 8 if not query_profile["table_query"] else 10)
-    elif query_profile["definition_query"] or query_profile["comparison_query"]:
+    elif query_profile["definition_query"] or query_profile["comparison_query"] or query_profile["generalization_query"]:
         n_results = max(n_results, 7)
+    if query_profile["temporal_query"]:
+        n_results = max(n_results, 8)
 
     candidate_count = _candidate_window(n_results, question_keywords, clean_question)
     if broad_query:
@@ -661,15 +732,12 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
     if expected_domains:
         existing_ids = set(ids)
         for domain in expected_domains:
-            source_file = DOMAIN_SOURCES.get(domain)
-            if not source_file:
-                continue
             try:
                 forced_n = min(n_results + 6, 14)
                 domain_results = collection.query(
                     query_texts=[clean_question],
                     n_results=forced_n,
-                    where={"source": source_file},
+                    where={"domain": domain},
                 )
                 for doc, meta, fid in zip(
                     domain_results.get("documents", [[]])[0],
@@ -696,7 +764,7 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
         metadata_norm = _metadata_text(metadata)
         section_title = _normalize_text(str(metadata.get("section", "")))
         source_title = _normalize_text(str(metadata.get("source", "")).replace("/", " "))
-        source_domain = _source_domain_key(str(metadata.get("source", "")))
+        source_domain = _source_domain_key(str(metadata.get("source", "")), metadata)
         document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
         overlap_score = len(question_tokens.intersection(doc_tokens))
         keyword_hits = sum(1 for kw in question_keywords if _normalize_text(kw) in doc_norm)
@@ -799,6 +867,8 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
             if doc_id in seen_ids or not document or not metadata:
                 continue
             doc_norm = _normalize_text(document)
+            metadata_norm = _metadata_text(metadata)
+            section_title = _normalize_text(str(metadata.get("section", "")))
             lexical_score = 8
             if core_terms and not any(core in doc_norm for core in core_terms):
                 lexical_score -= CORE_TERM_PENALTY
@@ -825,8 +895,6 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
                 lexical_score += TEMPORAL_PRIORITY_BOOST
             document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
             doc_norm = _normalize_text(document)
-            metadata_norm = _metadata_text(metadata)
-            section_title = _normalize_text(str(metadata.get("section", "")))
             labeled_match_hits = 0
             for family, asked_values in query_profile["labeled_terms"].items():
                 labeled_match_hits += sum(1 for value in asked_values if value in document_labeled_terms.get(family, set()))
@@ -928,16 +996,21 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
         if source_label not in seen_sources:
             sources.append(source_label)
             seen_sources.add(source_label)
-        if expected_domains and _source_domain_key(str(metadata.get("source", ""))) in expected_domains:
+        if expected_domains and _source_domain_key(str(metadata.get("source", "")), metadata) in expected_domains:
             matched_domains += 1
 
     source_names = [str(item[3].get("source", "unknown")) for item in selected]
     unique_source_names = sorted(set(source_names))
+    selected_domains = sorted({
+        _source_domain_key(str(item[3].get("source", "")), item[3])
+        for item in selected
+    })
     retrieval_stats = {
         "candidate_count": candidate_count,
         "selected_count": len(selected),
         "source_diversity": len(unique_source_names),
         "top_sources": unique_source_names[:5],
+        "selected_domains": selected_domains,
         "expected_domains": expected_domains,
         "domain_match_ratio": round(matched_domains / max(len(selected), 1), 4) if expected_domains else 1.0,
         "broad_query": broad_query,
