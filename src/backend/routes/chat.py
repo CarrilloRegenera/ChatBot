@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from config import CONVERSATION_LOCK_TIMEOUT_SECS
-from database import get_connection
+from database import db_conn
 from memory_service import (
     get_admin_metrics,
     get_admin_503_metrics,
@@ -87,9 +87,8 @@ def _get_conversation_lock(conversation_id: int) -> Lock:
 
 
 def _get_recent_history(conversation_id: int, limit: int = 2) -> List[Dict]:
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
+    with db_conn() as conn:
+        cursor = conn.cursor()
         cursor.execute(
             "SELECT Pregunta, Respuesta FROM ("
             "  SELECT TOP (?) Pregunta, Respuesta, FechaCreacion, Id"
@@ -100,16 +99,13 @@ def _get_recent_history(conversation_id: int, limit: int = 2) -> List[Dict]:
             conversation_id,
         )
         rows = cursor.fetchall()
-    finally:
-        conn.close()
     return [{"question": row[0], "response": format_answer_for_user(row[1], None, question=row[0])} for row in rows]
 
 
 def _save_chat_message(conversation_id: int, question: str, response: str, elapsed_ms: int) -> int:
     start = time.time()
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
+    with db_conn() as conn:
+        cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO Mensajes (ConversacionId, Pregunta, Respuesta, TiempoRespuestaMs) VALUES (?, ?, ?, ?)",
             conversation_id,
@@ -117,9 +113,6 @@ def _save_chat_message(conversation_id: int, question: str, response: str, elaps
             response,
             elapsed_ms,
         )
-        conn.commit()
-    finally:
-        conn.close()
     return int((time.time() - start) * 1000)
 
 
@@ -130,24 +123,21 @@ def _assert_admin(role: str) -> None:
 
 @router.post("/conversations")
 def create_conversation(data: ConversationRequest):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO Conversaciones (UsuarioId, Titulo) OUTPUT INSERTED.Id VALUES (?, ?)",
-        data.user_id,
-        data.title,
-    )
-    conversation_id = cursor.fetchone()[0]
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Conversaciones (UsuarioId, Titulo) OUTPUT INSERTED.Id VALUES (?, ?)",
+            data.user_id,
+            data.title,
+        )
+        conversation_id = cursor.fetchone()[0]
     return {"message": "Conversacion Creada", "conversation_id": conversation_id}
 
 
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: int):
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
+    with db_conn() as conn:
+        cursor = conn.cursor()
         cursor.execute("SELECT Id FROM Conversaciones WHERE Id = ?", conversation_id)
         existing = cursor.fetchone()
         if not existing:
@@ -155,9 +145,6 @@ def delete_conversation(conversation_id: int):
 
         cursor.execute("DELETE FROM Mensajes WHERE ConversacionId = ?", conversation_id)
         cursor.execute("DELETE FROM Conversaciones WHERE Id = ?", conversation_id)
-        conn.commit()
-    finally:
-        conn.close()
 
     with _locks_guard:
         _conversation_locks.pop(conversation_id, None)
@@ -409,14 +396,13 @@ def reject_interaction_endpoint(interaction_id: int, data: InteractionReviewRequ
 
 @router.get("/conversations/{user_id}")
 def list_conversations(user_id: int):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT Id, Titulo, Estado, FechaCreacion FROM Conversaciones WHERE UsuarioId = ?",
-        user_id,
-    )
-    rows = cursor.fetchall()
-    conn.close()
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT Id, Titulo, Estado, FechaCreacion FROM Conversaciones WHERE UsuarioId = ?",
+            user_id,
+        )
+        rows = cursor.fetchall()
 
     conversations = []
     for row in rows:
@@ -433,14 +419,13 @@ def list_conversations(user_id: int):
 
 @router.get("/conversations/{conversation_id}/messages")
 def get_history(conversation_id: int):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT Pregunta, Respuesta, FechaCreacion FROM Mensajes WHERE ConversacionId = ? ORDER BY FechaCreacion ASC, Id ASC",
-        conversation_id,
-    )
-    rows = cursor.fetchall()
-    conn.close()
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT Pregunta, Respuesta, FechaCreacion FROM Mensajes WHERE ConversacionId = ? ORDER BY FechaCreacion ASC, Id ASC",
+            conversation_id,
+        )
+        rows = cursor.fetchall()
 
     messages = []
     for row in rows:
@@ -450,13 +435,11 @@ def get_history(conversation_id: int):
 
 @router.put("/conversations/{conversation_id}/title")
 def update_title(conversation_id: int, data: dict):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE Conversaciones SET Titulo = ? WHERE Id = ?",
-        data["title"],
-        conversation_id,
-    )
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE Conversaciones SET Titulo = ? WHERE Id = ?",
+            data["title"],
+            conversation_id,
+        )
     return {"message": "Title updated"}

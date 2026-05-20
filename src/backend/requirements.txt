@@ -6,3 +6,7 @@ openai>=1.0.0
 PyMuPDF==1.27.2.2
 chromadb==1.5.7
 sentence-transformers==5.4.1
+# OCR opcional para PDFs escaneados. Solo se carga si RAG_OCR_ENABLED=1.
+# Tesseract binario debe instalarse aparte: https://github.com/UB-Mannheim/tesseract/wiki
+pytesseract==0.3.13
+Pillow>=10.0.0

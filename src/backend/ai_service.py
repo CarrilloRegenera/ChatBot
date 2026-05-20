@@ -35,6 +35,14 @@ NUMERIC_ASK_PATTERN = re.compile(
 FORMULA_FRAGMENT_PATTERN = re.compile(r"(?:[<>=+\-x*/]\s*)$|(?:\b(?:x|por|entre|igual)\s*)$", re.IGNORECASE)
 PARTIAL_SIGNAL_PATTERN = re.compile(r"\b(parcial|parcialmente|no se especifica|no se indica|no se menciona)\b", re.IGNORECASE)
 EXPLICIT_SIGNAL_PATTERN = re.compile(r"\b(explicita|explicitamente|segun el contexto|se indica|se establece)\b", re.IGNORECASE)
+TABLE_INCOMPLETE_SIGNAL_PATTERN = re.compile(
+    r"\b(no hay informacion suficiente|no se incluye la tabla|no se incluye el listado|no se puede reconstruir la lista|contexto parcial)\b",
+    re.IGNORECASE,
+)
+PARTIAL_WITH_DETAIL_PATTERN = re.compile(
+    r"(?:\bno hay informacion suficiente\b|\bfalta informacion\b|\bno se aporta\b).*(?:\blo que si\b|\bsin embargo\b|\bademas\b)",
+    re.IGNORECASE | re.DOTALL,
+)
 TRUNCATED_ENDING_PATTERN = re.compile(
     r"(?:\bprev\.?$|\binstal\.?$|\baprox\.?$|\bseg[uú]n\s*$|\bcuando existe\s+\w*$|\bsi existe\s+\w*$)",
     re.IGNORECASE,
@@ -136,6 +144,40 @@ NARROW_SUBSECTION_PATTERN = re.compile(
     r"\b(itc[-\s]*[a-z]{1,4}[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b",
     re.IGNORECASE,
 )
+# Términos que, si aparecen en el contexto recuperado, indican que el alcance
+# de la regla está condicionado. La respuesta debería reflejarlos para no
+# convertir un caso particular en regla general (objetivo principal del bot).
+QUALIFIER_CONTEXT_PATTERN = re.compile(
+    r"\b(excepci(?:on|ón|ones|ónes)|salvo|exceptuando|no\s+se\s+aplica|no\s+aplicara?|no\s+aplican|"
+    r"no\s+afecta|quedan?\s+exclu(?:ido|idas|idos)|"
+    r"vigenci[ao]|deroga(?:do|ción|cion)|transitor[io]a?|"
+    r"siempre\s+que|cuando\s+(?:se|exista|el|la|los|las)|condicion(?:ado|ada|es|adas)|"
+    r"requisito|l[ií]mite(?:s)?|m[áa]xim[oa]s?|m[íi]nim[oa]s?|tope|umbral|"
+    r"ámbito\s+de\s+aplicacion|ambito\s+de\s+aplicacion|alcance)\b",
+    re.IGNORECASE,
+)
+# Detección de qualifiers en la respuesta. Más permisiva — basta que el modelo
+# mencione cualquier indicio de condición/excepción para considerar que
+# preservó la matización.
+QUALIFIER_ANSWER_PATTERN = re.compile(
+    r"\b(salvo|excepci(?:on|ón|ones|ónes)|exceptuando|no\s+se\s+aplica|no\s+aplica|"
+    r"siempre\s+que|cuando|condicion(?:ado|ada|es|adas)|requisito|l[ií]mite(?:s)?|"
+    r"m[áa]xim[oa]s?|m[íi]nim[oa]s?|tope|umbral|vigenci[ao]|"
+    r"ámbito|ambito|alcance|aplicable\s+(?:a|cuando|para))\b",
+    re.IGNORECASE,
+)
+
+
+def _missing_qualifiers_signal(answer_text: str, context_text: str) -> bool:
+    """True si el contexto trae matizadores (excepción/condición/ámbito/vigencia/
+    límite) pero la respuesta no los refleja. Detecta el patrón de "convertir
+    un caso particular en regla general" sin mencionar las restricciones.
+    """
+    if not context_text or not answer_text:
+        return False
+    if not QUALIFIER_CONTEXT_PATTERN.search(context_text):
+        return False
+    return not QUALIFIER_ANSWER_PATTERN.search(answer_text)
 
 
 def _infer_answer_profile(question: str) -> Dict[str, object]:
@@ -740,19 +782,35 @@ def _should_escalate(
     confidence_threshold: float,
     primary_has_conflict: bool,
     retrieval_stats: Optional[Dict[str, object]],
+    context: str = "",
 ) -> Optional[str]:
     lower_text = (base_text or "").lower()
     retrieval_quality = _retrieval_quality(retrieval_stats)
+    table_coverage_ratio = float((retrieval_stats or {}).get("table_coverage_ratio", 1.0) or 0.0)
+    profile = _infer_answer_profile(question)
     retrieval_rank = {"empty": 0, "poor": 1, "mixed": 2, "good": 3}
     required_quality_rank = retrieval_rank.get(FALLBACK_MIN_RETRIEVAL_QUALITY, 2)
     current_quality_rank = retrieval_rank.get(retrieval_quality, 0)
     confidence_gap = max(0.0, confidence_threshold - confidence)
     explicit_insufficient = "no hay informacion suficiente" in lower_text
+    partial_with_detail = bool(PARTIAL_WITH_DETAIL_PATTERN.search(base_text or ""))
+    missing_qualifiers = _missing_qualifiers_signal(base_text or "", context or "")
+    scope_or_general = bool(SCOPE_ASK_PATTERN.search(question or "")) or bool(profile.get("generalization"))
 
     if primary_has_conflict and confidence < max(0.45, confidence_threshold - 0.1):
         return "conflict"
     if explicit_insufficient and retrieval_quality in {"good", "mixed"}:
         return "insufficient_with_context"
+    if partial_with_detail and retrieval_quality in {"good", "mixed"} and confidence >= max(0.72, confidence_threshold):
+        return "partial_high_confidence"
+    # Si el contexto tiene matizadores (excepciones/ámbito/vigencia/límites) y la
+    # respuesta los omite con confianza alta, escalamos: el modelo secundario
+    # tiende a ser más conservador citando condiciones.
+    if missing_qualifiers and scope_or_general and retrieval_quality in {"good", "mixed"} \
+       and confidence >= max(0.7, confidence_threshold):
+        return "missing_qualifiers"
+    if profile.get("table") and table_coverage_ratio < 0.4 and retrieval_quality in {"good", "mixed"}:
+        return "table_low_coverage"
     if current_quality_rank < required_quality_rank:
         return None
     if _is_complex_question(question) and confidence < confidence_threshold:
@@ -844,6 +902,7 @@ def generate_ai_response_with_fallback(
     retrieval_stats: Optional[Dict[str, object]] = None,
 ) -> Dict:
     confidence_threshold = _effective_confidence_threshold(question)
+    question_profile = _infer_answer_profile(question)
     try:
         result = generate_ai_response(question, context=context, history=history)
     except AIResponseError as exc:
@@ -872,6 +931,19 @@ def generate_ai_response_with_fallback(
         result["source_model"] = OPENAI_MODEL
 
     _, confidence = validate_answer(question, result["text"], context, sources)
+    table_coverage_ratio = float((retrieval_stats or {}).get("table_coverage_ratio", 1.0) or 0.0)
+    domain_match_ratio = float((retrieval_stats or {}).get("domain_match_ratio", 1.0) or 0.0)
+    expected_domains = (retrieval_stats or {}).get("expected_domains") or []
+    if question_profile.get("table"):
+        if table_coverage_ratio < 0.35:
+            confidence -= 0.18
+        elif table_coverage_ratio < 0.55:
+            confidence -= 0.1
+        confidence = max(0.0, round(confidence, 4))
+    if expected_domains and domain_match_ratio < 0.45:
+        confidence = max(0.0, round(confidence - 0.14, 4))
+    elif expected_domains and domain_match_ratio < 0.65:
+        confidence = max(0.0, round(confidence - 0.07, 4))
     primary_has_conflict = _has_critical_term_conflict(question, result["text"], context)
     escalation_reason = _should_escalate(
         question,
@@ -880,12 +952,14 @@ def generate_ai_response_with_fallback(
         confidence_threshold,
         primary_has_conflict,
         retrieval_stats,
+        context=context,
     )
     result["base_model"] = result.get("source_model") or OPENAI_MODEL
     result["base_confidence"] = round(confidence, 4)
     result["confidence_threshold"] = confidence_threshold
     result["base_conflict"] = primary_has_conflict
     result["retrieval_quality"] = _retrieval_quality(retrieval_stats)
+    result["table_coverage_ratio"] = table_coverage_ratio
     result["escalation_reason"] = escalation_reason or ""
 
     if not escalation_reason:
@@ -911,6 +985,16 @@ def generate_ai_response_with_fallback(
         result_pro["base_model"] = result.get("source_model") or OPENAI_MODEL
         result_pro["final_model"] = LLM_SECONDARY_MODEL
         _, secondary_confidence = validate_answer(question, result_pro["text"], context, sources)
+        if question_profile.get("table"):
+            if table_coverage_ratio < 0.35:
+                secondary_confidence -= 0.18
+            elif table_coverage_ratio < 0.55:
+                secondary_confidence -= 0.1
+            secondary_confidence = max(0.0, round(secondary_confidence, 4))
+        if expected_domains and domain_match_ratio < 0.45:
+            secondary_confidence = max(0.0, round(secondary_confidence - 0.14, 4))
+        elif expected_domains and domain_match_ratio < 0.65:
+            secondary_confidence = max(0.0, round(secondary_confidence - 0.07, 4))
         secondary_has_conflict = _has_critical_term_conflict(question, result_pro["text"], context)
         result_pro["secondary_conflict"] = secondary_has_conflict
         if secondary_has_conflict and secondary_confidence < max(0.45, confidence_threshold - 0.12):
@@ -1019,10 +1103,12 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
     vague_definition_signal = bool(VAGUE_DEFINITION_PATTERN.search(lower_text))
     list_format_signal = bool(LIST_FORMAT_PATTERN.search(text))
     structured_item_count = _count_structured_items(text)
+    table_incomplete_signal = bool(TABLE_INCOMPLETE_SIGNAL_PATTERN.search(lower_text))
     has_step_markers = bool(re.search(r"\b(paso|primero|segundo|despues|a continuacion)\b", lower_text))
     comparison_markers = bool(re.search(r"\b(mientras que|por el contrario|en cambio|diferencia|frente a)\b", lower_text))
     incomplete_evidence_signal = bool(INCOMPLETE_EVIDENCE_PATTERN.search(lower_text))
     narrow_subsection_signal = bool(NARROW_SUBSECTION_PATTERN.search(lower_text))
+    missing_qualifiers_signal = _missing_qualifiers_signal(text, context or "")
     labeled_term_conflicts = _find_labeled_term_conflicts(question, text, context)
     chunk_support_score = _best_chunk_support_score(question, text, context)
 
@@ -1046,6 +1132,10 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence -= 0.12
     if table_question and "tabla" in lower_text and structured_item_count < 2 and not uncertainty_signal:
         confidence -= 0.08
+    if table_question and structured_item_count >= 3 and has_reference_evidence and not uncertainty_signal:
+        confidence += 0.08
+    if table_question and (uncertainty_signal or table_incomplete_signal) and structured_item_count < 3:
+        confidence -= 0.12
     if comparison_question and comparison_markers:
         confidence += 0.06
     elif comparison_question and not uncertainty_signal:
@@ -1078,6 +1168,16 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         confidence -= 0.15
     if context and overlap_ratio < 0.08:
         confidence -= 0.15
+    if PARTIAL_WITH_DETAIL_PATTERN.search(text) and len(text) >= 240:
+        confidence -= 0.14
+    # El contexto trae condicionantes/excepciones/ámbito/límites y la respuesta
+    # los omite: penalización fuerte para no "generalizar de más" (objetivo
+    # principal del bot).
+    if missing_qualifiers_signal:
+        if scope_question or summary_question or list_question or definition_question:
+            confidence -= 0.18
+        else:
+            confidence -= 0.1
     # Penaliza respuestas "parcialmente correctas" en preguntas de alcance/objeto:
     # si la salida indica evidencia incompleta y se apoya en una subseccion concreta,
     # la completitud de intencion es baja aunque haya grounding lexico alto.
@@ -1108,12 +1208,18 @@ def validate_answer(question: str, answer: str, context: str, sources: Optional[
         cap = min(cap, 0.58)
     if (list_question or summary_question or table_question) and expects_multiple_items and structured_item_count < 2:
         cap = min(cap, 0.62)
+    if table_question and (uncertainty_signal or table_incomplete_signal):
+        cap = min(cap, 0.64)
     if (definition_question or direct_fact_question or numeric_question or list_question) and chunk_support_score < 0.35:
         cap = min(cap, 0.6)
     if scope_question and incomplete_evidence_signal:
         cap = min(cap, 0.72)
     if scope_question and incomplete_evidence_signal and narrow_subsection_signal:
         cap = min(cap, 0.68)
+    if PARTIAL_WITH_DETAIL_PATTERN.search(text):
+        cap = min(cap, 0.74)
+    if missing_qualifiers_signal:
+        cap = min(cap, 0.7)
 
     confidence = min(max(confidence, 0.0), cap)
     return text, confidence

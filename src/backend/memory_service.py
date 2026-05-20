@@ -12,7 +12,7 @@ from config import (
     MEMORY_MAX_DISTANCE,
     MEMORY_MAX_RESULTS,
 )
-from database import get_connection
+from database import db_conn
 from rag_service import _embedding_fn
 
 
@@ -172,59 +172,56 @@ def record_interaction_pending(
     final_model = final_model or model
     base_model = base_model or final_model
 
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO dbo.InteraccionesRAG (
-            ConversacionId, Pregunta, Respuesta, Fuentes, Contexto, Estado, Confianza,
-            PromptTokens, CompletionTokens, TotalTokens, Modelo, ModeloBase, ModeloFinal,
-            ConfianzaBase, ConfianzaFinal, Escalado, MotivoEscalado, Ruta, DesdeMemoria,
-            TiempoRespuestaMs
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO dbo.InteraccionesRAG (
+                ConversacionId, Pregunta, Respuesta, Fuentes, Contexto, Estado, Confianza,
+                PromptTokens, CompletionTokens, TotalTokens, Modelo, ModeloBase, ModeloFinal,
+                ConfianzaBase, ConfianzaFinal, Escalado, MotivoEscalado, Ruta, DesdeMemoria,
+                TiempoRespuestaMs
+            )
+            OUTPUT INSERTED.Id
+            VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            conversation_id,
+            question,
+            answer,
+            _to_json(sources),
+            context,
+            confidence,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            final_model,
+            base_model,
+            final_model,
+            base_confidence,
+            final_confidence,
+            1 if escalated else 0,
+            (escalation_reason or "")[:80],
+            route,
+            1 if from_memory else 0,
+            elapsed_ms,
         )
-        OUTPUT INSERTED.Id
-        VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        conversation_id,
-        question,
-        answer,
-        _to_json(sources),
-        context,
-        confidence,
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
-        final_model,
-        base_model,
-        final_model,
-        base_confidence,
-        final_confidence,
-        1 if escalated else 0,
-        (escalation_reason or "")[:80],
-        route,
-        1 if from_memory else 0,
-        elapsed_ms,
-    )
-    interaction_id = cursor.fetchone()[0]
-    conn.commit()
-    conn.close()
+        interaction_id = cursor.fetchone()[0]
     return interaction_id
 
 
 def list_pending_interactions(limit: int = 50) -> List[Dict]:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT TOP (?) Id, ConversacionId, Pregunta, Respuesta, Fuentes, FechaCreacion, Confianza, TotalTokens, Modelo
-        FROM dbo.InteraccionesRAG
-        WHERE Estado = 'pendiente'
-        ORDER BY FechaCreacion DESC
-        """,
-        limit,
-    )
-    rows = cursor.fetchall()
-    conn.close()
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT TOP (?) Id, ConversacionId, Pregunta, Respuesta, Fuentes, FechaCreacion, Confianza, TotalTokens, Modelo
+            FROM dbo.InteraccionesRAG
+            WHERE Estado = 'pendiente'
+            ORDER BY FechaCreacion DESC
+            """,
+            limit,
+        )
+        rows = cursor.fetchall()
     items = []
     for row in rows:
         items.append(
@@ -244,52 +241,51 @@ def list_pending_interactions(limit: int = 50) -> List[Dict]:
 
 
 def get_admin_metrics(days: int = 30) -> Dict:
-    conn = get_connection()
-    cursor = conn.cursor()
+    with db_conn() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            COUNT(*) AS total_interactions,
-            SUM(CASE WHEN Estado='validada' THEN 1 ELSE 0 END) AS total_validated,
-            SUM(CASE WHEN Estado='pendiente' THEN 1 ELSE 0 END) AS total_pending,
-            SUM(CASE WHEN Estado='rechazada' THEN 1 ELSE 0 END) AS total_rejected,
-            SUM(CASE WHEN Respuesta LIKE 'No he podido generar respuesta en este momento por un error temporal%' THEN 1 ELSE 0 END) AS total_errors,
-            ISNULL(SUM(PromptTokens), 0) AS total_prompt_tokens,
-            ISNULL(SUM(CompletionTokens), 0) AS total_completion_tokens,
-            ISNULL(SUM(TotalTokens), 0) AS total_tokens,
-            ISNULL(AVG(CAST(TiempoRespuestaMs AS FLOAT)), 0) AS avg_latency_ms
-        FROM dbo.InteraccionesRAG
-        WHERE FechaCreacion >= DATEADD(day, ?, SYSUTCDATETIME())
-        """,
-        -abs(days),
-    )
-    row = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_interactions,
+                SUM(CASE WHEN Estado='validada' THEN 1 ELSE 0 END) AS total_validated,
+                SUM(CASE WHEN Estado='pendiente' THEN 1 ELSE 0 END) AS total_pending,
+                SUM(CASE WHEN Estado='rechazada' THEN 1 ELSE 0 END) AS total_rejected,
+                SUM(CASE WHEN Respuesta LIKE 'No he podido generar respuesta en este momento por un error temporal%' THEN 1 ELSE 0 END) AS total_errors,
+                ISNULL(SUM(PromptTokens), 0) AS total_prompt_tokens,
+                ISNULL(SUM(CompletionTokens), 0) AS total_completion_tokens,
+                ISNULL(SUM(TotalTokens), 0) AS total_tokens,
+                ISNULL(AVG(CAST(TiempoRespuestaMs AS FLOAT)), 0) AS avg_latency_ms
+            FROM dbo.InteraccionesRAG
+            WHERE FechaCreacion >= DATEADD(day, ?, SYSUTCDATETIME())
+            """,
+            -abs(days),
+        )
+        row = cursor.fetchone()
 
-    cursor.execute(
-        """
-        SELECT
-            Modelo,
-            COUNT(*) AS interactions,
-            SUM(CASE WHEN Estado='validada' THEN 1 ELSE 0 END) AS validated,
-            SUM(CASE WHEN Estado='pendiente' THEN 1 ELSE 0 END) AS pending,
-            SUM(CASE WHEN Estado='rechazada' THEN 1 ELSE 0 END) AS rejected,
-            SUM(CASE WHEN Respuesta LIKE 'No he podido generar respuesta en este momento por un error temporal%'
-                  OR Respuesta LIKE 'El modelo no ha podido responder por saturacion temporal del servicio%'
-                THEN 1 ELSE 0 END) AS total_errors,
-            ISNULL(SUM(PromptTokens), 0) AS prompt_tokens,
-            ISNULL(SUM(CompletionTokens), 0) AS completion_tokens,
-            ISNULL(SUM(TotalTokens), 0) AS total_tokens,
-            ISNULL(AVG(CAST(TiempoRespuestaMs AS FLOAT)), 0) AS avg_latency_ms
-        FROM dbo.InteraccionesRAG
-        WHERE FechaCreacion >= DATEADD(day, ?, SYSUTCDATETIME())
-          AND Modelo IS NOT NULL AND Modelo <> ''
-        GROUP BY Modelo
-        """,
-        -abs(days),
-    )
-    model_rows = cursor.fetchall()
-    conn.close()
+        cursor.execute(
+            """
+            SELECT
+                Modelo,
+                COUNT(*) AS interactions,
+                SUM(CASE WHEN Estado='validada' THEN 1 ELSE 0 END) AS validated,
+                SUM(CASE WHEN Estado='pendiente' THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN Estado='rechazada' THEN 1 ELSE 0 END) AS rejected,
+                SUM(CASE WHEN Respuesta LIKE 'No he podido generar respuesta en este momento por un error temporal%'
+                      OR Respuesta LIKE 'El modelo no ha podido responder por saturacion temporal del servicio%'
+                    THEN 1 ELSE 0 END) AS total_errors,
+                ISNULL(SUM(PromptTokens), 0) AS prompt_tokens,
+                ISNULL(SUM(CompletionTokens), 0) AS completion_tokens,
+                ISNULL(SUM(TotalTokens), 0) AS total_tokens,
+                ISNULL(AVG(CAST(TiempoRespuestaMs AS FLOAT)), 0) AS avg_latency_ms
+            FROM dbo.InteraccionesRAG
+            WHERE FechaCreacion >= DATEADD(day, ?, SYSUTCDATETIME())
+              AND Modelo IS NOT NULL AND Modelo <> ''
+            GROUP BY Modelo
+            """,
+            -abs(days),
+        )
+        model_rows = cursor.fetchall()
 
     total_interactions = int(row[0] or 0)
     validated = int(row[1] or 0)
@@ -353,9 +349,8 @@ def record_model_error_event(model: str, status_code: int, *, error_kind: str = 
     if not normalized_model or not status_code:
         return
 
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
+    with db_conn() as conn:
+        cursor = conn.cursor()
         cursor.execute(
             """
             INSERT INTO dbo.ModelErrorEvents (Modelo, StatusCode, ErrorKind, Origen)
@@ -366,16 +361,12 @@ def record_model_error_event(model: str, status_code: int, *, error_kind: str = 
             (error_kind or "").strip()[:40],
             (origin or "").strip()[:40],
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def get_admin_503_metrics(hours: int = 24) -> Dict:
     window_hours = max(1, min(abs(int(hours or 24)), 24 * 30))
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
+    with db_conn() as conn:
+        cursor = conn.cursor()
         cursor.execute(
             """
             SELECT
@@ -389,8 +380,6 @@ def get_admin_503_metrics(hours: int = 24) -> Dict:
             -window_hours,
         )
         rows = cursor.fetchall()
-    finally:
-        conn.close()
 
     counts_by_model = {(row[0] or "").strip().lower(): int(row[1] or 0) for row in rows}
     primary_model = OPENAI_MODEL
@@ -415,51 +404,47 @@ def get_admin_503_metrics(hours: int = 24) -> Dict:
 
 
 def validate_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT Id, Pregunta, Respuesta, Fuentes, Contexto, Estado
-        FROM dbo.InteraccionesRAG
-        WHERE Id = ?
-        """,
-        interaction_id,
-    )
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        raise ValueError("Interaccion no encontrada")
-    if row[5] == "validada":
-        conn.close()
-        return {"status": "already_validated", "interaction_id": interaction_id}
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT Id, Pregunta, Respuesta, Fuentes, Contexto, Estado
+            FROM dbo.InteraccionesRAG
+            WHERE Id = ?
+            """,
+            interaction_id,
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError("Interaccion no encontrada")
+        if row[5] == "validada":
+            return {"status": "already_validated", "interaction_id": interaction_id}
 
-    sources = _from_json(row[3], [])
-    sources_json = _to_json(sources)
+        sources = _from_json(row[3], [])
+        sources_json = _to_json(sources)
 
-    cursor.execute(
-        """
-        INSERT INTO dbo.ConocimientoValidado (InteraccionId, Pregunta, Respuesta, Fuentes, Contexto, ValidadoPor)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        row[0],
-        row[1],
-        row[2],
-        sources_json,
-        row[4],
-        reviewer,
-    )
+        cursor.execute(
+            """
+            INSERT INTO dbo.ConocimientoValidado (InteraccionId, Pregunta, Respuesta, Fuentes, Contexto, ValidadoPor)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            row[0],
+            row[1],
+            row[2],
+            sources_json,
+            row[4],
+            reviewer,
+        )
 
-    cursor.execute(
-        """
-        UPDATE dbo.InteraccionesRAG
-        SET Estado = 'validada', FechaRevision = SYSUTCDATETIME(), RevisadoPor = ?
-        WHERE Id = ?
-        """,
-        reviewer,
-        interaction_id,
-    )
-    conn.commit()
-    conn.close()
+        cursor.execute(
+            """
+            UPDATE dbo.InteraccionesRAG
+            SET Estado = 'validada', FechaRevision = SYSUTCDATETIME(), RevisadoPor = ?
+            WHERE Id = ?
+            """,
+            reviewer,
+            interaction_id,
+        )
 
     memory_id = f"mem_{interaction_id}"
     memory_document = f"Pregunta: {row[1]}\nRespuesta: {row[2]}"
@@ -480,19 +465,17 @@ def validate_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
 
 
 def reject_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        UPDATE dbo.InteraccionesRAG
-        SET Estado = 'rechazada', FechaRevision = SYSUTCDATETIME(), RevisadoPor = ?
-        WHERE Id = ?
-        """,
-        reviewer,
-        interaction_id,
-    )
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE dbo.InteraccionesRAG
+            SET Estado = 'rechazada', FechaRevision = SYSUTCDATETIME(), RevisadoPor = ?
+            WHERE Id = ?
+            """,
+            reviewer,
+            interaction_id,
+        )
     return {"status": "rejected", "interaction_id": interaction_id}
 
 

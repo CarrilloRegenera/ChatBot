@@ -26,8 +26,47 @@ from config import (
 )
 
 
-CHUNK_SIZE = 950
-CHUNK_OVERLAP = 375
+CHUNK_SIZE = 450
+CHUNK_OVERLAP = 100
+
+# OCR opcional para PDFs escaneados. Activar con RAG_OCR_ENABLED=1.
+# Requiere Tesseract instalado en el sistema y `pytesseract` + `Pillow` en pip.
+# Si no están disponibles, el pipeline OCR se desactiva en caliente con un
+# warning (sin romper indexación).
+OCR_ENABLED = os.getenv("RAG_OCR_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+OCR_MIN_TEXT_CHARS_PER_PAGE = int(os.getenv("RAG_OCR_MIN_CHARS", "60"))
+OCR_LANGUAGES = os.getenv("RAG_OCR_LANGS", "spa+eng")
+OCR_RENDER_DPI = int(os.getenv("RAG_OCR_DPI", "220"))
+_OCR_TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
+
+_pytesseract = None
+_PIL_Image = None
+if OCR_ENABLED:
+    try:
+        import pytesseract as _pytesseract  # type: ignore
+        from PIL import Image as _PIL_Image  # type: ignore
+        if _OCR_TESSERACT_CMD:
+            _pytesseract.pytesseract.tesseract_cmd = _OCR_TESSERACT_CMD
+    except Exception:  # pragma: no cover
+        _pytesseract = None
+        _PIL_Image = None
+
+
+def _ocr_page_text(page) -> str:
+    """OCR de una página PyMuPDF. Devuelve "" si no hay Tesseract disponible."""
+    if not (OCR_ENABLED and _pytesseract is not None and _PIL_Image is not None):
+        return ""
+    try:
+        import io
+        pix = page.get_pixmap(dpi=OCR_RENDER_DPI, alpha=False)
+        img = _PIL_Image.open(io.BytesIO(pix.tobytes("png")))
+        return _pytesseract.image_to_string(img, lang=OCR_LANGUAGES) or ""
+    except Exception as exc:
+        # No abortar: el resto de páginas pueden tener texto extraíble.
+        logging.getLogger(__name__).warning(
+            "OCR fallo en pagina %s: %s", getattr(page, "number", "?"), exc
+        )
+        return ""
 MIN_CHUNK_LENGTH = 80
 CORE_TERM_PENALTY = 4
 MAX_TOPIC_TOKENS = 6
@@ -69,6 +108,10 @@ TABLE_QUERY_PATTERN = re.compile(
 )
 LIST_CUE_PATTERN = re.compile(r"(?:^|\n)(?:[-*]\s+|\d+\.\s+)", re.IGNORECASE)
 CIRCUIT_LIST_CUE_PATTERN = re.compile(r"\bC(?:1[0-3]?|[1-9])\b", re.IGNORECASE)
+TABLE_ROW_CUE_PATTERN = re.compile(
+    r"(?:\b(?:c\d{1,2}|itc[-\s]*[a-z]{1,4}[-\s]*\d+|ip\d{2}|ik\d{2})\b|\s{2,}|[;|]{1}|\b(?:fase|circuito|uso|proteccion|potencia|seccion|denominacion|descripcion)\b)",
+    re.IGNORECASE,
+)
 COMPARISON_QUERY_PATTERN = re.compile(
     r"(?:\bdiferencia\b|\bdiferencias\b|\bcompara\b|\bcomparar\b|\bfrente\s+a\b|\bversus\b)",
     re.IGNORECASE,
@@ -85,6 +128,10 @@ GENERALIZATION_QUERY_PATTERN = re.compile(
     r"(?:\ben\s+general\b|\bprincipales\b|\bcriterios?\b|\brequisitos?\b|\bexcepciones?\b|"
     r"\balcance\b|\baplicacion\b|\baplicación\b|\bfuncion\b|\bfunción\b|\bfinalidad\b|"
     r"\bobjetivo\b|\bcambios?\b|\bmodifica\b|\bintroduce\b|\bafecta\b|\bimplica\b)",
+    re.IGNORECASE,
+)
+SCOPE_QUERY_PATTERN = re.compile(
+    r"(?:\bobjeto\b|\bambito\b|\bámbito\b|\balcance\b|\bfinalidad\b|\bfuncion\b|\bfunción\b|\bpapel\b)",
     re.IGNORECASE,
 )
 PROCEDURE_CUE_PATTERN = re.compile(
@@ -117,16 +164,42 @@ PROCEDURE_PRIORITY_BOOST = 5
 TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
 LABELED_CONTEXT_PENALTY = 10
-DOMAIN_SOURCE_HINTS = {
-    "alta_tension": ("a16436-16554", "alta tension", "alta_tension", "itc-lat", "lat"),
-    "rite": ("a35931-35984", "rite", "instalaciones termicas", "termicas"),
-    "baja_tension": ("boe-326_reglamento_electrotecnico_para_baja_tension_e_itc", "rebt", "baja tension", "baja_tension", "itc-bt"),
-    "guias_tecnicas": ("guia", "guias", "guia_bt", "bt-40", "iluminacion", "une-12464", "12464"),
-    "fotovoltaica_om": ("fotovoltaica", "fotovoltaico", "fv", "operacion", "mantenimiento", "o&m", "om-fv"),
-    "grupos_electrogenos": ("grupo electrogeno", "grupos electrogenos", "iso-8528", "8528", "generating sets"),
+# Mapeo exacto basename (o substring del nombre relativo) → dominio.
+# Tiene MÁXIMA prioridad sobre las heurísticas. Úsalo para pinear archivos
+# concretos cuya clasificación automática sea ambigua o errónea.
+# Las claves son substrings del nombre relativo del PDF (case-insensitive,
+# tras normalizar acentos). El primero que matchee gana.
+DOMAIN_FILENAME_OVERRIDES = {
+    # Ejemplos (descomentar y ajustar según tu corpus):
+    # "guia_bt_40.pdf": "guias_tecnicas",
+    # "itc-bt-25.pdf": "baja_tension",
 }
+
+# Hints por tokens del filename. Se comparan como palabras enteras tras
+# tokenizar el filename (evita falsos positivos del antiguo "lat" en
+# "plataforma"). Cada valor es un conjunto de tokens normalizados sin acentos.
+DOMAIN_SOURCE_TOKEN_HINTS = {
+    "alta_tension": {"itc-lat", "lat", "a16436", "a16554", "alta_tension", "alta-tension"},
+    "rite": {"rite", "a35931", "a35984", "termicas", "instalaciones_termicas"},
+    "baja_tension": {"rebt", "itc-bt", "baja_tension", "baja-tension", "boe-326"},
+    "guias_tecnicas": {"guia", "guias", "guia_bt", "bt-40", "iluminacion", "une-12464", "12464"},
+    "fotovoltaica_om": {"fotovoltaica", "fotovoltaico", "fv", "om-fv", "o&m"},
+    "grupos_electrogenos": {"grupo_electrogeno", "grupos_electrogenos", "iso-8528", "8528", "electrogenos"},
+}
+
+# Frases que se buscan como substring puro (cuando contienen espacios y
+# por tanto no caben como token). Reservado para hints multi-palabra.
+DOMAIN_SOURCE_PHRASE_HINTS = {
+    "alta_tension": ("alta tension",),
+    "rite": ("instalaciones termicas",),
+    "baja_tension": ("baja tension",),
+    "guias_tecnicas": (),
+    "fotovoltaica_om": ("operacion y mantenimiento",),
+    "grupos_electrogenos": ("grupo electrogeno", "grupos electrogenos", "generating sets"),
+}
+
 DOMAIN_FOLDER_PREFIXES = {
-    "alta_tension": ("alta_tension", "lat", "lineas_alta_tension"),
+    "alta_tension": ("alta_tension", "lineas_alta_tension"),
     "rite": ("rite", "instalaciones_termicas", "termicas"),
     "baja_tension": ("baja_tension", "rebt"),
     "guias_tecnicas": ("guias_tecnicas", "guias", "iluminacion"),
@@ -340,6 +413,31 @@ def _extract_text_blocks(text: str) -> List[Dict[str, str]]:
     return blocks
 
 
+def _looks_like_table_block(text: str) -> bool:
+    if not text:
+        return False
+    normalized = _normalize_text(text)
+    row_cues = len(TABLE_ROW_CUE_PATTERN.findall(normalized))
+    list_cues = len(LIST_CUE_PATTERN.findall(text))
+    has_table_word = "tabla" in normalized
+    has_circuit_codes = len(CIRCUIT_LIST_CUE_PATTERN.findall(text))
+    return (
+        has_table_word
+        or has_circuit_codes >= 2
+        or row_cues >= 3
+        or (list_cues >= 2 and row_cues >= 2)
+    )
+
+
+def _table_signal_count(text: str) -> int:
+    if not text:
+        return 0
+    count = 0
+    count += len(CIRCUIT_LIST_CUE_PATTERN.findall(text))
+    count += len(re.findall(r"\b(?:circuito|fase|uso|potencia|seccion|proteccion)\b", _normalize_text(text)))
+    return count
+
+
 def _format_chunk(text: str, section: str) -> str:
     clean_text = " ".join(text.split()).strip()
     if not section:
@@ -441,6 +539,7 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "comparison_query": bool(COMPARISON_QUERY_PATTERN.search(normalized)),
         "procedure_query": bool(PROCEDURE_QUERY_PATTERN.search(normalized)),
         "generalization_query": bool(GENERALIZATION_QUERY_PATTERN.search(normalized)),
+        "scope_query": bool(SCOPE_QUERY_PATTERN.search(normalized)),
         "temporal_query": bool(TEMPORAL_QUERY_PATTERN.search(normalized)),
         "question_keywords": question_keywords,
         "section_terms": _extract_topic_terms(clean_question, limit=MAX_TOPIC_TOKENS),
@@ -472,16 +571,50 @@ def _metadata_text(metadata: Dict[str, object]) -> str:
     return _normalize_text(
         " ".join(
             str(metadata.get(key, ""))
-            for key in ("source", "folder", "domain", "section", "topics")
+            for key in ("source", "folder", "domain", "section", "topics", "table_hint", "chunk_kind")
         )
     )
 
 
-def _domain_from_source(source_name: str) -> str:
-    normalized_source = _normalize_text((source_name or "").replace("/", " "))
-    for domain_key, hints in DOMAIN_SOURCE_HINTS.items():
-        if any(hint in normalized_source for hint in hints):
+def _domain_from_filename_override(source_name: str) -> str:
+    """Override exacto/substring del filename (máxima prioridad)."""
+    if not source_name:
+        return ""
+    normalized = _normalize_text(source_name.replace("\\", "/"))
+    for pattern, domain_key in DOMAIN_FILENAME_OVERRIDES.items():
+        if _normalize_text(pattern) in normalized:
             return domain_key
+    return ""
+
+
+def _filename_tokens(source_name: str) -> set:
+    """Tokeniza un filename a palabras+combinaciones con guiones para matcheo por word boundary.
+
+    Ej: 'docs/itc-bt-25_circuitos.pdf' →
+    {'docs', 'itc', 'bt', '25', 'circuitos', 'pdf', 'itc-bt', 'itc-bt-25', 'bt-25'}.
+    """
+    normalized = _normalize_text((source_name or "").replace("\\", "/").replace("/", " "))
+    raw_tokens = re.findall(r"[a-z0-9&]+", normalized)
+    tokens = set(raw_tokens)
+    # Compuestos con guion: itc-bt, itc-bt-25, bt-25, etc.
+    parts = re.split(r"[\s_]+", normalized)
+    for part in parts:
+        sub = [s for s in part.split("-") if s]
+        for i in range(len(sub)):
+            for j in range(i + 1, len(sub) + 1):
+                tokens.add("-".join(sub[i:j]))
+    return tokens
+
+
+def _domain_from_source(source_name: str) -> str:
+    tokens = _filename_tokens(source_name)
+    normalized_full = _normalize_text((source_name or "").replace("\\", "/").replace("/", " "))
+    for domain_key, token_hints in DOMAIN_SOURCE_TOKEN_HINTS.items():
+        if tokens & {_normalize_text(t) for t in token_hints}:
+            return domain_key
+        for phrase in DOMAIN_SOURCE_PHRASE_HINTS.get(domain_key, ()):
+            if _normalize_text(phrase) in normalized_full:
+                return domain_key
     return "general"
 
 
@@ -500,10 +633,20 @@ def _domain_from_folder(source_name: str) -> str:
 
 
 def _source_domain_key(source_name: str, metadata: Dict[str, object] | None = None) -> str:
+    """Resuelve dominio en cascada:
+    1) metadata['domain'] (asignado en indexación).
+    2) DOMAIN_FILENAME_OVERRIDES (pin manual por filename).
+    3) DOMAIN_FOLDER_PREFIXES (estructura de carpetas).
+    4) DOMAIN_SOURCE_TOKEN_HINTS / DOMAIN_SOURCE_PHRASE_HINTS (heurística por tokens).
+    5) 'general'.
+    """
     if metadata:
         explicit_domain = str(metadata.get("domain", "") or "").strip()
         if explicit_domain:
             return explicit_domain
+    override = _domain_from_filename_override(source_name)
+    if override:
+        return override
     return _domain_from_folder(source_name) or _domain_from_source(source_name)
 
 
@@ -585,6 +728,18 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     prev_top = top
                     prev_lh = lh
             text = "\n".join(lines)
+            # Fallback OCR: si la página apenas tiene texto extraíble (PDF
+            # escaneado), pasa por Tesseract. Sin Tesseract instalado o con
+            # OCR_ENABLED=0, este bloque devuelve "" y el comportamiento es
+            # igual al previo (página vacía → skip).
+            if len(text.strip()) < OCR_MIN_TEXT_CHARS_PER_PAGE:
+                ocr_text = _ocr_page_text(page)
+                if ocr_text and len(ocr_text.strip()) > len(text.strip()):
+                    text = ocr_text
+                    logger.info(
+                        "[OCR] %s pag %d: texto recuperado por OCR (%d chars)",
+                        source_name, page_index + 1, len(text),
+                    )
             page_blocks = _extract_text_blocks(text)
             if not page_blocks:
                 continue
@@ -595,7 +750,14 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     if block["text"][:60] in chunk:
                         section_name = block["section"]
                         break
-                chunk_kind = "numeric" if _extract_numeric_terms(chunk) else "text"
+                if _looks_like_table_block(chunk):
+                    chunk_kind = "table"
+                elif _extract_numeric_terms(chunk):
+                    chunk_kind = "numeric"
+                else:
+                    chunk_kind = "text"
+                table_hint = "tabla" if "tabla" in _normalize_text(chunk) else ""
+                table_signal_count = _table_signal_count(chunk)
                 documents.append(chunk)
                 metadatas.append({
                     "source": source_name,
@@ -606,6 +768,8 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     "section": _sanitize_section_label(section_name[:SECTION_LABEL_MAX_LENGTH]),
                     "topics": ", ".join(chunk_topics),
                     "chunk_kind": chunk_kind,
+                    "table_hint": table_hint,
+                    "table_signal_count": table_signal_count,
                     "file_hash": file_hash,
                 })
                 ids.append(f"{source_name}-{page_index + 1}-{chunk_index}")
@@ -715,7 +879,7 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
         query_profile["generalization_query"],
     ))
     if query_profile["summary_query"] or query_profile["list_query"] or query_profile["table_query"]:
-        n_results = max(n_results, 8 if not query_profile["table_query"] else 10)
+        n_results = max(n_results, 8 if not query_profile["table_query"] else 12)
     elif query_profile["definition_query"] or query_profile["comparison_query"] or query_profile["generalization_query"]:
         n_results = max(n_results, 7)
     if query_profile["temporal_query"]:
@@ -752,6 +916,27 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
             except Exception as exc:
                 logger.warning("Domain-forced retrieval failed for %s: %s", domain, exc)
 
+    if query_profile["table_query"]:
+        existing_ids = set(ids)
+        try:
+            table_results = collection.query(
+                query_texts=[clean_question],
+                n_results=min(n_results + 6, 16),
+                where={"chunk_kind": "table"},
+            )
+            for doc, meta, fid in zip(
+                table_results.get("documents", [[]])[0],
+                table_results.get("metadatas", [[]])[0],
+                table_results.get("ids", [[]])[0],
+            ):
+                if fid not in existing_ids:
+                    documents.append(doc)
+                    metadatas.append(meta)
+                    ids.append(fid)
+                    existing_ids.add(fid)
+        except Exception as exc:
+            logger.warning("Table-forced retrieval failed: %s", exc)
+
     ranked_items = []
     seen_ids = set()
 
@@ -784,6 +969,8 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
                 1 if LIST_CUE_PATTERN.search(document) else 0,
                 1 if CIRCUIT_LIST_CUE_PATTERN.search(document) else 0,
             ))
+            if str(metadata.get("chunk_kind", "")) == "table":
+                table_hits += 2
         comparison_hits = len(COMPARISON_CUE_PATTERN.findall(document)) if query_profile["comparison_query"] else 0
         procedure_hits = len(PROCEDURE_CUE_PATTERN.findall(document)) if query_profile["procedure_query"] else 0
         temporal_hits = len(TEMPORAL_CUE_PATTERN.findall(document)) if query_profile["temporal_query"] else 0
@@ -796,6 +983,12 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
         )
 
         score = overlap_score + (keyword_hits * 2) + (core_hits * 4)
+        # Scope/objeto/finalidad questions benefit from early normative sections.
+        if query_profile.get("scope_query"):
+            if int(metadata.get("page", 9999) or 9999) <= 3:
+                score += 5
+            if any(term in section_title for term in ("objeto", "ambito", "alcance", "finalidad", "definicion")):
+                score += 7
         if normalized_question and normalized_question in doc_norm:
             score += 6
         if definition_hits:
@@ -837,7 +1030,7 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
             score += COMPARISON_PRIORITY_BOOST
         if core_terms and core_hits == 0:
             score -= CORE_TERM_PENALTY
-        if overlap_score == 0 and core_hits == 0 and metadata.get("chunk_kind") != "numeric":
+        if overlap_score == 0 and core_hits == 0 and metadata.get("chunk_kind") not in {"numeric", "table"}:
             score -= 6
 
         ranked_items.append((score, doc_id, document, metadata))
@@ -887,6 +1080,8 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
                     lexical_score += TABLE_PRIORITY_BOOST
                 if CIRCUIT_LIST_CUE_PATTERN.search(document):
                     lexical_score += TABLE_PRIORITY_BOOST
+                if str(metadata.get("chunk_kind", "")) == "table":
+                    lexical_score += TABLE_PRIORITY_BOOST * 2
             if query_profile["comparison_query"] and COMPARISON_CUE_PATTERN.search(document):
                 lexical_score += COMPARISON_PRIORITY_BOOST_INTENT
             if query_profile["procedure_query"] and PROCEDURE_CUE_PATTERN.search(document):
@@ -939,6 +1134,9 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
     section_counts = {}
     source_cap = MAX_CHUNKS_PER_SOURCE + (2 if broad_query else 0)
     section_cap = 3 if broad_query else 2
+    if query_profile["table_query"]:
+        source_cap += 3
+        section_cap += 2
     diversity_target = 0
     if query_profile["comparison_query"] or query_profile["summary_query"] or query_profile["list_query"]:
         diversity_target = min(3, len({item[3].get("source", "unknown") for item in ranked_items}))
@@ -984,10 +1182,49 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
             focused.sort(key=lambda item: _focus_hits(item[2], core_terms), reverse=True)
             selected = (focused + non_focused)[:n_results]
 
+    # Neighbor expansion: for table chunks, fetch contiguous ±1 chunks
+    # (same source+page) to recover tables split across chunks.
+    if query_profile["table_query"] and selected:
+        neighbor_ids: List[str] = []
+        for _, doc_id, _, metadata in list(selected):
+            if str(metadata.get("chunk_kind", "")) != "table":
+                continue
+            parts = str(doc_id).rsplit("-", 2)
+            if len(parts) != 3:
+                continue
+            source_part, page_part, chunk_part = parts
+            try:
+                chunk_idx = int(chunk_part)
+            except ValueError:
+                continue
+            for delta in (-1, 1):
+                neighbor = f"{source_part}-{page_part}-{chunk_idx + delta}"
+                if neighbor not in selected_ids and neighbor not in neighbor_ids:
+                    neighbor_ids.append(neighbor)
+        if neighbor_ids:
+            try:
+                neighbor_results = collection.get(
+                    ids=neighbor_ids,
+                    include=["documents", "metadatas"],
+                )
+                for nid, ndoc, nmeta in zip(
+                    neighbor_results.get("ids", []) or [],
+                    neighbor_results.get("documents", []) or [],
+                    neighbor_results.get("metadatas", []) or [],
+                ):
+                    if not ndoc or not nmeta or nid in selected_ids:
+                        continue
+                    selected.append((0.0, nid, ndoc, nmeta))
+                    selected_ids.add(nid)
+            except Exception as exc:
+                logger.warning("Table neighbor expansion failed: %s", exc)
+
     context_parts = []
     sources = []
     seen_sources = set()
     matched_domains = 0
+    table_selected_chunks = 0
+    table_selected_signal_count = 0
     for _, _, document, metadata in selected:
         clean_section = _sanitize_section_label(str(metadata.get("section", "")))
         section_suffix = f", {clean_section}" if clean_section else ""
@@ -998,6 +1235,26 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
             seen_sources.add(source_label)
         if expected_domains and _source_domain_key(str(metadata.get("source", "")), metadata) in expected_domains:
             matched_domains += 1
+        if str(metadata.get("chunk_kind", "")) == "table":
+            table_selected_chunks += 1
+        table_selected_signal_count += int(metadata.get("table_signal_count", 0) or 0)
+
+    table_candidate_signal_count = 0
+    if query_profile["table_query"]:
+        for _, _, document, metadata in ranked_items[: max(n_results * 3, 12)]:
+            if str(metadata.get("chunk_kind", "")) == "table":
+                table_candidate_signal_count += int(metadata.get("table_signal_count", 0) or 0)
+            elif _looks_like_table_block(document):
+                table_candidate_signal_count += _table_signal_count(document)
+
+    table_coverage_ratio = 1.0
+    if query_profile["table_query"]:
+        table_coverage_ratio = (
+            table_selected_signal_count / max(table_candidate_signal_count, 1)
+            if table_candidate_signal_count > 0
+            else 0.0
+        )
+        table_coverage_ratio = round(min(max(table_coverage_ratio, 0.0), 1.0), 4)
 
     source_names = [str(item[3].get("source", "unknown")) for item in selected]
     unique_source_names = sorted(set(source_names))
@@ -1014,6 +1271,10 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
         "expected_domains": expected_domains,
         "domain_match_ratio": round(matched_domains / max(len(selected), 1), 4) if expected_domains else 1.0,
         "broad_query": broad_query,
+        "table_selected_chunks": table_selected_chunks,
+        "table_selected_signal_count": table_selected_signal_count,
+        "table_candidate_signal_count": table_candidate_signal_count,
+        "table_coverage_ratio": table_coverage_ratio,
     }
     return "\n\n".join(context_parts), sources, retrieval_stats
 
