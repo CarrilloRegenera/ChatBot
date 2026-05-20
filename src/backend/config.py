@@ -58,6 +58,7 @@ ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 SYNC_DOCUMENTS_ON_STARTUP = os.getenv("SYNC_DOCUMENTS_ON_STARTUP", "true").strip().lower() in {"1", "true", "yes", "on"}
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "").strip()
 
 # Keep only general language stopwords by default; domain-specific words
 # can be injected via env for each corpus.

@@ -21,6 +21,13 @@ function resolveApiBaseUrl() {
 }
 
 const API = resolveApiBaseUrl();
+function getAdminHeaders() {
+    const headers = {};
+    const adminKey = (window.CHATBOT_CONFIG?.ADMIN_API_KEY || "").trim();
+    if (adminKey) headers["x-admin-key"] = adminKey;
+    if (currentUser?.rol) headers["x-user-role"] = currentUser.rol;
+    return headers;
+}
 let currentUser = null;
 let currentConversation = null;
 let isSending = false;
@@ -873,7 +880,6 @@ function renderAdmin503Metrics(data) {
 
 async function loadAdmin503Metrics() {
     if (!currentUser) return;
-    const role = encodeURIComponent(currentUser.rol || "");
     const hours = parseInt(document.getElementById("admin-503-hours")?.value || "24", 10);
     const summary = document.getElementById("admin-503-summary");
     const comparison = document.getElementById("admin-503-comparison");
@@ -885,7 +891,9 @@ async function loadAdmin503Metrics() {
     }
 
     try {
-        const res = await fetch(`${API}/admin/metrics/errors-503?role=${role}&hours=${hours}`);
+        const res = await fetch(`${API}/admin/metrics/errors-503?hours=${hours}`, {
+            headers: getAdminHeaders(),
+        });
         if (!res.ok) {
             throw new Error("No se pudieron cargar los errores 503");
         }
@@ -914,11 +922,10 @@ function setAdminRange(days, button) {
 
 async function loadAdminPanel() {
     if (!currentUser) return;
-    const role = encodeURIComponent(currentUser.rol || "");
     try {
         const [metricsRes, pendingRes] = await Promise.all([
-            fetch(`${API}/admin/metrics?role=${role}&days=${adminRangeDays}`),
-            fetch(`${API}/admin/knowledge/pending?role=${role}&limit=30`),
+            fetch(`${API}/admin/metrics?days=${adminRangeDays}`, { headers: getAdminHeaders() }),
+            fetch(`${API}/admin/knowledge/pending?limit=30`, { headers: getAdminHeaders() }),
         ]);
 
         if (!metricsRes.ok || !pendingRes.ok) {
@@ -976,7 +983,7 @@ async function validateInteraction(interactionId) {
     if (!currentUser) return;
     const res = await fetch(`${API}/knowledge/${interactionId}/validate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAdminHeaders() },
         body: JSON.stringify({ reviewer: currentUser.nombre || "admin" }),
     });
     if (!res.ok) {
@@ -990,7 +997,7 @@ async function rejectInteraction(interactionId) {
     if (!currentUser) return;
     const res = await fetch(`${API}/knowledge/${interactionId}/reject`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAdminHeaders() },
         body: JSON.stringify({ reviewer: currentUser.nombre || "admin" }),
     });
     if (!res.ok) {

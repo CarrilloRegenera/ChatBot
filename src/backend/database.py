@@ -1,11 +1,18 @@
 import logging
 import os
 from contextlib import contextmanager
+from pathlib import Path
 
 import pyodbc
+from dotenv import load_dotenv
 
 
 logger = logging.getLogger(__name__)
+
+
+BASE_DIR = Path(__file__).resolve().parent
+ENV_PATH = BASE_DIR / ".env"
+load_dotenv(ENV_PATH)
 
 
 # pyodbc connection pool — comparte handles entre llamadas y evita el handshake
@@ -18,6 +25,9 @@ def _build_connection_string() -> str:
     explicit = os.getenv("SQL_CONNECTION_STRING")
     if explicit:
         return explicit
+    env_name = (os.getenv("ENVIRONMENT", "") or os.getenv("APP_ENV", "")).strip().lower()
+    is_production = env_name in {"prod", "production"}
+    allow_local_fallback = os.getenv("ALLOW_LOCAL_SQL_FALLBACK", "1").strip().lower() in {"1", "true", "yes", "on"}
     driver = os.getenv("SQL_DRIVER", "ODBC Driver 17 for SQL Server")
     server = os.getenv("SQL_SERVER", "").strip()
     database = os.getenv("SQL_DATABASE", "").strip()
@@ -26,6 +36,10 @@ def _build_connection_string() -> str:
     timeout = os.getenv("SQL_CONNECTION_TIMEOUT", "5")
     encrypt = os.getenv("SQL_ENCRYPT", "yes")
     trust_cert = os.getenv("SQL_TRUST_SERVER_CERTIFICATE", "no")
+
+    if (not server or not database) and (not is_production) and allow_local_fallback:
+        server = "localhost\\SQLEXPRESS"
+        database = "ChatBot"
 
     if not server or not database:
         raise RuntimeError(
