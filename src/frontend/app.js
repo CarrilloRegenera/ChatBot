@@ -1,26 +1,4 @@
-function resolveApiBaseUrl() {
-    const configuredUrl = (
-        window.CHATBOT_CONFIG?.API_BASE_URL ||
-        window.API_BASE_URL ||
-        ""
-    ).trim();
-
-    if (configuredUrl) {
-        return configuredUrl.replace(/\/+$/, "");
-    }
-
-    const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
-    if (window.location.port === "8000") {
-        return window.location.origin;
-    }
-    if (localHosts.has(window.location.hostname)) {
-        return "http://localhost:8000";
-    }
-
-    return window.location.origin;
-}
-
-const API = resolveApiBaseUrl();
+const API = window.location.port === "8000" ? window.location.origin : "http://localhost:8000";
 let currentUser = null;
 let currentConversation = null;
 let isSending = false;
