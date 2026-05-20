@@ -52,6 +52,11 @@ MEMORY_MAX_RESULTS = int(os.getenv("MEMORY_MAX_RESULTS", "3"))
 MEMORY_MAX_DISTANCE = float(os.getenv("MEMORY_MAX_DISTANCE", "0.35"))
 CONVERSATION_LOCK_TIMEOUT_SECS = float(os.getenv("CONVERSATION_LOCK_TIMEOUT_SECS", "60"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
+    if origin.strip()
+]
 
 # Keep only general language stopwords by default; domain-specific words
 # can be injected via env for each corpus.

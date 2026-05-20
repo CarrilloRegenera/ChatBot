@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
 from routes.chat import router as chat_router
 from database import ensure_app_schema
-from config import LOG_LEVEL
+from config import ALLOWED_ORIGINS, LOG_LEVEL
 from observability import RequestIdFilter, reset_request_id, set_request_id
 
 
@@ -26,7 +26,7 @@ app = FastAPI(title="ChatBot API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

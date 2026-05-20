@@ -14,22 +14,31 @@ pyodbc.pooling = True
 
 
 def _build_connection_string() -> str:
-    """Connection string desde env (Azure-ready) con fallback a SQLEXPRESS local."""
+    """Connection string desde env (Azure-ready) sin dependencias locales hardcodeadas."""
     explicit = os.getenv("SQL_CONNECTION_STRING")
     if explicit:
         return explicit
     driver = os.getenv("SQL_DRIVER", "ODBC Driver 17 for SQL Server")
-    server = os.getenv("SQL_SERVER", "localhost\\SQLEXPRESS")
-    database = os.getenv("SQL_DATABASE", "ChatBot")
+    server = os.getenv("SQL_SERVER", "").strip()
+    database = os.getenv("SQL_DATABASE", "").strip()
     user = os.getenv("SQL_USER", "")
     password = os.getenv("SQL_PASSWORD", "")
     timeout = os.getenv("SQL_CONNECTION_TIMEOUT", "5")
+    encrypt = os.getenv("SQL_ENCRYPT", "yes")
+    trust_cert = os.getenv("SQL_TRUST_SERVER_CERTIFICATE", "no")
+
+    if not server or not database:
+        raise RuntimeError(
+            "Config SQL incompleta. Define SQL_CONNECTION_STRING o, en su defecto, "
+            "SQL_SERVER y SQL_DATABASE."
+        )
+
     parts = [
         f"Driver={{{driver}}}",
         f"Server={server}",
         f"Database={database}",
-        "Encrypt=no",
-        "TrustServerCertificate=yes",
+        f"Encrypt={encrypt}",
+        f"TrustServerCertificate={trust_cert}",
         f"Connection Timeout={timeout}",
     ]
     if user and password:
