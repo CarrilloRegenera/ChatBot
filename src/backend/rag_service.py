@@ -19,6 +19,7 @@ from config import (
     ENABLE_RERANK,
     MAX_CHUNKS_PER_SOURCE,
     RECURSIVE_PDF_SCAN,
+    RAG_BACKEND,
     RERANK_MODEL,
     RERANK_MODEL_REVISION,
     RERANK_WEIGHT,
@@ -790,7 +791,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     return len(documents)
 
 
-def sync_documents(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
+def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
     if _embedding_fn is None:
         raise RuntimeError(
             "Embedding model no disponible. Descarga/cacha localmente "
@@ -837,14 +838,24 @@ def sync_documents(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
     return {"added": added, "updated": updated, "removed": removed}
 
 
+def sync_documents(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
+    if RAG_BACKEND == "azure_search":
+        from azure_rag_service import sync_documents_from_blob
+        return sync_documents_from_blob()
+    return _sync_documents_chroma(folder_path)
+
+
 def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> int:
+    if RAG_BACKEND == "azure_search":
+        result = sync_documents(folder_path)
+        return int(result.get("chunks_indexed", 0))
     if reset:
         reset_documents()
     sync_documents(folder_path)
     return collection.count()
 
 
-def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
+def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
         return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
     if _embedding_fn is None:
@@ -1286,6 +1297,13 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> 
         "table_coverage_ratio": table_coverage_ratio,
     }
     return "\n\n".join(context_parts), sources, retrieval_stats
+
+
+def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
+    if RAG_BACKEND == "azure_search":
+        from azure_rag_service import search_documents_detailed_azure
+        return search_documents_detailed_azure(question, n_results=n_results)
+    return _search_documents_detailed_chroma(question, n_results=n_results)
 
 
 def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str]]:

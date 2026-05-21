@@ -61,6 +61,15 @@ ALLOWED_ORIGINS = [
 SYNC_DOCUMENTS_ON_STARTUP = os.getenv("SYNC_DOCUMENTS_ON_STARTUP", "true").strip().lower() in {"1", "true", "yes", "on"}
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "").strip()
 
+RAG_BACKEND = os.getenv("RAG_BACKEND", "chroma").strip().lower()
+AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT", "").strip().rstrip("/")
+AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY", "").strip()
+AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME", "idx-chatbot-rag").strip()
+AZURE_SEARCH_VECTOR_FIELD = os.getenv("AZURE_SEARCH_VECTOR_FIELD", "content_vector").strip()
+BLOB_STORAGE_CONNECTION_STRING = os.getenv("BLOB_STORAGE_CONNECTION_STRING", "").strip()
+BLOB_CONTAINER_NAME = os.getenv("BLOB_CONTAINER_NAME", "documentos-rag").strip()
+BLOB_PREFIX = os.getenv("BLOB_PREFIX", "").strip().strip("/")
+
 # Keep only general language stopwords by default; domain-specific words
 # can be injected via env for each corpus.
 DEFAULT_STOPWORDS = {

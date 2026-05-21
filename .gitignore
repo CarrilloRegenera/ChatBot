@@ -20,5 +20,6 @@ src/backend/LanzarChatbotDocker.bat
 # RAG local artifacts
 chroma_db/
 data/documentos/
+docs/
 *.bin
 *.pkl
