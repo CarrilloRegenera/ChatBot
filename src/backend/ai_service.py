@@ -84,6 +84,11 @@ GENERALIZATION_ASK_PATTERN = re.compile(
     r"\bobjetivo\b|\bcambios?\b|\bmodifica\b|\bintroduce\b|\bafecta\b|\bimplica\b)",
     re.IGNORECASE,
 )
+MOTIVATION_ASK_PATTERN = re.compile(
+    r"(?:\bpor\s+que\b|\bpor\s+qué\b|\bmotivo\b|\bjustificacion\b|\bjustificación\b|"
+    r"\bexposicion\s+de\s+motivos\b|\bexposición\s+de\s+motivos\b|\bpreambulo\b|\bpreámbulo\b)",
+    re.IGNORECASE,
+)
 DIRECT_FACT_ASK_PATTERN = re.compile(
     r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bcual\s+es\b|\bcuales\s+son\b|\bcuanto\b|\bcuantos\b|\bcuantas\b)",
     re.IGNORECASE,
@@ -190,6 +195,7 @@ def _infer_answer_profile(question: str) -> Dict[str, object]:
         "comparison": bool(COMPARISON_ASK_PATTERN.search(q)),
         "procedure": bool(PROCEDURE_ASK_PATTERN.search(q)),
         "generalization": bool(GENERALIZATION_ASK_PATTERN.search(q)),
+        "motivation": bool(MOTIVATION_ASK_PATTERN.search(q)),
         "numeric": bool(NUMERIC_ASK_PATTERN.search(q)),
         "direct_fact": bool(DIRECT_FACT_ASK_PATTERN.search(q)),
     }
@@ -215,6 +221,11 @@ def _build_output_instruction(profile: Dict[str, object]) -> str:
         return (
             "Responde de forma breve y directa, normalmente en 1-3 frases. "
             "Si la pregunta pide funcion, papel o finalidad, explica primero para que sirve en la practica y luego cita el alcance concreto que aparezca en el contexto."
+        )
+    if profile["motivation"]:
+        return (
+            "Explica el motivo o justificacion normativa en 2-5 frases. "
+            "Prioriza preambulos, exposiciones de motivos, objetivos y referencias a adaptacion normativa; no lo sustituyas por tramites formales salvo que sea lo unico recuperado."
         )
     if profile["numeric"]:
         return (
@@ -269,6 +280,11 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
             )
         if profile["comparison"]:
             intent_hint += "- Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
+        if profile["motivation"]:
+            intent_hint += (
+                "- Si la pregunta pide por que se aprobo una norma, prioriza la justificacion, finalidad o adaptacion normativa del preambulo; "
+                "no respondas solo con tramites administrativos salvo que no haya otro dato.\n"
+            )
         if profile["procedure"]:
             intent_hint += "- Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
         if profile["numeric"]:
@@ -311,9 +327,12 @@ Reglas obligatorias:
 10. Si la pregunta pide numeros y el contexto no los contiene, indicalo explicitamente.
 11. Si hay varias fuentes y aportan datos distintos o parciales, integralo sin inventar relaciones entre ellas.
 12. No copies fragmentos incompletos del contexto; si una frase esta truncada, reformulala solo con la parte segura.
-13. Responde en texto plano. No uses formato markdown: sin asteriscos ni cabeceras. Si la respuesta es una lista, usa lineas numeradas simples 1. 2. 3.; si no es una lista, escribe frases completas que terminen con punto.
-14. Maxima precision: distingue entre dato literal, sintesis razonable y falta de evidencia. No presentes una inferencia como si fuera una cita literal.
-15. Generalizacion controlada: puedes sintetizar una regla, funcion o criterio comun solo cuando el contexto lo soporte; conserva siempre condiciones, excepciones, ambito y vigencia.
+13. Si el contexto contiene expresiones como "segun se indica mas adelante" o referencias internas incompletas, no las copies literalmente; resume la condicion recuperada y aclara si falta el detalle posterior.
+14. No conviertas un requisito de una ITC, tabla, emplazamiento o caso concreto en requisito general de todas las instalaciones.
+15. Si el contexto recuperado trae varios fragmentos complementarios del mismo apartado, integralo en una unica respuesta; no digas que no hay informacion suficiente solo porque un fragmento aislado sea parcial.
+16. Responde en texto plano. No uses formato markdown: sin asteriscos ni cabeceras. Si la respuesta es una lista, usa lineas numeradas simples 1. 2. 3.; si no es una lista, escribe frases completas que terminen con punto.
+17. Maxima precision: distingue entre dato literal, sintesis razonable y falta de evidencia. No presentes una inferencia como si fuera una cita literal.
+18. Generalizacion controlada: puedes sintetizar una regla, funcion o criterio comun solo cuando el contexto lo soporte; conserva siempre condiciones, excepciones, ambito y vigencia.
 {definition_hint}
 {intent_hint}
 

@@ -28,8 +28,8 @@ from config import (
 )
 
 
-CHUNK_SIZE = 450
-CHUNK_OVERLAP = 100
+CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "900"))
+CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
 
 # OCR opcional para PDFs escaneados. Activar con RAG_OCR_ENABLED=1.
 # Requiere Tesseract instalado en el sistema y `pytesseract` + `Pillow` en pip.
@@ -80,8 +80,17 @@ SECTION_PRIORITY_BOOST = 8
 SECTION_TITLE_BOOST = 6
 COMPARISON_PRIORITY_BOOST = 3
 LOW_SIGNAL_PENALTY = 5
-CHUNK_SENTENCE_GRACE = 180
+CHUNK_SENTENCE_GRACE = int(os.getenv("RAG_CHUNK_SENTENCE_GRACE", "260"))
 HEADING_PATTERN = re.compile(r"^(?:\d+(?:\.\d+)*[\.\)]?\s+)?[A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑa-záéíóúüñ\s\-/,:()]{3,}$")
+NORMATIVE_HEADING_PATTERN = re.compile(
+    r"^(?:"
+    r"art(?:iculo|[ií]culo|\.?)\s+\d+[.\s-]+.+|"
+    r"itc[-\s]*(?:bt|lat|rat)[-\s]*\d+.*|"
+    r"\d+(?:\.\d+){0,4}[.)]?\s+[A-Z].+|"
+    r"(?:disposicion|disposición|anexo|capitulo|capítulo|titulo|título|instruccion|instrucción)\s+.+"
+    r")$",
+    re.IGNORECASE,
+)
 REFERENCE_PATTERN = re.compile(r"\b(?:itc[-\s]*bt[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b", re.IGNORECASE)
 NUMERIC_PATTERN = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:m2|mm2|kw|w|v|a|ma|kv|hz|ohmios?|ohm|%)?\b", re.IGNORECASE)
 DEFINITION_QUERY_PATTERN = re.compile(
@@ -133,7 +142,19 @@ GENERALIZATION_QUERY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SCOPE_QUERY_PATTERN = re.compile(
-    r"(?:\bobjeto\b|\bambito\b|\bámbito\b|\balcance\b|\bfinalidad\b|\bfuncion\b|\bfunción\b|\bpapel\b)",
+    r"(?:\bobjeto\b|\bobjetivo\b|\bambito\b|\bámbito\b|\balcance\b|\bfinalidad\b|\bfuncion\b|\bfunción\b|\bpapel\b)",
+    re.IGNORECASE,
+)
+MOTIVATION_QUERY_PATTERN = re.compile(
+    r"(?:\bpor\s+que\b|\bpor\s+qué\b|\bmotivo\b|\bjustificacion\b|\bjustificación\b|"
+    r"\bexposicion\s+de\s+motivos\b|\bexposición\s+de\s+motivos\b|\bpreambulo\b|\bpreámbulo\b)",
+    re.IGNORECASE,
+)
+MOTIVATION_CUE_PATTERN = re.compile(
+    r"\b(?:preambulo|preámbulo|exposicion\s+de\s+motivos|exposición\s+de\s+motivos|"
+    r"la\s+necesidad\s+de|se\s+hace\s+necesario|con\s+el\s+fin\s+de|con\s+objeto\s+de|"
+    r"para\s+adaptar|directiva|eficiencia\s+energetica|eficiencia\s+energética|"
+    r"seguridad|ahorro\s+de\s+energia|ahorro\s+de\s+energía)\b",
     re.IGNORECASE,
 )
 PROCEDURE_CUE_PATTERN = re.compile(
@@ -253,7 +274,7 @@ class _MultilingualEF:
         return self._encode(input)
 
 
-_EF_VERSION = f"multilingual-minilm-v2-domain-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
+_EF_VERSION = f"multilingual-minilm-v3-structured-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
@@ -358,6 +379,8 @@ def _is_heading(line: str) -> bool:
     cleaned = _clean_line(line)
     if not cleaned:
         return False
+    if _is_normative_heading(cleaned):
+        return True
     if len(cleaned.split()) > HEADING_LINE_MAX_WORDS:
         return False
     if len(cleaned) > SECTION_LABEL_MAX_LENGTH:
@@ -369,12 +392,22 @@ def _is_heading(line: str) -> bool:
     return bool(HEADING_PATTERN.match(cleaned))
 
 
+def _is_normative_heading(line: str) -> bool:
+    cleaned = _clean_line(line)
+    if not cleaned:
+        return False
+    normalized = _normalize_text(cleaned)
+    return bool(NORMATIVE_HEADING_PATTERN.match(cleaned) or NORMATIVE_HEADING_PATTERN.match(normalized))
+
+
 def _sanitize_section_label(section: str) -> str:
     cleaned = _clean_line(section)
     if not cleaned:
         return ""
     if len(cleaned) > SECTION_LABEL_MAX_LENGTH:
         return ""
+    if _is_normative_heading(cleaned):
+        return cleaned
     if cleaned.endswith("."):
         return ""
     if "," in cleaned and len(cleaned.split()) > 6:
@@ -391,6 +424,9 @@ def _extract_text_blocks(text: str) -> List[Dict[str, str]]:
     def flush_block() -> None:
         nonlocal current_lines, current_section
         block_text = _clean_line(" ".join(current_lines))
+        if block_text and current_section and not block_text.lower().startswith(current_section.lower()):
+            sep = " " if current_section.endswith((".", ":", ";")) else ". "
+            block_text = f"{current_section}{sep}{block_text}"
         # No se filtra por MIN_CHUNK_LENGTH aquí: bloques cortos (celdas de tabla,
         # valores numéricos aislados) se acumulan en _split_text con el texto circundante.
         if block_text:
@@ -454,7 +490,8 @@ def _format_chunk(text: str, section: str) -> str:
         return clean_text
     if clean_text.lower().startswith(section.lower()):
         return clean_text
-    return f"{section}. {clean_text}"
+    separator = " " if section.endswith((".", ":", ";")) else ". "
+    return f"{section}{separator}{clean_text}"
 
 
 def _clean_question(question: str) -> str:
@@ -550,6 +587,7 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "procedure_query": bool(PROCEDURE_QUERY_PATTERN.search(normalized)),
         "generalization_query": bool(GENERALIZATION_QUERY_PATTERN.search(normalized)),
         "scope_query": bool(SCOPE_QUERY_PATTERN.search(normalized)),
+        "motivation_query": bool(MOTIVATION_QUERY_PATTERN.search(normalized)),
         "temporal_query": bool(TEMPORAL_QUERY_PATTERN.search(normalized)),
         "question_keywords": question_keywords,
         "section_terms": _extract_topic_terms(clean_question, limit=MAX_TOPIC_TOKENS),
@@ -581,7 +619,10 @@ def _metadata_text(metadata: Dict[str, object]) -> str:
     return _normalize_text(
         " ".join(
             str(metadata.get(key, ""))
-            for key in ("source", "folder", "domain", "section", "topics", "table_hint", "chunk_kind")
+            for key in (
+                "source", "folder", "domain", "regulation", "itc_refs", "section",
+                "section_type", "topics", "table_hint", "chunk_kind",
+            )
         )
     )
 
@@ -660,10 +701,50 @@ def _source_domain_key(source_name: str, metadata: Dict[str, object] | None = No
     return _domain_from_folder(source_name) or _domain_from_source(source_name)
 
 
+def _regulation_key(source_name: str, domain: str) -> str:
+    normalized = _normalize_text(source_name or "")
+    compact = re.sub(r"[^a-z0-9]+", "", normalized)
+    if "rite" in normalized or domain == "rite":
+        return "RITE"
+    if "rebt" in normalized or "itc-bt" in normalized or "itcbt" in compact or domain == "baja_tension":
+        return "REBT"
+    if "itc-lat" in normalized or "itclat" in compact or domain == "alta_tension":
+        return "LAT"
+    return domain or "general"
+
+
+def _extract_itc_refs(text: str) -> str:
+    refs = sorted({
+        re.sub(r"\s+", "-", match.group(0).upper().replace(" ", "-"))
+        for match in re.finditer(r"\bITC[-\s]*(?:BT|LAT|RAT)[-\s]*\d+\b", text or "", re.IGNORECASE)
+    })
+    return ", ".join(refs[:8])
+
+
+def _section_type(section: str) -> str:
+    normalized = _normalize_text(section or "")
+    if normalized.startswith("articulo") or normalized.startswith("art."):
+        return "article"
+    if normalized.startswith("itc-") or normalized.startswith("itc "):
+        return "itc"
+    if normalized.startswith("anexo"):
+        return "annex"
+    if normalized.startswith("disposicion"):
+        return "disposition"
+    if normalized.startswith("capitulo") or normalized.startswith("titulo"):
+        return "chapter"
+    if re.match(r"^\d+(?:\.\d+)*", normalized):
+        return "numbered_section"
+    return "section" if section else ""
+
+
 def _expected_domains(question: str) -> List[str]:
     normalized = _normalize_text(question or "")
     domains = []
-    if any(term in normalized for term in ("alta tension", "itc-lat", "lineas electricas de alta", "lat", "linea de at", "lineas de at", "instalacion at", "instalaciones at")):
+    if (
+        any(term in normalized for term in ("alta tension", "itc-lat", "lineas electricas de alta", "linea de at", "lineas de at", "instalacion at", "instalaciones at"))
+        or re.search(r"\blat\b", normalized)
+    ):
         domains.append("alta_tension")
     if any(term in normalized for term in ("rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion")):
         domains.append("rite")
@@ -676,6 +757,27 @@ def _expected_domains(question: str) -> List[str]:
     if any(term in normalized for term in ("grupo electrogeno", "grupos electrogenos", "generador diesel", "iso 8528", "8528")):
         domains.append("grupos_electrogenos")
     return domains
+
+
+def _query_mentions_bt40(question: str) -> bool:
+    normalized = _normalize_text(question or "")
+    compact = re.sub(r"[^a-z0-9]+", "", normalized)
+    return any(term in normalized for term in ("bt-40", "guia bt 40", "guia-bt-40")) or "bt40" in compact
+
+
+def _query_mentions_bt_generators(question: str) -> bool:
+    normalized = _normalize_text(question or "")
+    return (
+        "instalaciones generadoras" in normalized
+        or "generadoras de baja tension" in normalized
+        or ("generadoras" in normalized and "baja tension" in normalized)
+        or any(term in normalized for term in ("aisladas", "asistidas", "interconectadas"))
+    )
+
+
+def _query_mentions_rebt_regulation(question: str) -> bool:
+    normalized = _normalize_text(question or "")
+    return "reglamento electrotecnico" in normalized or "rebt" in normalized
 
 
 def reset_documents() -> None:
@@ -717,6 +819,7 @@ def _delete_source_chunks(source_name: str) -> None:
 def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     source_name = str(filepath.relative_to(root_path)).replace("\\", "/")
     domain = _source_domain_key(source_name)
+    regulation = _regulation_key(source_name, domain)
     documents, metadatas, ids = [], [], []
 
     pdf = fitz.open(str(filepath))
@@ -760,6 +863,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     if block["text"][:60] in chunk:
                         section_name = block["section"]
                         break
+                clean_section_name = _sanitize_section_label(section_name[:SECTION_LABEL_MAX_LENGTH])
                 if _looks_like_table_block(chunk):
                     chunk_kind = "table"
                 elif _extract_numeric_terms(chunk):
@@ -773,9 +877,12 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
                     "domain": domain,
+                    "regulation": regulation,
                     "page": page_index + 1,
                     "chunk": chunk_index,
-                    "section": _sanitize_section_label(section_name[:SECTION_LABEL_MAX_LENGTH]),
+                    "section": clean_section_name,
+                    "section_type": _section_type(clean_section_name),
+                    "itc_refs": _extract_itc_refs(f"{source_name} {clean_section_name} {chunk}"),
                     "topics": ", ".join(chunk_topics),
                     "chunk_kind": chunk_kind,
                     "table_hint": table_hint,
@@ -863,6 +970,9 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
 
     clean_question = _clean_question(question)
+    mentions_bt40 = _query_mentions_bt40(clean_question)
+    mentions_bt_generators = _query_mentions_bt_generators(clean_question)
+    mentions_rebt_regulation = _query_mentions_rebt_regulation(clean_question)
     if collection.count() == 0:
         try:
             sync_documents()
@@ -889,7 +999,21 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         for t in ("objeto", "ambito", "aplicacion", "condiciones", "requisitos", "excepciones", "criterios"):
             if t not in core_terms:
                 core_terms.append(t)
+    if query_profile["motivation_query"]:
+        for t in ("preambulo", "exposicion", "motivos", "directiva", "adaptar", "eficiencia", "seguridad"):
+            if t not in core_terms:
+                core_terms.append(t)
+    if mentions_bt_generators:
+        for t in ("generadoras", "aisladas", "asistidas", "interconectadas", "clasificacion", "condiciones"):
+            if t not in core_terms:
+                core_terms.append(t)
     expected_domains = _expected_domains(clean_question)
+    if mentions_bt40 and "guias_tecnicas" not in expected_domains:
+        expected_domains.append("guias_tecnicas")
+    if mentions_bt_generators:
+        for domain in ("baja_tension", "guias_tecnicas"):
+            if domain not in expected_domains:
+                expected_domains.append(domain)
     broad_query = any((
         query_profile["definition_query"],
         query_profile["list_query"],
@@ -897,11 +1021,19 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         query_profile["table_query"],
         query_profile["comparison_query"],
         query_profile["generalization_query"],
+        query_profile["motivation_query"],
     ))
     if query_profile["summary_query"] or query_profile["list_query"] or query_profile["table_query"]:
         n_results = max(n_results, 8 if not query_profile["table_query"] else 12)
-    elif query_profile["definition_query"] or query_profile["comparison_query"] or query_profile["generalization_query"]:
+    elif (
+        query_profile["definition_query"]
+        or query_profile["comparison_query"]
+        or query_profile["generalization_query"]
+        or query_profile["motivation_query"]
+    ):
         n_results = max(n_results, 7)
+    if mentions_bt_generators:
+        n_results = max(n_results, 9)
     if query_profile["temporal_query"]:
         n_results = max(n_results, 8)
 
@@ -957,6 +1089,84 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         except Exception as exc:
             logger.warning("Table-forced retrieval failed: %s", exc)
 
+    if mentions_rebt_regulation and query_profile["scope_query"]:
+        existing_ids = set(ids)
+        for term in ("El presente Reglamento tiene por objeto", "prevenir las perturbaciones"):
+            try:
+                forced_results = collection.get(
+                    where_document={"$contains": term},
+                    where={"domain": "baja_tension"},
+                    include=["documents", "metadatas"],
+                    limit=6,
+                )
+                for doc, meta, fid in zip(
+                    forced_results.get("documents", []) or [],
+                    forced_results.get("metadatas", []) or [],
+                    forced_results.get("ids", []) or [],
+                ):
+                    if fid not in existing_ids:
+                        documents.append(doc)
+                        metadatas.append(meta)
+                        ids.append(fid)
+                        existing_ids.add(fid)
+            except Exception as exc:
+                logger.warning("REBT objective forced retrieval failed for %s: %s", term, exc)
+
+    if mentions_bt40:
+        existing_ids = set(ids)
+        for term in ("guia-bt-40", "clasificacion", "clasificación", "instalaciones generadoras"):
+            try:
+                forced_results = collection.get(
+                    where_document={"$contains": term},
+                    where={"domain": "guias_tecnicas"},
+                    include=["documents", "metadatas"],
+                    limit=10,
+                )
+                for doc, meta, fid in zip(
+                    forced_results.get("documents", []) or [],
+                    forced_results.get("metadatas", []) or [],
+                    forced_results.get("ids", []) or [],
+                ):
+                    if fid not in existing_ids:
+                        documents.append(doc)
+                        metadatas.append(meta)
+                        ids.append(fid)
+                        existing_ids.add(fid)
+            except Exception as exc:
+                logger.warning("BT-40 forced retrieval failed for %s: %s", term, exc)
+
+    if mentions_bt_generators:
+        existing_ids = set(ids)
+        generator_terms = (
+            "instalaciones generadoras",
+            "instalaciones generadoras aisladas",
+            "instalaciones generadoras asistidas",
+            "instalaciones generadoras interconectadas",
+            "clasificacion",
+            "clasificación",
+        )
+        for domain in ("baja_tension", "guias_tecnicas"):
+            for term in generator_terms:
+                try:
+                    forced_results = collection.get(
+                        where_document={"$contains": term},
+                        where={"domain": domain},
+                        include=["documents", "metadatas"],
+                        limit=12,
+                    )
+                    for doc, meta, fid in zip(
+                        forced_results.get("documents", []) or [],
+                        forced_results.get("metadatas", []) or [],
+                        forced_results.get("ids", []) or [],
+                    ):
+                        if fid not in existing_ids:
+                            documents.append(doc)
+                            metadatas.append(meta)
+                            ids.append(fid)
+                            existing_ids.add(fid)
+                except Exception as exc:
+                    logger.warning("BT generator forced retrieval failed for %s/%s: %s", domain, term, exc)
+
     ranked_items = []
     seen_ids = set()
 
@@ -980,6 +1190,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         section_title_hits = sum(1 for term in query_profile["section_terms"] if term in section_title)
         source_title_hits = sum(1 for term in query_profile["section_terms"] if term in source_title)
         definition_hits = len(DEFINITION_CUE_PATTERN.findall(document)) if query_profile["definition_query"] else 0
+        motivation_hits = len(MOTIVATION_CUE_PATTERN.findall(document)) if query_profile["motivation_query"] else 0
         list_hits = 1 if query_profile["list_query"] and LIST_CUE_PATTERN.search(document) else 0
         summary_hits = 1 if query_profile["summary_query"] and (LIST_CUE_PATTERN.search(document) or metadata.get("section")) else 0
         table_hits = 0
@@ -1009,6 +1220,36 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 score += 5
             if any(term in section_title for term in ("objeto", "ambito", "alcance", "finalidad", "definicion")):
                 score += 7
+            if mentions_rebt_regulation:
+                if "el presente reglamento tiene por objeto" in doc_norm:
+                    score += 80
+                if "la presente instruccion tiene por objeto" in doc_norm:
+                    score -= 35
+                if "articulo 1" in section_title and "objeto" in section_title:
+                    score += 14
+        if query_profile.get("motivation_query"):
+            if int(metadata.get("page", 9999) or 9999) <= 5:
+                score += 6
+            if motivation_hits:
+                score += motivation_hits * 7
+            if any(term in section_title for term in ("preambulo", "exposicion", "motivos", "objeto")):
+                score += 12
+        if "documentacion" in normalized_question or "documentacion" in core_terms:
+            documentation_hits = sum(
+                1 for term in (
+                    "documentacion de las instalaciones",
+                    "documentacion tecnica",
+                    "certificado de instalacion",
+                    "memoria tecnica",
+                    "proyecto",
+                    "puesta en servicio",
+                    "empresa instaladora",
+                )
+                if term in doc_norm or term in section_title or term in metadata_norm
+            )
+            score += documentation_hits * 9
+            if "catalogo" in doc_norm or "normas une" in doc_norm:
+                score -= 10
         if normalized_question and normalized_question in doc_norm:
             score += 6
         if definition_hits:
@@ -1041,6 +1282,34 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             score += section_title_hits * SECTION_TITLE_BOOST
         if source_title_hits:
             score += source_title_hits * 5
+        if mentions_bt_generators:
+            if source_domain in {"baja_tension", "guias_tecnicas"}:
+                score += 18
+            if "itc-bt-40" in metadata_norm or "bt-40" in source_title or "bt40" in source_title:
+                score += 24
+            generator_hits = sum(
+                1 for term in (
+                    "instalaciones generadoras aisladas",
+                    "instalaciones generadoras asistidas",
+                    "instalaciones generadoras interconectadas",
+                    "aisladas",
+                    "asistidas",
+                    "interconectadas",
+                    "clasificacion",
+                    "condiciones generales",
+                )
+                if term in doc_norm or term in section_title or term in metadata_norm
+            )
+            score += generator_hits * 8
+        if mentions_bt40:
+            if source_domain == "guias_tecnicas":
+                score += 30
+                if any(term in section_title for term in ("clasificacion", "objeto", "campo de aplicacion")):
+                    score += 20
+                if any(term in doc_norm for term in ("instalaciones generadoras aisladas", "instalaciones generadoras asistidas", "instalaciones generadoras interconectadas")):
+                    score += 25
+            else:
+                score -= 20
         if expected_domains:
             if source_domain in expected_domains:
                 score += 12
@@ -1089,6 +1358,8 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 lexical_score += REFERENCE_PRIORITY_BOOST
             if query_profile["definition_query"] and DEFINITION_CUE_PATTERN.search(document):
                 lexical_score += DEFINITION_PRIORITY_BOOST
+            if query_profile["motivation_query"] and MOTIVATION_CUE_PATTERN.search(document):
+                lexical_score += 12
             if query_profile["list_query"] and LIST_CUE_PATTERN.search(document):
                 lexical_score += LIST_PRIORITY_BOOST
             if query_profile["summary_query"] and (LIST_CUE_PATTERN.search(document) or metadata.get("section")):
@@ -1108,6 +1379,11 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 lexical_score += PROCEDURE_PRIORITY_BOOST
             if query_profile["temporal_query"] and TEMPORAL_CUE_PATTERN.search(document):
                 lexical_score += TEMPORAL_PRIORITY_BOOST
+            if mentions_bt_generators:
+                if _source_domain_key(str(metadata.get("source", "")), metadata) in {"baja_tension", "guias_tecnicas"}:
+                    lexical_score += 10
+                if any(term in doc_norm or term in metadata_norm or term in section_title for term in ("aisladas", "asistidas", "interconectadas", "itc-bt-40", "bt-40")):
+                    lexical_score += 16
             document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
             doc_norm = _normalize_text(document)
             labeled_match_hits = 0
@@ -1147,6 +1423,17 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         ranked_items = reranked
 
     ranked_items.sort(key=lambda item: item[0], reverse=True)
+    if expected_domains:
+        preferred_items = [
+            item for item in ranked_items
+            if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
+        ]
+        other_items = [
+            item for item in ranked_items
+            if _source_domain_key(str(item[3].get("source", "")), item[3]) not in expected_domains
+        ]
+        if len(preferred_items) >= max(3, min(n_results, 6)):
+            ranked_items = preferred_items + other_items
 
     selected = []
     selected_ids = set()
@@ -1157,9 +1444,18 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     if query_profile["table_query"]:
         source_cap += 3
         section_cap += 2
+    if mentions_bt_generators:
+        source_cap += 3
+        section_cap += 2
     diversity_target = 0
     if query_profile["comparison_query"] or query_profile["summary_query"] or query_profile["list_query"]:
-        diversity_target = min(3, len({item[3].get("source", "unknown") for item in ranked_items}))
+        diversity_pool = ranked_items
+        if expected_domains:
+            diversity_pool = [
+                item for item in ranked_items
+                if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
+            ] or ranked_items
+        diversity_target = min(3, len({item[3].get("source", "unknown") for item in diversity_pool}))
     for item in ranked_items:
         _, doc_id, _, metadata = item
         source_name = metadata.get("source", "unknown")
@@ -1199,15 +1495,31 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 non_focused.append(item)
 
         if focused:
-            focused.sort(key=lambda item: _focus_hits(item[2], core_terms), reverse=True)
+            focused.sort(key=lambda item: (_focus_hits(item[2], core_terms), item[0]), reverse=True)
             selected = (focused + non_focused)[:n_results]
+
+    if mentions_rebt_regulation and query_profile["scope_query"] and selected:
+        selected.sort(
+            key=lambda item: (
+                1 if "el presente reglamento tiene por objeto" in _normalize_text(item[2]) else 0,
+                item[0],
+            ),
+            reverse=True,
+        )
 
     # Neighbor expansion: for table chunks, fetch contiguous ±1 chunks
     # (same source+page) to recover tables split across chunks.
-    if query_profile["table_query"] and selected:
+    expand_neighbors = bool(
+        query_profile["table_query"]
+        or query_profile["list_query"]
+        or query_profile["scope_query"]
+        or query_profile["motivation_query"]
+        or mentions_bt_generators
+    )
+    if expand_neighbors and selected:
         neighbor_ids: List[str] = []
         for _, doc_id, _, metadata in list(selected):
-            if str(metadata.get("chunk_kind", "")) != "table":
+            if query_profile["table_query"] and str(metadata.get("chunk_kind", "")) != "table":
                 continue
             parts = str(doc_id).rsplit("-", 2)
             if len(parts) != 3:
@@ -1215,12 +1527,20 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             source_part, page_part, chunk_part = parts
             try:
                 chunk_idx = int(chunk_part)
+                page_idx = int(page_part)
             except ValueError:
                 continue
-            for delta in (-1, 1):
+            deltas = (-1, 1)
+            if query_profile["motivation_query"] or query_profile["scope_query"] or mentions_bt_generators:
+                deltas = (-2, -1, 1, 2)
+            for delta in deltas:
                 neighbor = f"{source_part}-{page_part}-{chunk_idx + delta}"
                 if neighbor not in selected_ids and neighbor not in neighbor_ids:
                     neighbor_ids.append(neighbor)
+            if chunk_idx <= 2 and (query_profile["motivation_query"] or query_profile["scope_query"]):
+                next_page_first = f"{source_part}-{page_idx + 1}-1"
+                if next_page_first not in selected_ids and next_page_first not in neighbor_ids:
+                    neighbor_ids.append(next_page_first)
         if neighbor_ids:
             try:
                 neighbor_results = collection.get(
@@ -1237,7 +1557,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                     selected.append((0.0, nid, ndoc, nmeta))
                     selected_ids.add(nid)
             except Exception as exc:
-                logger.warning("Table neighbor expansion failed: %s", exc)
+                logger.warning("Neighbor expansion failed: %s", exc)
 
     context_parts = []
     sources = []

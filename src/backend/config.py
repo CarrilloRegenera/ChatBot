@@ -69,6 +69,10 @@ AZURE_SEARCH_VECTOR_FIELD = os.getenv("AZURE_SEARCH_VECTOR_FIELD", "content_vect
 BLOB_STORAGE_CONNECTION_STRING = os.getenv("BLOB_STORAGE_CONNECTION_STRING", "").strip()
 BLOB_CONTAINER_NAME = os.getenv("BLOB_CONTAINER_NAME", "documentos-rag").strip()
 BLOB_PREFIX = os.getenv("BLOB_PREFIX", "").strip().strip("/")
+BLOB_PREFIX_ALTA_TENSION = os.getenv("BLOB_PREFIX_ALTA_TENSION", "").strip().strip("/")
+BLOB_PREFIX_BAJA_TENSION = os.getenv("BLOB_PREFIX_BAJA_TENSION", "").strip().strip("/")
+BLOB_PREFIX_GUIAS_TECNICAS = os.getenv("BLOB_PREFIX_GUIAS_TECNICAS", "").strip().strip("/")
+BLOB_PREFIX_RITE = os.getenv("BLOB_PREFIX_RITE", "").strip().strip("/")
 
 # Keep only general language stopwords by default; domain-specific words
 # can be injected via env for each corpus.

@@ -17,6 +17,10 @@ from config import (
     AZURE_SEARCH_VECTOR_FIELD,
     BLOB_CONTAINER_NAME,
     BLOB_PREFIX,
+    BLOB_PREFIX_ALTA_TENSION,
+    BLOB_PREFIX_BAJA_TENSION,
+    BLOB_PREFIX_GUIAS_TECNICAS,
+    BLOB_PREFIX_RITE,
     BLOB_STORAGE_CONNECTION_STRING,
     MAX_CHUNKS_PER_SOURCE,
     TOP_K_RESULTS,
@@ -72,6 +76,31 @@ def _container_client():
     return blob_service.get_container_client(BLOB_CONTAINER_NAME)
 
 
+def _normalize_prefix(prefix: str) -> str:
+    cleaned = (prefix or "").strip().strip("/")
+    return f"{cleaned}/" if cleaned else ""
+
+
+def _configured_blob_scopes() -> List[Tuple[str, str]]:
+    configured = [
+        ("alta_tension", _normalize_prefix(BLOB_PREFIX_ALTA_TENSION)),
+        ("baja_tension", _normalize_prefix(BLOB_PREFIX_BAJA_TENSION)),
+        ("guias_tecnicas", _normalize_prefix(BLOB_PREFIX_GUIAS_TECNICAS)),
+        ("rite", _normalize_prefix(BLOB_PREFIX_RITE)),
+    ]
+    active = [(category, prefix) for category, prefix in configured if prefix]
+    if active:
+        return active
+    fallback_prefix = _normalize_prefix(BLOB_PREFIX)
+    return [("", fallback_prefix)]
+
+
+def _category_for_blob(blob_name: str, configured_category: str) -> str:
+    if configured_category:
+        return configured_category
+    return _source_domain_key(blob_name)
+
+
 def _file_hash(content: bytes) -> str:
     return hashlib.md5(content).hexdigest()
 
@@ -111,10 +140,11 @@ def _extract_page_text(page) -> str:
     return text
 
 
-def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str) -> List[Dict]:
+def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: str) -> List[Dict]:
     docs = []
     document_id = _document_id(blob_name)
-    domain = _source_domain_key(blob_name)
+    domain = category or _source_domain_key(blob_name)
+    file_name = blob_name.rsplit("/", 1)[-1]
     pdf = fitz.open(stream=content, filetype="pdf")
     try:
         for page_index, page in enumerate(pdf):
@@ -139,11 +169,14 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str) -> List[Dic
                 docs.append({
                     "chunk_id": _chunk_id(blob_name, page_number, chunk_index),
                     "document_id": document_id,
-                    "document_name": blob_name.rsplit("/", 1)[-1],
+                    "document_name": file_name,
+                    "file_name": file_name,
                     "source_path": blob_name,
+                    "blob_path": blob_name,
                     "content": chunk,
                     AZURE_SEARCH_VECTOR_FIELD: _st_model.encode(chunk, convert_to_numpy=True).tolist(),
                     "page_number": page_number,
+                    "page": page_number,
                     "chunk_number": chunk_index,
                     "domain": domain,
                     "category": domain,
@@ -198,13 +231,28 @@ def sync_documents_from_blob() -> Dict[str, int]:
     search_client = _search_client()
     container = _container_client()
 
-    list_kwargs = {"name_starts_with": BLOB_PREFIX} if BLOB_PREFIX else {}
-    blobs = [
-        blob
-        for blob in container.list_blobs(**list_kwargs)
-        if blob.name.lower().endswith(".pdf")
-    ]
-    current_names = {blob.name for blob in blobs}
+    scoped_blobs = []
+    seen_blob_names = set()
+    for category, prefix in _configured_blob_scopes():
+        list_kwargs = {"name_starts_with": prefix} if prefix else {}
+        blobs = [
+            blob
+            for blob in container.list_blobs(**list_kwargs)
+            if blob.name.lower().endswith(".pdf")
+        ]
+        logger.info(
+            "Blob scope category=%s prefix=%s pdfs=%d",
+            category or "(auto)",
+            prefix or "(contenedor completo)",
+            len(blobs),
+        )
+        for blob in blobs:
+            if blob.name in seen_blob_names:
+                continue
+            seen_blob_names.add(blob.name)
+            scoped_blobs.append((blob, _category_for_blob(blob.name, category)))
+
+    current_names = {blob.name for blob, _ in scoped_blobs}
     indexed = _search_all_indexed_sources(search_client)
 
     added = updated = removed = chunks_indexed = 0
@@ -215,7 +263,7 @@ def sync_documents_from_blob() -> Dict[str, int]:
             _delete_source_chunks(search_client, source_name)
             logger.info("Eliminado de Azure AI Search: %s", source_name)
 
-    for blob in blobs:
+    for blob, category in scoped_blobs:
         downloader = container.download_blob(blob.name)
         content = downloader.readall()
         current_hash = _file_hash(content)
@@ -228,9 +276,9 @@ def sync_documents_from_blob() -> Dict[str, int]:
             logger.info("Actualizando Azure AI Search: %s", blob.name)
         else:
             added += 1
-            logger.info("Indexando en Azure AI Search: %s", blob.name)
+            logger.info("Indexando en Azure AI Search: %s category=%s", blob.name, category)
 
-        docs = _iter_pdf_chunks(blob.name, content, current_hash)
+        docs = _iter_pdf_chunks(blob.name, content, current_hash, category)
         for start in range(0, len(docs), 500):
             batch = docs[start:start + 500]
             if batch:
@@ -271,10 +319,14 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         select=[
             "chunk_id",
             "source_path",
+            "blob_path",
+            "file_name",
             "content",
             "page_number",
+            "page",
             "section",
             "domain",
+            "category",
             "chunk_kind",
             "table_signal_count",
         ],
@@ -297,8 +349,8 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
     table_selected_chunks = 0
     table_selected_signal_count = 0
     for item in selected:
-        source = item.get("source_path", "unknown")
-        page = item.get("page_number", "?")
+        source = item.get("blob_path") or item.get("source_path", "unknown")
+        page = item.get("page") or item.get("page_number", "?")
         section = _sanitize_section_label(str(item.get("section", "") or ""))
         section_suffix = f", {section}" if section else ""
         source_label = f"{source} (pag. {page}{section_suffix})"
@@ -316,7 +368,11 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         "selected_count": len(selected),
         "source_diversity": len(source_counts),
         "top_sources": sorted(source_counts)[:5],
-        "selected_domains": sorted({_normalize_text(str(item.get("domain", ""))) for item in selected if item.get("domain")}),
+        "selected_domains": sorted({
+            _normalize_text(str(item.get("domain") or item.get("category") or ""))
+            for item in selected
+            if item.get("domain") or item.get("category")
+        }),
         "expected_domains": [],
         "domain_match_ratio": 1.0,
         "broad_query": False,
