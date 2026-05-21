@@ -20,6 +20,7 @@ from config import (
     MAX_CHUNKS_PER_SOURCE,
     RECURSIVE_PDF_SCAN,
     RERANK_MODEL,
+    RERANK_MODEL_REVISION,
     RERANK_WEIGHT,
     STOPWORDS,
     TOP_K_RESULTS,
@@ -211,13 +212,21 @@ DOMAIN_FOLDER_PREFIXES = {
 
 logger = logging.getLogger(__name__)
 
+
+def _load_sentence_transformer(local_files_only: bool) -> SentenceTransformer:
+    kwargs = {"local_files_only": local_files_only}
+    if RERANK_MODEL_REVISION:
+        kwargs["revision"] = RERANK_MODEL_REVISION
+    return SentenceTransformer(RERANK_MODEL, **kwargs)
+
+
 _st_model = None
 try:
-    _st_model = SentenceTransformer(RERANK_MODEL, local_files_only=True)
+    _st_model = _load_sentence_transformer(local_files_only=True)
 except Exception as exc:
-    logger.warning("Modelo '%s' no disponible en cache local: %s", RERANK_MODEL, str(exc))
+    logger.info("Modelo '%s' no disponible en cache local; intentando descarga: %s", RERANK_MODEL, str(exc))
     try:
-        _st_model = SentenceTransformer(RERANK_MODEL)
+        _st_model = _load_sentence_transformer(local_files_only=False)
     except Exception as net_exc:
         logger.warning("No se pudo cargar modelo multilingüe '%s': %s", RERANK_MODEL, str(net_exc))
 

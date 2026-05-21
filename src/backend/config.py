@@ -44,6 +44,7 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME", "reglamentos").strip()
 RECURSIVE_PDF_SCAN = os.getenv("RECURSIVE_PDF_SCAN", "true").strip().lower() in {"1", "true", "yes", "on"}
 ENABLE_RERANK = os.getenv("ENABLE_RERANK", "true").strip().lower() in {"1", "true", "yes", "on"}
 RERANK_MODEL = os.getenv("RERANK_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()
+RERANK_MODEL_REVISION = os.getenv("RERANK_MODEL_REVISION", "").strip()
 RERANK_WEIGHT = float(os.getenv("RERANK_WEIGHT", "9.0"))
 MAX_CHUNKS_PER_SOURCE = int(os.getenv("MAX_CHUNKS_PER_SOURCE", "4"))
 MIN_QUERY_LENGTH = int(os.getenv("MIN_QUERY_LENGTH", "4"))
