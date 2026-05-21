@@ -15,6 +15,7 @@ __pycache__/
 
 # Local environment config
 src/backend/.env
+src/backend/LanzarChatbotDocker.bat
 
 # RAG local artifacts
 chroma_db/

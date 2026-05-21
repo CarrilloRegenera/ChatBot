@@ -44,6 +44,7 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME", "reglamentos").strip()
 RECURSIVE_PDF_SCAN = os.getenv("RECURSIVE_PDF_SCAN", "true").strip().lower() in {"1", "true", "yes", "on"}
 ENABLE_RERANK = os.getenv("ENABLE_RERANK", "true").strip().lower() in {"1", "true", "yes", "on"}
 RERANK_MODEL = os.getenv("RERANK_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()
+RERANK_MODEL_REVISION = os.getenv("RERANK_MODEL_REVISION", "").strip()
 RERANK_WEIGHT = float(os.getenv("RERANK_WEIGHT", "9.0"))
 MAX_CHUNKS_PER_SOURCE = int(os.getenv("MAX_CHUNKS_PER_SOURCE", "4"))
 MIN_QUERY_LENGTH = int(os.getenv("MIN_QUERY_LENGTH", "4"))
@@ -52,6 +53,13 @@ MEMORY_MAX_RESULTS = int(os.getenv("MEMORY_MAX_RESULTS", "3"))
 MEMORY_MAX_DISTANCE = float(os.getenv("MEMORY_MAX_DISTANCE", "0.35"))
 CONVERSATION_LOCK_TIMEOUT_SECS = float(os.getenv("CONVERSATION_LOCK_TIMEOUT_SECS", "60"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
+    if origin.strip()
+]
+SYNC_DOCUMENTS_ON_STARTUP = os.getenv("SYNC_DOCUMENTS_ON_STARTUP", "true").strip().lower() in {"1", "true", "yes", "on"}
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "").strip()
 
 # Keep only general language stopwords by default; domain-specific words
 # can be injected via env for each corpus.

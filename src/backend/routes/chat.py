@@ -3,10 +3,10 @@ import time
 from threading import Lock
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
-from config import CONVERSATION_LOCK_TIMEOUT_SECS
+from config import ADMIN_API_KEY, CONVERSATION_LOCK_TIMEOUT_SECS
 from database import db_conn
 from memory_service import (
     get_admin_metrics,
@@ -116,8 +116,12 @@ def _save_chat_message(conversation_id: int, question: str, response: str, elaps
     return int((time.time() - start) * 1000)
 
 
-def _assert_admin(role: str) -> None:
-    if (role or "").strip().lower() != "administrador":
+def _assert_admin(request: Request) -> None:
+    admin_key = (request.headers.get("x-admin-key") or "").strip()
+    role = (request.headers.get("x-user-role") or "").strip().lower()
+    if ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Acceso admin denegado")
+    if role != "administrador":
         raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
 
 
@@ -351,8 +355,8 @@ def send_message(data: MessageRequest):
 
 
 @router.post("/admin/sync")
-def admin_sync(role: str):
-    _assert_admin(role)
+def admin_sync(request: Request):
+    _assert_admin(request)
     result = sync_documents()
     return result
 
@@ -363,25 +367,26 @@ def get_pending_knowledge(limit: int = 50):
 
 
 @router.get("/admin/metrics")
-def admin_metrics(role: str, days: int = 30):
-    _assert_admin(role)
+def admin_metrics(request: Request, days: int = 30):
+    _assert_admin(request)
     return get_admin_metrics(days=days)
 
 
 @router.get("/admin/metrics/errors-503")
-def admin_503_metrics(role: str, hours: int = 24):
-    _assert_admin(role)
+def admin_503_metrics(request: Request, hours: int = 24):
+    _assert_admin(request)
     return get_admin_503_metrics(hours=hours)
 
 
 @router.get("/admin/knowledge/pending")
-def admin_pending(role: str, limit: int = 50):
-    _assert_admin(role)
+def admin_pending(request: Request, limit: int = 50):
+    _assert_admin(request)
     return {"pending": list_pending_interactions(limit=limit)}
 
 
 @router.post("/knowledge/{interaction_id}/validate")
-def approve_interaction(interaction_id: int, data: InteractionReviewRequest):
+def approve_interaction(interaction_id: int, data: InteractionReviewRequest, request: Request):
+    _assert_admin(request)
     try:
         result = validate_interaction(interaction_id=interaction_id, reviewer=data.reviewer)
         return result
@@ -390,7 +395,8 @@ def approve_interaction(interaction_id: int, data: InteractionReviewRequest):
 
 
 @router.post("/knowledge/{interaction_id}/reject")
-def reject_interaction_endpoint(interaction_id: int, data: InteractionReviewRequest):
+def reject_interaction_endpoint(interaction_id: int, data: InteractionReviewRequest, request: Request):
+    _assert_admin(request)
     return reject_interaction(interaction_id=interaction_id, reviewer=data.reviewer)
 
 

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
 from routes.chat import router as chat_router
 from database import ensure_app_schema
-from config import LOG_LEVEL
+from config import ALLOWED_ORIGINS, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
 from observability import RequestIdFilter, reset_request_id, set_request_id
 
 
@@ -26,7 +26,7 @@ app = FastAPI(title="ChatBot API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -54,6 +54,9 @@ async def request_id_middleware(request: Request, call_next):
 @app.on_event("startup")
 def startup_init():
     ensure_app_schema()
+    if not SYNC_DOCUMENTS_ON_STARTUP:
+        logging.getLogger(__name__).info("sync_documents desactivado en startup (SYNC_DOCUMENTS_ON_STARTUP=false)")
+        return
     try:
         from rag_service import sync_documents
         sync_documents()
