@@ -42,6 +42,10 @@ html, body {
     -webkit-font-smoothing: antialiased;
 }
 
+.hidden {
+    display: none !important;
+}
+
 /* ===== AUTH VIEWS (Login & Register) ===== */
 
 .auth-view {
@@ -163,8 +167,28 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 60px;
+    padding: 32px 60px 60px;
     background: var(--white);
+}
+
+.auth-right-shell {
+    width: 100%;
+    max-width: 540px;
+}
+
+.auth-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding-bottom: 24px;
+    margin-bottom: 28px;
+    border-bottom: 3px solid rgba(141, 179, 62, 0.9);
+}
+
+.auth-topbar-logo {
+    width: min(360px, 100%);
+    height: auto;
+    display: block;
 }
 
 .auth-form-container {
@@ -184,6 +208,43 @@ html, body {
     font-size: 15px;
     color: var(--gray-500);
     margin-bottom: 32px;
+}
+
+.auth-options-stack {
+    display: grid;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.auth-note {
+    margin-top: -4px;
+    font-size: 13px;
+    color: var(--gray-500);
+}
+
+.auth-divider {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gray-400);
+}
+
+.auth-divider::before {
+    content: "";
+    position: absolute;
+    inset: 50% 0 auto;
+    border-top: 1px solid var(--gray-200);
+    transform: translateY(-50%);
+}
+
+.auth-divider span {
+    position: relative;
+    padding: 0 14px;
+    background: var(--white);
 }
 
 .input-group {
@@ -297,6 +358,66 @@ html, body {
     text-decoration: underline;
 }
 
+.selector-form-container {
+    max-width: 560px;
+}
+
+.mode-selector-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.mode-card {
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, #ffffff 0%, #fbfbf8 100%);
+    padding: 22px;
+    text-align: left;
+    font-family: var(--font);
+    color: var(--gray-800);
+    cursor: pointer;
+    transition: all var(--transition);
+    box-shadow: var(--shadow-sm);
+}
+
+.mode-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: rgba(141, 179, 62, 0.45);
+}
+
+.mode-card.business {
+    background: linear-gradient(180deg, #ffffff 0%, #f2f7ea 100%);
+}
+
+.mode-card-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--green-subtle);
+    color: var(--green-dark);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 16px;
+}
+
+.mode-card strong {
+    display: block;
+    font-size: 20px;
+    line-height: 1.25;
+    margin-bottom: 10px;
+}
+
+.mode-card p {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--gray-600);
+}
+
 /* ===== CHAT VIEW ===== */
 
 .chat-view {
@@ -307,6 +428,10 @@ html, body {
 
 .chat-view.active {
     display: flex;
+}
+
+.mobile-mode-toolbar {
+    display: none;
 }
 
 /* Sidebar */
@@ -328,8 +453,8 @@ html, body {
 }
 
 .sidebar-logo {
-    width: 124px;
-    height: 40px;
+    width: 156px;
+    height: 42px;
     object-fit: contain;
     background: transparent;
     padding: 0;
@@ -341,8 +466,45 @@ html, body {
     letter-spacing: 0.5px;
 }
 
+.sidebar-brand-block {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.sidebar-mode-label {
+    font-size: 11px;
+    line-height: 1.4;
+    color: rgba(255,255,255,0.56);
+}
+
+.mode-switch-btn {
+    margin: 0 16px 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: var(--radius-sm);
+    background: rgba(255,255,255,0.04);
+    color: rgba(255,255,255,0.84);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all var(--transition);
+}
+
+.mode-switch-btn:hover {
+    background: rgba(141, 179, 62, 0.1);
+    border-color: rgba(141, 179, 62, 0.45);
+    color: var(--green-light);
+}
+
 .new-chat-btn {
     margin: 16px;
+    margin-top: 0;
     padding: 12px;
     border: 1.5px dashed rgba(255,255,255,0.2);
     border-radius: var(--radius-sm);
@@ -559,6 +721,22 @@ html, body {
 .welcome-content {
     text-align: center;
     max-width: 560px;
+}
+
+.chat-mode-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: var(--green-subtle);
+    color: var(--green-dark);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 18px;
 }
 
 .welcome-icon {
@@ -1317,8 +1495,25 @@ html, body {
 
 /* Responsive */
 @media (max-width: 900px) {
+    .mode-selector-grid {
+        grid-template-columns: 1fr;
+    }
+
     .auth-left {
         display: none;
+    }
+
+    .auth-right {
+        padding: 24px 20px 32px;
+    }
+
+    .auth-topbar {
+        margin-bottom: 20px;
+        padding-bottom: 18px;
+    }
+
+    .auth-topbar-logo {
+        width: min(280px, 100%);
     }
     
     #sidebar {
@@ -1328,5 +1523,33 @@ html, body {
     
     .chat-view.active {
         flex-direction: column;
+    }
+
+    .mobile-mode-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px 0;
+    }
+
+    .mobile-mode-back-btn {
+        border: 1px solid var(--gray-200);
+        border-radius: 999px;
+        background: var(--white);
+        color: var(--gray-700);
+        padding: 8px 12px;
+        font-family: var(--font);
+        font-size: 13px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .mobile-mode-label {
+        font-size: 12px;
+        color: var(--gray-500);
+        text-align: right;
     }
 }

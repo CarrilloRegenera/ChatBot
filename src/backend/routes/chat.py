@@ -6,8 +6,10 @@ from typing import Dict, List
 from fastapi import APIRouter, HTTPException, Request
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
-from config import ADMIN_API_KEY, CONVERSATION_LOCK_TIMEOUT_SECS
+from business_query_service import answer_business_question
+from config import ADMIN_API_KEY, CONVERSATION_LOCK_TIMEOUT_SECS, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
 from database import db_conn
+from entra_auth import validate_entra_token
 from memory_service import (
     get_admin_metrics,
     get_admin_503_metrics,
@@ -117,6 +119,23 @@ def _save_chat_message(conversation_id: int, question: str, response: str, elaps
 
 
 def _assert_admin(request: Request) -> None:
+    auth_header = (request.headers.get("authorization") or "").strip()
+    if ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            claims = validate_entra_token(token)
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail=f"Token Entra no válido: {exc}") from exc
+        email = (
+            claims.get("preferred_username")
+            or claims.get("email")
+            or claims.get("upn")
+            or ""
+        ).strip().lower()
+        if email and email in ENTRA_ADMIN_EMAILS:
+            return
+        raise HTTPException(status_code=403, detail="Acceso solo para administradores de Entra")
+
     admin_key = (request.headers.get("x-admin-key") or "").strip()
     role = (request.headers.get("x-user-role") or "").strip().lower()
     if ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
@@ -157,7 +176,7 @@ def delete_conversation(conversation_id: int):
 
 
 @router.post("/messages")
-def send_message(data: MessageRequest):
+def send_message(data: MessageRequest, request: Request):
     conversation_lock = _get_conversation_lock(data.conversation_id)
     acquired = conversation_lock.acquire(timeout=CONVERSATION_LOCK_TIMEOUT_SECS)
     if not acquired:
@@ -203,6 +222,38 @@ def send_message(data: MessageRequest):
                 "confidence": 1.0 if route in {"invalid", "smalltalk"} else 0.9,
                 "from_memory": False,
                 "route": route,
+            }
+
+        if route in {"business_licitaciones", "business_produccion"}:
+            auth_header = (request.headers.get("authorization") or "").strip()
+            user_token = auth_header.split(" ", 1)[1].strip() if auth_header.lower().startswith("bearer ") else None
+            business_result = answer_business_question(
+                data.question,
+                user_token=user_token,
+                preferred_route=route,
+            )
+            business_route = business_result.get("route", route)
+            response = business_result["response"]
+            elapsed = int((time.time() - start) * 1000)
+            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
+            _log_chat_event(
+                event="CHAT",
+                conversation_id=data.conversation_id,
+                route=business_route,
+                from_memory=False,
+                confidence=float(business_result.get("confidence", 1.0)),
+                sources_count=len(business_result.get("sources", [])),
+                elapsed_ms=elapsed,
+                question=data.question,
+                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+            )
+            return {
+                "question": data.question,
+                "response": response,
+                "confidence": float(business_result.get("confidence", 1.0)),
+                "from_memory": False,
+                "sources": business_result.get("sources", []),
+                "route": business_route,
             }
 
         context = ""

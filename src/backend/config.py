@@ -9,6 +9,24 @@ ENV_PATH = BASE_DIR / ".env"
 
 load_dotenv(ENV_PATH)
 
+
+def _is_local_runtime() -> bool:
+    website_hostname = os.getenv("WEBSITE_HOSTNAME", "").strip()
+    if website_hostname:
+        return False
+
+    environment_name = os.getenv("ENVIRONMENT", "").strip().lower()
+    if environment_name in {"qa", "pro", "prod", "production"}:
+        return False
+
+    return True
+
+
+def _default_appregenera_api_base_url() -> str:
+    if _is_local_runtime():
+        return "http://localhost:5204"
+    return "https://api-appregenera-pro-amgxcba0awffdjcd.westeurope-01.azurewebsites.net"
+
 def _to_absolute_path(path_value: str) -> str:
     expanded = os.path.expandvars(os.path.expanduser(path_value))
     path = Path(expanded)
@@ -60,6 +78,23 @@ ALLOWED_ORIGINS = [
 ]
 SYNC_DOCUMENTS_ON_STARTUP = os.getenv("SYNC_DOCUMENTS_ON_STARTUP", "true").strip().lower() in {"1", "true", "yes", "on"}
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "").strip()
+ENTRA_ENABLED = os.getenv("ENTRA_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+ENTRA_TENANT_ID = os.getenv("ENTRA_TENANT_ID", "").strip()
+ENTRA_CLIENT_ID = os.getenv("ENTRA_CLIENT_ID", "").strip()
+ENTRA_API_SCOPE = os.getenv("ENTRA_API_SCOPE", "").strip()
+ENTRA_ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv("ENTRA_ADMIN_EMAILS", "").split(",")
+    if email.strip()
+}
+APPREGENERA_API_BASE_URL = os.getenv("APPREGENERA_API_BASE_URL", _default_appregenera_api_base_url()).strip().rstrip("/")
+APPREGENERA_TIMEOUT_SECS = float(os.getenv("APPREGENERA_TIMEOUT_SECS", "20"))
+APPREGENERA_ALLOWED_MODULES = tuple(
+    module.strip().lower()
+    for module in os.getenv("APPREGENERA_ALLOWED_MODULES", "estudios,produccion").split(",")
+    if module.strip()
+)
+APPREGENERA_DEV_BYPASS_KEY = os.getenv("APPREGENERA_DEV_BYPASS_KEY", "").strip()
 
 RAG_BACKEND = os.getenv("RAG_BACKEND", "chroma").strip().lower()
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT", "").strip().rstrip("/")
