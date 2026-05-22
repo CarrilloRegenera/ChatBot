@@ -117,6 +117,17 @@ TABLE_QUERY_PATTERN = re.compile(
     r"(?:\btabla\b|\bcircuitos?\s+minimos?\b|\bcircuitos?\s+mínimos?\b|\brelacion\s+de\b|\brelación\s+de\b|\blista\s+completa\b)",
     re.IGNORECASE,
 )
+PAGE_REFERENCE_PATTERN = re.compile(r"\b(?:pag(?:ina)?|p[Ã¡a]g(?:ina)?|page)\.?\s*(\d{1,4})\b", re.IGNORECASE)
+ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[iÃ­]a)[-\s]*(?:bt|lat|rat)?[-\s]*(\d{1,2})\b", re.IGNORECASE)
+TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3})\b", re.IGNORECASE)
+LOCATION_QUERY_PATTERN = re.compile(
+    r"\b(?:pagina|pag|page|donde\s+(?:aparece|esta|se\s+encuentra)|ubicacion|apartado\s+de)\b",
+    re.IGNORECASE,
+)
+UNIT_QUERY_PATTERN = re.compile(
+    r"\b(?:mm2|mmÂ²|m2|mÂ²|cm|mm|kw|kva|w|v|a|ma|ohmios?|ohm|%|bar|hz|a/mm2|a/mmÂ²)\b|Ω",
+    re.IGNORECASE,
+)
 LIST_CUE_PATTERN = re.compile(r"(?:^|\n)(?:[-*]\s+|\d+\.\s+)", re.IGNORECASE)
 CIRCUIT_LIST_CUE_PATTERN = re.compile(r"\bC(?:1[0-3]?|[1-9])\b", re.IGNORECASE)
 TABLE_ROW_CUE_PATTERN = re.compile(
@@ -274,7 +285,7 @@ class _MultilingualEF:
         return self._encode(input)
 
 
-_EF_VERSION = f"multilingual-minilm-v3-structured-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
+_EF_VERSION = f"multilingual-minilm-v4-structured-refs-tables-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
@@ -484,6 +495,97 @@ def _table_signal_count(text: str) -> int:
     return count
 
 
+def _scope_hint(text: str, section: str = "") -> str:
+    normalized = _normalize_text(f"{section} {text}")
+    hints = []
+    for term in (
+        "local", "emplazamiento", "vivienda", "red subterranea", "redes subterraneas",
+        "instalacion interior", "instalaciones interiores", "recarga", "quirófano",
+        "quirofano", "sala de intervencion", "generadora", "generadoras", "alta presion",
+        "exterior", "interior",
+    ):
+        if _normalize_text(term) in normalized:
+            hints.append(term)
+    return ", ".join(list(dict.fromkeys(hints))[:8])
+
+
+def _content_intent(text: str, section: str = "", chunk_kind: str = "") -> str:
+    combined = f"{section} {text}"
+    normalized = _normalize_text(combined)
+    if chunk_kind in {"table", "table_row"} or "tabla" in normalized:
+        return "table"
+    if NUMERIC_PATTERN.search(combined):
+        return "numeric_value"
+    if any(term in normalized for term in ("procedimiento", "pasos", "puesta en marcha", "ejecucion")):
+        return "procedure"
+    if any(term in normalized for term in ("objeto", "campo de aplicacion", "ambito")):
+        return "scope"
+    if any(term in normalized for term in ("debe", "deben", "distancia minima", "no sera superior", "no debera")):
+        return "requirement"
+    return "text"
+
+
+def _extract_printed_page(text: str) -> str:
+    candidates = re.findall(r"[–-]\s*(\d{1,4})\s*[–-]", text or "")
+    return candidates[0] if candidates else ""
+
+
+def _row_document(table_title: str, headers: List[str], row: List[str]) -> str:
+    pairs = []
+    for idx, value in enumerate(row):
+        clean_value = " ".join(str(value or "").split())
+        if not clean_value:
+            continue
+        header = " ".join(str(headers[idx] if idx < len(headers) else f"columna_{idx + 1}").split())
+        header = header or f"columna_{idx + 1}"
+        pairs.append(f"{header}: {clean_value}")
+    if not pairs:
+        return ""
+    title = table_title or "Tabla"
+    return f"FILA_TABLA. {title}. " + "; ".join(pairs) + "."
+
+
+def _extract_table_row_chunks(page, page_text: str) -> List[Dict[str, object]]:
+    try:
+        tables = page.find_tables()
+    except Exception:
+        return []
+    rows = []
+    flat_page = " ".join((page_text or "").split())
+    table_titles = re.findall(r"(Tabla\s+\d+[^.\n]*(?:\.[^.\n]*)?)", page_text or "", re.IGNORECASE)
+    for table_index, table in enumerate(getattr(tables, "tables", []) or [], start=1):
+        try:
+            data = table.extract()
+        except Exception:
+            continue
+        if not data or len(data) < 2:
+            continue
+        raw_headers = [str(cell or "").strip() for cell in data[0]]
+        if sum(1 for value in raw_headers if value) < 2 and len(data) > 1:
+            raw_headers = [str(cell or "").strip() for cell in data[1]]
+            body = data[2:]
+        else:
+            body = data[1:]
+        headers = [re.sub(r"\s+", " ", value) or f"columna_{idx + 1}" for idx, value in enumerate(raw_headers)]
+        table_title = table_titles[table_index - 1] if table_index <= len(table_titles) else ""
+        if not table_title:
+            title_match = re.search(r"Tabla\s+\d+[^.]{0,160}", flat_page, re.IGNORECASE)
+            table_title = title_match.group(0) if title_match else f"Tabla {table_index}"
+        for row_index, row in enumerate(body, start=1):
+            values = [str(cell or "").strip() for cell in row]
+            if sum(1 for value in values if value) < 2:
+                continue
+            doc = _row_document(table_title, headers, values)
+            if doc:
+                rows.append({
+                    "document": doc,
+                    "table_title": table_title,
+                    "table_index": table_index,
+                    "row_index": row_index,
+                })
+    return rows
+
+
 def _format_chunk(text: str, section: str) -> str:
     clean_text = " ".join(text.split()).strip()
     if not section:
@@ -506,8 +608,117 @@ def _extract_numeric_terms(text: str) -> List[str]:
     return [match.group(0).strip().lower() for match in NUMERIC_PATTERN.finditer(text or "")]
 
 
+def _numeric_query_variants(text: str) -> List[str]:
+    variants = []
+    seen = set()
+    for term in _extract_numeric_terms(text):
+        compact = re.sub(r"\s+", "", term)
+        spaced = re.sub(r"^(\d+(?:[.,]\d+)?)([^\d\s].*)$", r"\1 \2", compact)
+        for value in (term, compact, spaced):
+            value = value.strip().lower()
+            if value and value not in seen:
+                seen.add(value)
+                variants.append(value)
+    return variants[:12]
+
+
+def _standalone_numbers(text: str) -> List[str]:
+    numbers = []
+    seen = set()
+    for value in re.findall(r"\d+(?:[.,]\d+)?", text or ""):
+        if value not in seen:
+            seen.add(value)
+            numbers.append(value)
+    return numbers[:10]
+
+
+def _standalone_number_hits(numbers: List[str], text: str) -> int:
+    if not numbers or not text:
+        return 0
+    return sum(
+        1 for value in numbers
+        if re.search(rf"(?<![\d,.-]){re.escape(value)}(?![\d,.-])", text)
+    )
+
+
+def _domain_phrase_queries(clean_question: str) -> List[str]:
+    normalized = _normalize_text(clean_question)
+    phrases = []
+    if "canalizaciones" in normalized and ("no electricas" in normalized or "3cm" in normalized or "3 cm" in normalized):
+        phrases.extend((
+            "canalizaciones electricas con otras no electricas",
+            "canalizaciones eléctricas con otras no eléctricas",
+            "distancia minima de 3 cm",
+            "distancia mínima de 3 cm",
+        ))
+    return phrases
+
+
 def _extract_reference_terms(text: str) -> List[str]:
     return [match.group(0).strip().lower() for match in REFERENCE_PATTERN.finditer(text or "")]
+
+
+def _extract_exact_refs(text: str) -> List[str]:
+    refs = set()
+    raw = text or ""
+    for value in ITC_REFERENCE_PATTERN.findall(raw):
+        number = str(value).zfill(2)
+        refs.add(f"itc-bt-{number}")
+        refs.add(f"itc bt {number}")
+        refs.add(f"bt-{number}")
+    for value in TABLE_REFERENCE_PATTERN.findall(raw):
+        refs.add(f"tabla {int(value)}")
+    return sorted(refs)
+
+
+def _extract_page_refs(text: str) -> List[int]:
+    pages = []
+    seen = set()
+    for value in PAGE_REFERENCE_PATTERN.findall(text or ""):
+        try:
+            page = int(value)
+        except ValueError:
+            continue
+        if page > 0 and page not in seen:
+            seen.add(page)
+            pages.append(page)
+    return pages[:5]
+
+
+def _extract_location_target(text: str) -> str:
+    normalized = _normalize_text(text)
+    match = re.search(
+        r"(?:pagina|pag|page|donde\s+(?:aparece|esta|se\s+encuentra)|ubicacion|apartado\s+de)\s+(?:de\s+|del\s+|la\s+|el\s+)?(.+)",
+        normalized,
+    )
+    if not match:
+        return ""
+    target = match.group(1)
+    target = re.split(r"\b(?:en|del|de)\s+(?:el\s+|la\s+)?(?:pdf|documento|guia|itc|boe|rebt|rite)\b", target, maxsplit=1)[0]
+    tokens = [token for token in _tokenize(target) if token not in STOPWORDS]
+    return " ".join(tokens[:8])
+
+
+def _query_intent(clean_question: str) -> str:
+    normalized = _normalize_text(clean_question)
+    if PAGE_REFERENCE_PATTERN.search(clean_question) or LOCATION_QUERY_PATTERN.search(normalized):
+        return "document_location"
+    if TABLE_REFERENCE_PATTERN.search(clean_question) or "tabla" in normalized:
+        return "table_lookup"
+    if NUMERIC_PATTERN.search(clean_question) and (
+        UNIT_QUERY_PATTERN.search(clean_question)
+        or any(term in normalized for term in ("densidad", "corriente", "valor", "limite", "distancia", "seccion"))
+    ):
+        return "numeric_value"
+    if COMPARISON_QUERY_PATTERN.search(normalized):
+        return "comparison"
+    if PROCEDURE_QUERY_PATTERN.search(normalized):
+        return "procedure"
+    if LIST_QUERY_PATTERN.search(normalized):
+        return "list"
+    if DEFINITION_QUERY_PATTERN.search(normalized):
+        return "definition"
+    return "general"
 
 
 def _extract_labeled_terms(text: str) -> Dict[str, set[str]]:
@@ -574,7 +785,14 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
     return {
         "normalized_question": normalized,
         "numeric_terms": _extract_numeric_terms(clean_question),
+        "numeric_variants": _numeric_query_variants(clean_question),
+        "standalone_numbers": _standalone_numbers(clean_question),
         "reference_terms": _extract_reference_terms(clean_question),
+        "exact_refs": _extract_exact_refs(clean_question),
+        "page_refs": _extract_page_refs(clean_question),
+        "location_target": _extract_location_target(clean_question),
+        "phrase_queries": _domain_phrase_queries(clean_question),
+        "intent": _query_intent(clean_question),
         "labeled_terms": _extract_labeled_terms(clean_question),
         "disambiguation_terms": _extract_disambiguation_terms(clean_question),
         "comparison": any(term in normalized for term in ("compara", "diferencia", "frente", "versus")),
@@ -582,7 +800,7 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "definition_query": bool(DEFINITION_QUERY_PATTERN.search(normalized)),
         "list_query": bool(LIST_QUERY_PATTERN.search(normalized)),
         "summary_query": bool(SUMMARY_QUERY_PATTERN.search(normalized)),
-        "table_query": bool(TABLE_QUERY_PATTERN.search(normalized)),
+        "table_query": bool(TABLE_QUERY_PATTERN.search(normalized) or TABLE_REFERENCE_PATTERN.search(clean_question)),
         "comparison_query": bool(COMPARISON_QUERY_PATTERN.search(normalized)),
         "procedure_query": bool(PROCEDURE_QUERY_PATTERN.search(normalized)),
         "generalization_query": bool(GENERALIZATION_QUERY_PATTERN.search(normalized)),
@@ -621,7 +839,8 @@ def _metadata_text(metadata: Dict[str, object]) -> str:
             str(metadata.get(key, ""))
             for key in (
                 "source", "folder", "domain", "regulation", "itc_refs", "section",
-                "section_type", "topics", "table_hint", "chunk_kind",
+                "section_type", "topics", "table_hint", "table_title", "content_intent",
+                "scope_hint", "exact_refs", "chunk_kind",
             )
         )
     )
@@ -748,7 +967,7 @@ def _expected_domains(question: str) -> List[str]:
         domains.append("alta_tension")
     if any(term in normalized for term in ("rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion")):
         domains.append("rite")
-    if any(term in normalized for term in ("rebt", "baja tension", "itc-bt")):
+    if any(term in normalized for term in ("rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico")):
         domains.append("baja_tension")
     if any(term in normalized for term in ("bt-40", "guia bt 40", "guia-bt-40", "instalaciones generadoras", "generadoras de baja tension", "iluminacion", "alumbrado", "une 12464", "12464")):
         domains.append("guias_tecnicas")
@@ -856,6 +1075,8 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
             page_blocks = _extract_text_blocks(text)
             if not page_blocks:
                 continue
+            printed_page = _extract_printed_page(text)
+            page_exact_refs = ", ".join(_extract_exact_refs(f"{source_name} {text}"))
             for chunk_index, chunk in enumerate(_split_text(text), start=1):
                 section_name = ""
                 chunk_topics = _extract_topic_terms(chunk)
@@ -872,6 +1093,8 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     chunk_kind = "text"
                 table_hint = "tabla" if "tabla" in _normalize_text(chunk) else ""
                 table_signal_count = _table_signal_count(chunk)
+                exact_refs = ", ".join(_extract_exact_refs(f"{source_name} {clean_section_name} {chunk}"))
+                content_intent = _content_intent(chunk, clean_section_name, chunk_kind)
                 documents.append(chunk)
                 metadatas.append({
                     "source": source_name,
@@ -879,17 +1102,52 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     "domain": domain,
                     "regulation": regulation,
                     "page": page_index + 1,
+                    "printed_page": printed_page,
                     "chunk": chunk_index,
                     "section": clean_section_name,
                     "section_type": _section_type(clean_section_name),
                     "itc_refs": _extract_itc_refs(f"{source_name} {clean_section_name} {chunk}"),
+                    "exact_refs": exact_refs,
                     "topics": ", ".join(chunk_topics),
                     "chunk_kind": chunk_kind,
+                    "content_intent": content_intent,
+                    "scope_hint": _scope_hint(chunk, clean_section_name),
                     "table_hint": table_hint,
                     "table_signal_count": table_signal_count,
                     "file_hash": file_hash,
                 })
                 ids.append(f"{source_name}-{page_index + 1}-{chunk_index}")
+            table_rows = _extract_table_row_chunks(page, text)
+            for row in table_rows:
+                row_doc = str(row["document"])
+                row_index = int(row["row_index"])
+                table_index = int(row["table_index"])
+                table_title = str(row["table_title"])
+                documents.append(row_doc)
+                metadatas.append({
+                    "source": source_name,
+                    "folder": str(filepath.parent).replace("\\", "/"),
+                    "domain": domain,
+                    "regulation": regulation,
+                    "page": page_index + 1,
+                    "printed_page": printed_page,
+                    "chunk": row_index,
+                    "section": _sanitize_section_label(table_title[:SECTION_LABEL_MAX_LENGTH]),
+                    "section_type": "table",
+                    "itc_refs": _extract_itc_refs(f"{source_name} {page_exact_refs} {table_title} {row_doc}"),
+                    "exact_refs": ", ".join(_extract_exact_refs(f"{source_name} {page_exact_refs} {table_title} {row_doc}")),
+                    "topics": ", ".join(_extract_topic_terms(row_doc)),
+                    "chunk_kind": "table_row",
+                    "content_intent": "table",
+                    "scope_hint": _scope_hint(row_doc, table_title),
+                    "table_hint": "tabla",
+                    "table_title": table_title,
+                    "table_index": table_index,
+                    "row_index": row_index,
+                    "table_signal_count": max(_table_signal_count(row_doc), 1),
+                    "file_hash": file_hash,
+                })
+                ids.append(f"{source_name}-{page_index + 1}-t{table_index}-r{row_index}")
     finally:
         pdf.close()
 
@@ -1010,7 +1268,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     expected_domains = _expected_domains(clean_question)
     if mentions_bt40 and "guias_tecnicas" not in expected_domains:
         expected_domains.append("guias_tecnicas")
-    if mentions_bt_generators:
+    if mentions_bt_generators and not expected_domains:
         for domain in ("baja_tension", "guias_tecnicas"):
             if domain not in expected_domains:
                 expected_domains.append(domain)
@@ -1036,6 +1294,10 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         n_results = max(n_results, 9)
     if query_profile["temporal_query"]:
         n_results = max(n_results, 8)
+    if query_profile["exact_refs"] or query_profile["page_refs"]:
+        n_results = max(n_results, 10)
+    if query_profile["intent"] in {"numeric_value", "table_lookup"}:
+        n_results = max(n_results, 10)
 
     candidate_count = _candidate_window(n_results, question_keywords, clean_question)
     if broad_query:
@@ -1044,6 +1306,80 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     ids = results.get("ids", [[]])[0]
+
+    if query_profile["page_refs"]:
+        existing_ids = set(ids)
+        for page_ref in query_profile["page_refs"]:
+            for where in ({"page": page_ref}, {"printed_page": str(page_ref)}):
+                try:
+                    page_results = collection.get(
+                        where=where,
+                        include=["documents", "metadatas"],
+                        limit=20,
+                    )
+                    for doc, meta, fid in zip(
+                        page_results.get("documents", []) or [],
+                        page_results.get("metadatas", []) or [],
+                        page_results.get("ids", []) or [],
+                    ):
+                        if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                            continue
+                        if fid not in existing_ids:
+                            documents.append(doc)
+                            metadatas.append(meta)
+                            ids.append(fid)
+                            existing_ids.add(fid)
+                except Exception as exc:
+                    logger.warning("Page-forced retrieval failed for %s/%s: %s", page_ref, where, exc)
+
+    if query_profile["numeric_variants"] or query_profile["phrase_queries"]:
+        existing_ids = set(ids)
+        for term in list(query_profile["numeric_variants"]) + list(query_profile["phrase_queries"]):
+            try:
+                forced_results = collection.get(
+                    where_document={"$contains": term},
+                    include=["documents", "metadatas"],
+                    limit=18,
+                )
+                for doc, meta, fid in zip(
+                    forced_results.get("documents", []) or [],
+                    forced_results.get("metadatas", []) or [],
+                    forced_results.get("ids", []) or [],
+                ):
+                    if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                        continue
+                    if fid not in existing_ids:
+                        documents.append(doc)
+                        metadatas.append(meta)
+                        ids.append(fid)
+                        existing_ids.add(fid)
+            except Exception as exc:
+                logger.warning("Value/phrase-forced retrieval failed for %s: %s", term, exc)
+
+    if query_profile["exact_refs"]:
+        existing_ids = set(ids)
+        for ref in query_profile["exact_refs"]:
+            for term in (ref, ref.replace("-", " "), ref.upper()):
+                try:
+                    ref_results = collection.get(
+                        where_document={"$contains": term},
+                        include=["documents", "metadatas"],
+                        limit=18,
+                    )
+                    for doc, meta, fid in zip(
+                        ref_results.get("documents", []) or [],
+                        ref_results.get("metadatas", []) or [],
+                        ref_results.get("ids", []) or [],
+                    ):
+                        if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                            continue
+                        if fid not in existing_ids:
+                            documents.append(doc)
+                            metadatas.append(meta)
+                            ids.append(fid)
+                            existing_ids.add(fid)
+                except Exception as exc:
+                    logger.warning("Reference-forced retrieval failed for %s: %s", term, exc)
 
     if expected_domains:
         existing_ids = set(ids)
@@ -1070,24 +1406,25 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
 
     if query_profile["table_query"]:
         existing_ids = set(ids)
-        try:
-            table_results = collection.query(
-                query_texts=[clean_question],
-                n_results=min(n_results + 6, 16),
-                where={"chunk_kind": "table"},
-            )
-            for doc, meta, fid in zip(
-                table_results.get("documents", [[]])[0],
-                table_results.get("metadatas", [[]])[0],
-                table_results.get("ids", [[]])[0],
-            ):
-                if fid not in existing_ids:
-                    documents.append(doc)
-                    metadatas.append(meta)
-                    ids.append(fid)
-                    existing_ids.add(fid)
-        except Exception as exc:
-            logger.warning("Table-forced retrieval failed: %s", exc)
+        for table_kind in ("table_row", "table"):
+            try:
+                table_results = collection.query(
+                    query_texts=[clean_question],
+                    n_results=min(n_results + 6, 16),
+                    where={"chunk_kind": table_kind},
+                )
+                for doc, meta, fid in zip(
+                    table_results.get("documents", [[]])[0],
+                    table_results.get("metadatas", [[]])[0],
+                    table_results.get("ids", [[]])[0],
+                ):
+                    if fid not in existing_ids:
+                        documents.append(doc)
+                        metadatas.append(meta)
+                        ids.append(fid)
+                        existing_ids.add(fid)
+            except Exception as exc:
+                logger.warning("Table-forced retrieval failed for %s: %s", table_kind, exc)
 
     if mentions_rebt_regulation and query_profile["scope_query"]:
         existing_ids = set(ids)
@@ -1175,16 +1512,24 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             continue
 
         doc_norm = _normalize_text(document)
+        doc_compact = re.sub(r"\s+", "", doc_norm)
         doc_tokens = set(_tokenize(document))
         metadata_norm = _metadata_text(metadata)
         section_title = _normalize_text(str(metadata.get("section", "")))
         source_title = _normalize_text(str(metadata.get("source", "")).replace("/", " "))
         source_domain = _source_domain_key(str(metadata.get("source", "")), metadata)
         document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
+        metadata_page = int(metadata.get("page", 0) or 0)
+        printed_page = str(metadata.get("printed_page", "") or "")
         overlap_score = len(question_tokens.intersection(doc_tokens))
         keyword_hits = sum(1 for kw in question_keywords if _normalize_text(kw) in doc_norm)
         core_hits = sum(1 for core in core_terms if core in doc_norm)
         numeric_hits = sum(1 for term in query_profile["numeric_terms"] if term in doc_norm)
+        numeric_variant_hits = sum(
+            1 for term in query_profile["numeric_variants"]
+            if _normalize_text(term) in doc_norm or re.sub(r"\s+", "", _normalize_text(term)) in doc_compact
+        )
+        standalone_number_hits = _standalone_number_hits(query_profile["standalone_numbers"], document)
         reference_hits = sum(1 for term in query_profile["reference_terms"] if term in doc_norm or term in metadata_norm)
         section_hits = sum(1 for term in query_profile["section_terms"] if term in metadata_norm)
         section_title_hits = sum(1 for term in query_profile["section_terms"] if term in section_title)
@@ -1214,6 +1559,33 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         )
 
         score = overlap_score + (keyword_hits * 2) + (core_hits * 4)
+        if query_profile["intent"] == "document_location" and query_profile["location_target"]:
+            location_target = query_profile["location_target"]
+            if location_target in doc_norm:
+                score += 18
+            if location_target in section_title:
+                score += 22
+            if re.search(rf"\b\d+(?:\.\d+)*\s+{re.escape(location_target)}\b", doc_norm):
+                score += 28
+        if query_profile["page_refs"]:
+            if metadata_page in query_profile["page_refs"] or printed_page in {str(p) for p in query_profile["page_refs"]}:
+                score += 50
+        if query_profile["exact_refs"]:
+            exact_hits = sum(1 for ref in query_profile["exact_refs"] if ref in doc_norm or ref in metadata_norm)
+            if exact_hits:
+                score += exact_hits * 28
+        if query_profile["intent"] in {"numeric_value", "table_lookup"}:
+            if str(metadata.get("chunk_kind", "")) == "table_row":
+                score += 30
+            elif str(metadata.get("chunk_kind", "")) == "table":
+                score += 14
+        if query_profile["intent"] == "numeric_value" and (numeric_hits or numeric_variant_hits):
+            score += (numeric_hits + numeric_variant_hits) * 8
+        if standalone_number_hits:
+            score += standalone_number_hits * 18
+        if query_profile["phrase_queries"]:
+            phrase_hits = sum(1 for phrase in query_profile["phrase_queries"] if _normalize_text(phrase) in doc_norm)
+            score += phrase_hits * 80
         # Scope/objeto/finalidad questions benefit from early normative sections.
         if query_profile.get("scope_query"):
             if int(metadata.get("page", 9999) or 9999) <= 3:
@@ -1352,6 +1724,37 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             metadata_norm = _metadata_text(metadata)
             section_title = _normalize_text(str(metadata.get("section", "")))
             lexical_score = 8
+            try:
+                metadata_page = int(metadata.get("page", 0) or 0)
+            except Exception:
+                metadata_page = 0
+            printed_page = str(metadata.get("printed_page", "") or "")
+            if query_profile["intent"] == "document_location" and query_profile["location_target"]:
+                location_target = query_profile["location_target"]
+                if location_target in doc_norm:
+                    lexical_score += 16
+                if location_target in section_title:
+                    lexical_score += 20
+                if re.search(rf"\b\d+(?:\.\d+)*\s+{re.escape(location_target)}\b", doc_norm):
+                    lexical_score += 24
+            if query_profile["page_refs"] and (
+                metadata_page in query_profile["page_refs"] or printed_page in {str(p) for p in query_profile["page_refs"]}
+            ):
+                lexical_score += 45
+            if query_profile["exact_refs"]:
+                exact_hits = sum(1 for ref in query_profile["exact_refs"] if ref in doc_norm or ref in metadata_norm)
+                lexical_score += exact_hits * 24
+            if query_profile["intent"] in {"numeric_value", "table_lookup"} and str(metadata.get("chunk_kind", "")) == "table_row":
+                lexical_score += 25
+            if query_profile["numeric_variants"]:
+                doc_compact = re.sub(r"\s+", "", doc_norm)
+                lexical_score += sum(
+                    1 for term in query_profile["numeric_variants"]
+                    if _normalize_text(term) in doc_norm or re.sub(r"\s+", "", _normalize_text(term)) in doc_compact
+                ) * 8
+            lexical_score += _standalone_number_hits(query_profile["standalone_numbers"], document) * 16
+            if query_profile["phrase_queries"]:
+                lexical_score += sum(1 for phrase in query_profile["phrase_queries"] if _normalize_text(phrase) in doc_norm) * 70
             if core_terms and not any(core in doc_norm for core in core_terms):
                 lexical_score -= CORE_TERM_PENALTY
             if query_profile["reference_terms"] and any(ref in doc_norm for ref in query_profile["reference_terms"]):
@@ -1506,6 +1909,66 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             ),
             reverse=True,
         )
+    if query_profile["intent"] == "document_location" and query_profile["location_target"] and not query_profile["page_refs"] and selected:
+        location_target = query_profile["location_target"]
+
+        def _location_page(metadata: Dict[str, object]) -> int:
+            for key in ("printed_page", "page"):
+                try:
+                    value = int(str(metadata.get(key, "") or "0"))
+                except ValueError:
+                    value = 0
+                if value:
+                    return value
+            return 9999
+
+        selected.sort(
+            key=lambda item: (
+                1 if re.search(rf"\b\d+(?:\.\d+)*\s+{re.escape(location_target)}\b", _normalize_text(item[2])) else 0,
+                1 if location_target in _normalize_text(str(item[3].get("section", ""))) else 0,
+                1 if location_target in _normalize_text(item[2]) else 0,
+                -_location_page(item[3]),
+                item[0],
+            ),
+            reverse=True,
+        )
+    if (
+        (query_profile["phrase_queries"] or query_profile["numeric_variants"])
+        and query_profile["intent"] != "document_location"
+        and not query_profile["page_refs"]
+        and selected
+    ):
+        selected.sort(
+            key=lambda item: (
+                sum(1 for phrase in query_profile["phrase_queries"] if _normalize_text(phrase) in _normalize_text(item[2])),
+                1 if query_profile["intent"] in {"numeric_value", "table_lookup"} and str(item[3].get("chunk_kind", "")) == "table_row" else 0,
+                _standalone_number_hits(query_profile["standalone_numbers"], item[2]),
+                sum(1 for kw in question_keywords if _normalize_text(kw) in _normalize_text(item[2])),
+                sum(
+                    1 for term in query_profile["numeric_variants"]
+                    if _normalize_text(term) in _normalize_text(item[2])
+                    or re.sub(r"\s+", "", _normalize_text(term)) in re.sub(r"\s+", "", _normalize_text(item[2]))
+                ),
+                item[0],
+            ),
+            reverse=True,
+        )
+
+    if query_profile["page_refs"] and selected:
+        requested_pages = {str(page) for page in query_profile["page_refs"]}
+
+        def _matches_requested_page(metadata: Dict[str, object]) -> int:
+            page = str(metadata.get("page", "") or "")
+            printed_page = str(metadata.get("printed_page", "") or "")
+            return 1 if page in requested_pages or printed_page in requested_pages else 0
+
+        selected.sort(
+            key=lambda item: (
+                _matches_requested_page(item[3]),
+                item[0],
+            ),
+            reverse=True,
+        )
 
     # Neighbor expansion: for table chunks, fetch contiguous ±1 chunks
     # (same source+page) to recover tables split across chunks.
@@ -1568,21 +2031,23 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     for _, _, document, metadata in selected:
         clean_section = _sanitize_section_label(str(metadata.get("section", "")))
         section_suffix = f", {clean_section}" if clean_section else ""
-        source_label = f"{metadata['source']} (pag. {metadata['page']}{section_suffix})"
+        printed_suffix = f", pag. doc {metadata.get('printed_page')}" if metadata.get("printed_page") else ""
+        kind_suffix = f", {metadata.get('chunk_kind')}" if metadata.get("chunk_kind") in {"table", "table_row"} else ""
+        source_label = f"{metadata['source']} (pag. {metadata['page']}{printed_suffix}{section_suffix}{kind_suffix})"
         context_parts.append(f"[{source_label}]\n{document}")
         if source_label not in seen_sources:
             sources.append(source_label)
             seen_sources.add(source_label)
         if expected_domains and _source_domain_key(str(metadata.get("source", "")), metadata) in expected_domains:
             matched_domains += 1
-        if str(metadata.get("chunk_kind", "")) == "table":
+        if str(metadata.get("chunk_kind", "")) in {"table", "table_row"}:
             table_selected_chunks += 1
         table_selected_signal_count += int(metadata.get("table_signal_count", 0) or 0)
 
     table_candidate_signal_count = 0
     if query_profile["table_query"]:
         for _, _, document, metadata in ranked_items[: max(n_results * 3, 12)]:
-            if str(metadata.get("chunk_kind", "")) == "table":
+            if str(metadata.get("chunk_kind", "")) in {"table", "table_row"}:
                 table_candidate_signal_count += int(metadata.get("table_signal_count", 0) or 0)
             elif _looks_like_table_block(document):
                 table_candidate_signal_count += _table_signal_count(document)

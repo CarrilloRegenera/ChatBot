@@ -277,6 +277,7 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
                 "- Si la pregunta depende de una tabla o listado completo, solo enumera los elementos si aparecen de forma recuperada y legible en el contexto.\n"
                 "- Si el contexto menciona la tabla pero no contiene su contenido completo, di expresamente que no se puede reconstruir la lista completa con seguridad.\n"
                 "- Evita responder con un unico elemento aislado si la pregunta pide un conjunto completo.\n"
+                "- Si el contexto contiene lineas que empiezan por FILA_TABLA, tratalas como datos estructurados: respeta la relacion columna-valor y no reasignes valores a otra columna.\n"
             )
         if profile["comparison"]:
             intent_hint += "- Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
@@ -288,7 +289,10 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
         if profile["procedure"]:
             intent_hint += "- Si la pregunta pide como actuar o calcular algo, ordena la respuesta segun condiciones o pasos presentes en el contexto.\n"
         if profile["numeric"]:
-            intent_hint += "- Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
+            intent_hint += (
+                "- Si la pregunta busca un valor o limite, prioriza la cifra exacta, su unidad y la condicion aplicable.\n"
+                "- Si el valor procede de una fila de tabla, menciona el criterio de fila y columna que lo soporta, por ejemplo material, seccion, caso o ambito.\n"
+            )
         if profile["generalization"]:
             intent_hint += (
                 "- Si la pregunta pide una sintesis, alcance, funcion, criterio, cambio o consecuencia, generaliza solo a partir de hechos repetidos o explicitamente conectados en el contexto.\n"
@@ -330,9 +334,11 @@ Reglas obligatorias:
 13. Si el contexto contiene expresiones como "segun se indica mas adelante" o referencias internas incompletas, no las copies literalmente; resume la condicion recuperada y aclara si falta el detalle posterior.
 14. No conviertas un requisito de una ITC, tabla, emplazamiento o caso concreto en requisito general de todas las instalaciones.
 15. Si el contexto recuperado trae varios fragmentos complementarios del mismo apartado, integralo en una unica respuesta; no digas que no hay informacion suficiente solo porque un fragmento aislado sea parcial.
-16. Responde en texto plano. No uses formato markdown: sin asteriscos ni cabeceras. Si la respuesta es una lista, usa lineas numeradas simples 1. 2. 3.; si no es una lista, escribe frases completas que terminen con punto.
-17. Maxima precision: distingue entre dato literal, sintesis razonable y falta de evidencia. No presentes una inferencia como si fuera una cita literal.
-18. Generalizacion controlada: puedes sintetizar una regla, funcion o criterio comun solo cuando el contexto lo soporte; conserva siempre condiciones, excepciones, ambito y vigencia.
+16. Si aparecen filas estructuradas "FILA_TABLA", usa cada par columna: valor como fuente prioritaria para consultas numericas o tabulares; no mezcles columnas de filas distintas.
+17. Si el usuario menciona una pagina, tabla, apartado o ITC concreta y el contexto la contiene, responde desde esa referencia antes que desde fragmentos parecidos.
+18. Responde en texto plano. No uses formato markdown: sin asteriscos ni cabeceras. Si la respuesta es una lista, usa lineas numeradas simples 1. 2. 3.; si no es una lista, escribe frases completas que terminen con punto.
+19. Maxima precision: distingue entre dato literal, sintesis razonable y falta de evidencia. No presentes una inferencia como si fuera una cita literal.
+20. Generalizacion controlada: puedes sintetizar una regla, funcion o criterio comun solo cuando el contexto lo soporte; conserva siempre condiciones, excepciones, ambito y vigencia.
 {definition_hint}
 {intent_hint}
 
