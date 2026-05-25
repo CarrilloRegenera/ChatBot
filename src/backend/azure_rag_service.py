@@ -9,6 +9,7 @@ from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.models import VectorizedQuery
 from azure.storage.blob import BlobServiceClient
+from blob_scope_config import configured_blob_scopes
 
 from config import (
     AZURE_SEARCH_ENDPOINT,
@@ -76,23 +77,14 @@ def _container_client():
     return blob_service.get_container_client(BLOB_CONTAINER_NAME)
 
 
-def _normalize_prefix(prefix: str) -> str:
-    cleaned = (prefix or "").strip().strip("/")
-    return f"{cleaned}/" if cleaned else ""
-
-
 def _configured_blob_scopes() -> List[Tuple[str, str]]:
-    configured = [
-        ("alta_tension", _normalize_prefix(BLOB_PREFIX_ALTA_TENSION)),
-        ("baja_tension", _normalize_prefix(BLOB_PREFIX_BAJA_TENSION)),
-        ("guias_tecnicas", _normalize_prefix(BLOB_PREFIX_GUIAS_TECNICAS)),
-        ("rite", _normalize_prefix(BLOB_PREFIX_RITE)),
-    ]
-    active = [(category, prefix) for category, prefix in configured if prefix]
-    if active:
-        return active
-    fallback_prefix = _normalize_prefix(BLOB_PREFIX)
-    return [("", fallback_prefix)]
+    return configured_blob_scopes(
+        BLOB_PREFIX,
+        BLOB_PREFIX_ALTA_TENSION,
+        BLOB_PREFIX_BAJA_TENSION,
+        BLOB_PREFIX_GUIAS_TECNICAS,
+        BLOB_PREFIX_RITE,
+    )
 
 
 def _category_for_blob(blob_name: str, configured_category: str) -> str:

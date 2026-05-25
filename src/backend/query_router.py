@@ -51,6 +51,21 @@ TECHNICAL_HINTS = {
     "puesta a tierra", "pararrayos", "documentacion", "memoria tecnica", "certificado",
 }
 
+BUSINESS_LICITACIONES_HINTS = {
+    "licitacion", "licitaciones", "oferta", "adjudicacion", "adjudicada",
+    "fecha de adjudicacion", "fecha de presentacion", "fecha de apertura",
+}
+
+BUSINESS_PRODUCCION_HINTS = {
+    "produccion", "obra", "control de obras", "cartera", "responsable",
+    "cuatrimestre", "rentabilidad", "codigo obra",
+}
+
+BUSINESS_COMMON_HINTS = {
+    "importe contratado", "cliente", "estado", "comentarios",
+    "numero proyecto", "numero oferta", "tipo obra",
+}
+
 
 def _normalize(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
@@ -104,5 +119,17 @@ def classify_question(question: str) -> Dict[str, str]:
             "route": "out_of_scope",
             "message": "Esa pregunta parece fuera del alcance documental actual. Haz una consulta tecnica sobre la documentacion cargada.",
         }
+
+    if any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):
+        return {"route": "business_licitaciones", "message": ""}
+
+    if "importe contratado" in normalized:
+        return {"route": "business_licitaciones", "message": ""}
+
+    if any(hint in normalized for hint in BUSINESS_PRODUCCION_HINTS):
+        return {"route": "business_produccion", "message": ""}
+
+    if any(hint in normalized for hint in BUSINESS_COMMON_HINTS):
+        return {"route": "business_licitaciones", "message": ""}
 
     return {"route": "knowledge", "message": ""}

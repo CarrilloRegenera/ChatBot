@@ -6,8 +6,10 @@ from typing import Dict, List
 from fastapi import APIRouter, HTTPException, Request
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
-from config import ADMIN_API_KEY, CONVERSATION_LOCK_TIMEOUT_SECS
+from business_query_service import answer_business_question, detect_business_route
+from config import ADMIN_API_KEY, ADMIN_PANEL_ALLOWED_EMAILS, CONVERSATION_LOCK_TIMEOUT_SECS, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
 from database import db_conn
+from entra_auth import validate_entra_token
 from memory_service import (
     get_admin_metrics,
     get_admin_503_metrics,
@@ -34,6 +36,42 @@ _lock_last_used: Dict[int, float] = {}
 _last_lock_cleanup: float = 0.0
 _LOCK_TTL = 1800
 _LOCK_CLEANUP_INTERVAL = 300
+
+
+def _normalize_chat_mode(value: str | None) -> str:
+    return "business" if (value or "").strip().lower() == "business" else "technical"
+
+
+def _infer_chat_mode_from_title(title: str | None) -> str:
+    normalized = (title or "").strip().lower()
+    return "business" if "negocio" in normalized else "technical"
+
+
+def _get_conversation_chat_mode(conversation_id: int) -> str:
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT ChatMode, Titulo FROM Conversaciones WHERE Id = ?", conversation_id)
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+    return _normalize_chat_mode(row[0] or _infer_chat_mode_from_title(row[1]))
+
+
+def _build_cross_mode_message(chat_mode: str, route: str) -> str:
+    if chat_mode == "business":
+        return (
+            "Este chatbot de negocio solo responde consultas de Licitaciones y Produccion. "
+            "Vuelve al selector y usa el chatbot reglamento tecnico para preguntas documentales o normativas."
+        )
+    if route in {"business_licitaciones", "business_produccion"}:
+        return (
+            "Este chatbot reglamento tecnico solo responde sobre normativa y documentacion tecnica. "
+            "Vuelve al selector y usa el chatbot de negocio para consultar Licitaciones o Produccion."
+        )
+    return (
+        "Este chatbot reglamento tecnico solo responde sobre normativa y documentacion tecnica. "
+        "Formula una consulta tecnica relacionada con REBT, RITE, RALT o los documentos cargados."
+    )
 
 
 def _q_preview(text: str, size: int = 90) -> str:
@@ -117,25 +155,49 @@ def _save_chat_message(conversation_id: int, question: str, response: str, elaps
 
 
 def _assert_admin(request: Request) -> None:
+    auth_header = (request.headers.get("authorization") or "").strip()
+    if ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            claims = validate_entra_token(token)
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail=f"Token Entra no válido: {exc}") from exc
+        email = (
+            claims.get("preferred_username")
+            or claims.get("email")
+            or claims.get("upn")
+            or ""
+        ).strip().lower()
+        if email and email in ADMIN_PANEL_ALLOWED_EMAILS:
+            return
+        raise HTTPException(status_code=403, detail="Acceso solo para administradores de Entra")
+
     admin_key = (request.headers.get("x-admin-key") or "").strip()
     role = (request.headers.get("x-user-role") or "").strip().lower()
+    user_name = (request.headers.get("x-user-name") or "").strip().lower()
+    user_email = (request.headers.get("x-user-email") or "").strip().lower()
+    auth_provider = (request.headers.get("x-auth-provider") or "").strip().lower()
     if ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Acceso admin denegado")
-    if role != "administrador":
+    is_local_admin = auth_provider == "local" and user_name == "admin"
+    is_allowed_entra_email = bool(user_email and user_email in ADMIN_PANEL_ALLOWED_EMAILS)
+    if role != "administrador" or not (is_local_admin or is_allowed_entra_email):
         raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
 
 
 @router.post("/conversations")
 def create_conversation(data: ConversationRequest):
+    chat_mode = _normalize_chat_mode(data.chat_mode)
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO Conversaciones (UsuarioId, Titulo) OUTPUT INSERTED.Id VALUES (?, ?)",
+            "INSERT INTO Conversaciones (UsuarioId, Titulo, ChatMode) OUTPUT INSERTED.Id VALUES (?, ?, ?)",
             data.user_id,
             data.title,
+            chat_mode,
         )
         conversation_id = cursor.fetchone()[0]
-    return {"message": "Conversacion Creada", "conversation_id": conversation_id}
+    return {"message": "Conversacion Creada", "conversation_id": conversation_id, "chat_mode": chat_mode}
 
 
 @router.delete("/conversations/{conversation_id}")
@@ -157,7 +219,7 @@ def delete_conversation(conversation_id: int):
 
 
 @router.post("/messages")
-def send_message(data: MessageRequest):
+def send_message(data: MessageRequest, request: Request):
     conversation_lock = _get_conversation_lock(data.conversation_id)
     acquired = conversation_lock.acquire(timeout=CONVERSATION_LOCK_TIMEOUT_SECS)
     if not acquired:
@@ -177,10 +239,61 @@ def send_message(data: MessageRequest):
 
     try:
         start = time.time()
+        chat_mode = _get_conversation_chat_mode(data.conversation_id)
         stage_router_start = time.time()
         route_info = classify_question(data.question)
         route = route_info["route"]
+        business_route_hint = detect_business_route(data.question)
+        if business_route_hint:
+            route = business_route_hint
         router_ms = int((time.time() - stage_router_start) * 1000)
+
+        if chat_mode == "business":
+            if route not in {"business_licitaciones", "business_produccion"}:
+                response = _build_cross_mode_message(chat_mode, route)
+                elapsed = int((time.time() - start) * 1000)
+                db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
+                _log_chat_event(
+                    event="CHAT",
+                    conversation_id=data.conversation_id,
+                    route="business_scope_mismatch",
+                    from_memory=False,
+                    confidence=1.0,
+                    sources_count=0,
+                    elapsed_ms=elapsed,
+                    question=data.question,
+                    extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+                )
+                return {
+                    "question": data.question,
+                    "response": response,
+                    "confidence": 1.0,
+                    "from_memory": False,
+                    "route": "business_scope_mismatch",
+                }
+        else:
+            if route in {"business_licitaciones", "business_produccion"}:
+                response = _build_cross_mode_message(chat_mode, route)
+                elapsed = int((time.time() - start) * 1000)
+                db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
+                _log_chat_event(
+                    event="CHAT",
+                    conversation_id=data.conversation_id,
+                    route="technical_scope_mismatch",
+                    from_memory=False,
+                    confidence=1.0,
+                    sources_count=0,
+                    elapsed_ms=elapsed,
+                    question=data.question,
+                    extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+                )
+                return {
+                    "question": data.question,
+                    "response": response,
+                    "confidence": 1.0,
+                    "from_memory": False,
+                    "route": "technical_scope_mismatch",
+                }
 
         if route in {"invalid", "smalltalk", "out_of_scope"}:
             response = route_info["message"]
@@ -203,6 +316,39 @@ def send_message(data: MessageRequest):
                 "confidence": 1.0 if route in {"invalid", "smalltalk"} else 0.9,
                 "from_memory": False,
                 "route": route,
+            }
+
+        if route in {"business_licitaciones", "business_produccion"}:
+            auth_header = (request.headers.get("authorization") or "").strip()
+            user_token = auth_header.split(" ", 1)[1].strip() if auth_header.lower().startswith("bearer ") else None
+            business_result = answer_business_question(
+                data.question,
+                user_token=user_token,
+                preferred_route=route,
+                history=_get_recent_history(data.conversation_id, limit=6),
+            )
+            business_route = business_result.get("route", route)
+            response = business_result["response"]
+            elapsed = int((time.time() - start) * 1000)
+            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
+            _log_chat_event(
+                event="CHAT",
+                conversation_id=data.conversation_id,
+                route=business_route,
+                from_memory=False,
+                confidence=float(business_result.get("confidence", 1.0)),
+                sources_count=len(business_result.get("sources", [])),
+                elapsed_ms=elapsed,
+                question=data.question,
+                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+            )
+            return {
+                "question": data.question,
+                "response": response,
+                "confidence": float(business_result.get("confidence", 1.0)),
+                "from_memory": False,
+                "sources": business_result.get("sources", []),
+                "route": business_route,
             }
 
         context = ""
@@ -405,7 +551,7 @@ def list_conversations(user_id: int):
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT Id, Titulo, Estado, FechaCreacion FROM Conversaciones WHERE UsuarioId = ?",
+            "SELECT Id, Titulo, Estado, FechaCreacion, ChatMode FROM Conversaciones WHERE UsuarioId = ?",
             user_id,
         )
         rows = cursor.fetchall()
@@ -418,6 +564,7 @@ def list_conversations(user_id: int):
                 "title": row[1],
                 "status": row[2],
                 "date": str(row[3]),
+                "mode": _normalize_chat_mode(row[4] or _infer_chat_mode_from_title(row[1])),
             }
         )
     return {"conversations": conversations}

@@ -21,51 +21,236 @@ function resolveApiBaseUrl() {
 }
 
 const API = resolveApiBaseUrl();
+function resolveSpaRedirectUri() {
+    const url = new URL(window.location.href);
+    url.hash = "";
+    url.search = "";
+
+    if (!url.pathname.endsWith("/")) {
+        const lastSlashIndex = url.pathname.lastIndexOf("/");
+        url.pathname = lastSlashIndex >= 0 ? url.pathname.slice(0, lastSlashIndex + 1) : "/";
+    }
+
+    return url.toString();
+}
+
+const SPA_REDIRECT_URI = resolveSpaRedirectUri();
+function getChatbotConfig() {
+    return window.CHATBOT_CONFIG || {};
+}
+
+function isTruthyConfig(value) {
+    return value === true || ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function getEntraConfig() {
+    const config = getChatbotConfig();
+    return {
+        enabled: isTruthyConfig(config.ENTRA_ENABLED),
+        tenantId: String(config.ENTRA_TENANT_ID || "").trim(),
+        clientId: String(config.ENTRA_CLIENT_ID || "").trim(),
+        apiScope: String(config.ENTRA_API_SCOPE || "").trim(),
+    };
+}
+
+const ENTRA_CONFIG = getEntraConfig();
+let msalClientPromise = null;
+let entraRedirectHandled = false;
+const ENTRA_SKIP_AUTOLOGIN_ONCE_KEY = "chatbot_entra_skip_autologin_once";
+
+async function getMsalClient() {
+    if (!ENTRA_CONFIG.enabled) {
+        throw new Error("Entra ID no está habilitado");
+    }
+    if (!ENTRA_CONFIG.tenantId || !ENTRA_CONFIG.clientId) {
+        throw new Error("Falta la configuración de Entra ID en config.js");
+    }
+    if (!window.msal?.PublicClientApplication) {
+        throw new Error("MSAL no está disponible en el navegador");
+    }
+    if (!msalClientPromise) {
+        msalClientPromise = (async () => {
+            const client = new window.msal.PublicClientApplication({
+                auth: {
+                    clientId: ENTRA_CONFIG.clientId,
+                    authority: `https://login.microsoftonline.com/${ENTRA_CONFIG.tenantId}`,
+                    redirectUri: SPA_REDIRECT_URI,
+                    postLogoutRedirectUri: SPA_REDIRECT_URI,
+                    navigateToLoginRequestUrl: false,
+                },
+                cache: {
+                    cacheLocation: "sessionStorage",
+                },
+            });
+            await client.initialize();
+            return client;
+        })();
+    }
+    return msalClientPromise;
+}
+
+async function finalizeEntraSession(token) {
+    const loadingLabel = document.getElementById("loading-overlay-message");
+    if (loadingLabel) loadingLabel.textContent = "Completando acceso con Microsoft...";
+    const res = await fetch(`${API}/login/entra`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+        },
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data?.detail || "No se pudo completar el login con Microsoft");
+    }
+
+    currentUser = {
+        ...data.usuario,
+        authProvider: "entra",
+        authToken: token,
+    };
+    currentConversation = null;
+    activeChatMode = null;
+    setUserChrome();
+    saveSession();
+    updateAdminVisibility();
+    showModeSelector();
+}
+
+async function handleEntraRedirect() {
+    if (!ENTRA_CONFIG.enabled || entraRedirectHandled) {
+        return;
+    }
+    entraRedirectHandled = true;
+
+    const msalClient = await getMsalClient();
+    const result = await msalClient.handleRedirectPromise();
+    if (!result) {
+        return;
+    }
+
+    const loadingLabel = document.getElementById("loading-overlay-message");
+    if (loadingLabel) loadingLabel.textContent = "Validando acceso con Microsoft...";
+    msalClient.setActiveAccount(result.account);
+    const entraToken = result.accessToken || result.idToken;
+    if (!entraToken) {
+        throw new Error("No se ha recibido token de Entra");
+    }
+
+    await finalizeEntraSession(entraToken);
+}
+
+function updateEntraLoginVisibility() {
+    const entraButton = document.getElementById("entra-login-btn");
+    const entraNote = document.getElementById("entra-login-note");
+    if (entraButton) {
+        entraButton.classList.toggle("hidden", !ENTRA_CONFIG.enabled);
+        entraButton.disabled = false;
+    }
+    if (entraNote) {
+        entraNote.textContent = "";
+        entraNote.classList.add("hidden");
+    }
+    document.querySelectorAll(".local-auth-only").forEach((element) => {
+        element.classList.remove("hidden");
+    });
+}
+
 function getAdminHeaders() {
     const headers = {};
-    const adminKey = (window.CHATBOT_CONFIG?.ADMIN_API_KEY || "").trim();
+    const adminKey = (getChatbotConfig().ADMIN_API_KEY || "").trim();
     if (adminKey) headers["x-admin-key"] = adminKey;
     if (currentUser?.rol) headers["x-user-role"] = currentUser.rol;
+    if (currentUser?.nombre) headers["x-user-name"] = currentUser.nombre;
+    if (currentUser?.email) headers["x-user-email"] = currentUser.email;
+    if (currentUser?.authProvider) headers["x-auth-provider"] = currentUser.authProvider;
+    if (currentUser?.authToken) headers["Authorization"] = `Bearer ${currentUser.authToken}`;
     return headers;
 }
+
+const ADMIN_PANEL_ALLOWED_EMAILS = new Set([
+    "jcanete@regeneraenergy.es",
+    "acarrillo@regeneraenergy.es",
+]);
+
+const CHAT_MODE_STORAGE_KEY = "chatbot_active_mode";
+const CHAT_MODE_MAP_KEY = "chatbot_conversation_modes";
+const CHAT_MODE_LAST_CONVERSATION_KEY = "chatbot_mode_last_conversations";
+const CHAT_MODES = {
+    technical: {
+        key: "technical",
+        sidebarLabel: "Chatbot reglamento técnico",
+        selectorLabel: "Reglamento técnico",
+        welcomeTitle: "¿En qué puedo ayudarte?",
+        welcomeDescription: "Pregúntame sobre normativa técnica: REBT, RALT, RITE y más.",
+        inputPlaceholder: "Escribe tu pregunta...",
+        inputDisclaimer: "REGENERA ChatBot puede cometer errores. Verifica siempre la información.",
+        newConversationTitle: "Nueva conversación",
+        suggestions: [
+            {
+                label: "Resumen RITE",
+                text: "Explica qué regula el RITE.",
+            },
+            {
+                label: "Instalaciones generadoras",
+                text: "Explícame las instalaciones generadoras de baja tensión.",
+            },
+            {
+                label: "Alta tensión",
+                text: "Explica qué regula la normativa de alta tensión.",
+            },
+        ],
+    },
+    business: {
+        key: "business",
+        sidebarLabel: "Chatbot negocio",
+        selectorLabel: "Negocio",
+        welcomeTitle: "Consulta datos de AppRegenera",
+        welcomeDescription: "Haz preguntas sobre los módulos de Licitaciones y Producción con acceso a datos de negocio.",
+        inputPlaceholder: "Pregunta por licitaciones o producción...",
+        inputDisclaimer: "Solo consulta datos de Licitaciones y Producción. Verifica siempre permisos, periodos y cifras.",
+        newConversationTitle: "Nueva conversación negocio",
+        suggestions: [
+            {
+                label: "Importe contratado C2",
+                text: "¿Qué importe contratado tiene el proyecto 26001 en el segundo cuatrimestre?",
+            },
+            {
+                label: "Cliente de licitación",
+                text: "¿Qué cliente tiene la licitación 26001?",
+            },
+            {
+                label: "Producción por mes",
+                text: "¿Qué producción tiene la obra 26001 en septiembre?",
+            },
+        ],
+    },
+};
+
 let currentUser = null;
 let currentConversation = null;
+let activeChatMode = null;
 let isSending = false;
 let activeConversationRequest = 0;
 let conversationsLoadPromise = null;
 let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
+let confirmModalResolver = null;
+let loadingStateDepth = 0;
 const PENDING_MESSAGE_KEY = "chatbot_pending_message";
 const LAST_UNLOAD_KEY = "chatbot_last_unload";
-const MOJIBAKE_REPLACEMENTS = [
-    ["Ã¡", "á"], ["Ã©", "é"], ["Ã­", "í"], ["Ã³", "ó"], ["Ãº", "ú"],
-    ["Ã", "Á"], ["Ã‰", "É"], ["Ã", "Í"], ["Ã“", "Ó"], ["Ãš", "Ú"],
-    ["Ã±", "ñ"], ["Ã‘", "Ñ"], ["Ã¼", "ü"], ["Ãœ", "Ü"],
-    ["Â¿", "¿"], ["Â¡", "¡"],
-];
-
 function normalizeMojibakeText(input) {
-    let text = String(input ?? "");
-    for (const [bad, good] of MOJIBAKE_REPLACEMENTS) {
-        text = text.split(bad).join(good);
+    const text = String(input ?? "");
+    if (!/[ÃÂâ€]/.test(text)) {
+        return text;
     }
-    return text;
-}
 
-function normalizeStaticTexts(root = document.body) {
-    if (!root) return;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    let current = walker.nextNode();
-    while (current) {
-        nodes.push(current);
-        current = walker.nextNode();
-    }
-    for (const node of nodes) {
-        const fixed = normalizeMojibakeText(node.nodeValue || "");
-        if (fixed !== node.nodeValue) {
-            node.nodeValue = fixed;
-        }
+    try {
+        const bytes = Uint8Array.from(Array.from(text), (char) => char.charCodeAt(0) & 0xff);
+        const repaired = new TextDecoder("utf-8").decode(bytes);
+        return repaired || text;
+    } catch {
+        return text;
     }
 }
 
@@ -75,14 +260,23 @@ function saveSession() {
     if (currentUser) {
         localStorage.setItem("chatbot_user", JSON.stringify(currentUser));
     }
+    if (activeChatMode) {
+        localStorage.setItem(CHAT_MODE_STORAGE_KEY, activeChatMode);
+    } else {
+        localStorage.removeItem(CHAT_MODE_STORAGE_KEY);
+    }
     if (currentConversation) {
         localStorage.setItem("chatbot_conversation_id", String(currentConversation));
+        rememberConversationForActiveMode(currentConversation);
+    } else {
+        localStorage.removeItem("chatbot_conversation_id");
     }
 }
 
 function clearSession() {
     localStorage.removeItem("chatbot_user");
     localStorage.removeItem("chatbot_conversation_id");
+    localStorage.removeItem(CHAT_MODE_STORAGE_KEY);
 }
 
 function restoreSession() {
@@ -104,6 +298,8 @@ function restoreSession() {
             currentConversation = parsed;
         }
     }
+
+    activeChatMode = normalizeChatMode(localStorage.getItem(CHAT_MODE_STORAGE_KEY)) || null;
 
     return true;
 }
@@ -146,11 +342,11 @@ function showView(view) {
     });
 
     if (view === "login") {
-        document.getElementById("login-view").classList.add("active");
-    } else if (view === "register") {
-        document.getElementById("register-view").classList.add("active");
+        document.getElementById("login-view")?.classList.add("active");
+    } else if (view === "selector") {
+        document.getElementById("selector-view")?.classList.add("active");
     } else if (view === "chat") {
-        document.getElementById("chat-view").classList.add("active");
+        document.getElementById("chat-view")?.classList.add("active");
     }
 
     document.querySelectorAll(".error-msg, .success-msg").forEach((el) => {
@@ -158,11 +354,89 @@ function showView(view) {
     });
 }
 
+function isAdminPanelAllowed() {
+    if (!currentUser) return false;
+
+    const role = String(currentUser.rol || "").toLowerCase();
+    const email = String(currentUser.email || "").trim().toLowerCase();
+    const userName = String(currentUser.nombre || "").trim().toLowerCase();
+    const authProvider = String(currentUser.authProvider || currentUser.auth_provider || "").trim().toLowerCase();
+
+    if (authProvider === "local" && userName === "admin" && role === "administrador") {
+        return true;
+    }
+
+    return role === "administrador" && ADMIN_PANEL_ALLOWED_EMAILS.has(email);
+}
+
 function updateAdminVisibility() {
     const adminTools = document.getElementById("admin-tools");
     if (!adminTools) return;
-    const isAdmin = currentUser && (currentUser.rol || "").toLowerCase() === "administrador";
-    adminTools.classList.toggle("hidden", !isAdmin);
+    adminTools.classList.toggle("hidden", !isAdminPanelAllowed());
+}
+
+function setLoadingState(active, message = "Cargando...") {
+    const overlay = document.getElementById("loading-overlay");
+    const label = document.getElementById("loading-overlay-message");
+    if (!overlay || !label) return;
+
+    if (active) {
+        loadingStateDepth += 1;
+        label.textContent = message;
+        overlay.classList.remove("hidden");
+        overlay.setAttribute("aria-hidden", "false");
+        document.body.classList.add("app-loading");
+        return;
+    }
+
+    loadingStateDepth = Math.max(0, loadingStateDepth - 1);
+    if (loadingStateDepth === 0) {
+        overlay.classList.add("hidden");
+        overlay.setAttribute("aria-hidden", "true");
+        document.body.classList.remove("app-loading");
+    }
+}
+
+function openConfirmModal(message, options = {}) {
+    const modal = document.getElementById("confirm-modal");
+    const messageNode = document.getElementById("confirm-modal-message");
+    const titleNode = document.getElementById("confirm-modal-title");
+    const acceptButton = document.getElementById("confirm-modal-accept");
+    const cancelButton = document.getElementById("confirm-modal-cancel");
+
+    if (!modal || !messageNode || !titleNode || !acceptButton || !cancelButton) {
+        return Promise.resolve(window.confirm(message));
+    }
+
+    if (confirmModalResolver) {
+        confirmModalResolver(false);
+        confirmModalResolver = null;
+    }
+
+    titleNode.textContent = options.title || "Confirmar acción";
+    messageNode.textContent = message;
+    acceptButton.textContent = options.acceptLabel || "Aceptar";
+    cancelButton.textContent = options.cancelLabel || "Cancelar";
+
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+
+    return new Promise((resolve) => {
+        confirmModalResolver = resolve;
+    });
+}
+
+function closeConfirmModal(confirmed) {
+    const modal = document.getElementById("confirm-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+        modal.setAttribute("aria-hidden", "true");
+    }
+
+    if (confirmModalResolver) {
+        confirmModalResolver(Boolean(confirmed));
+        confirmModalResolver = null;
+    }
 }
 
 function showWelcomeState() {
@@ -187,8 +461,8 @@ function renderConversationItem(conv) {
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "conversation-delete-btn";
     deleteBtn.type = "button";
-    deleteBtn.title = "Borrar conversacion";
-    deleteBtn.setAttribute("aria-label", `Borrar conversacion ${conv.title}`);
+    deleteBtn.title = "Borrar conversación";
+    deleteBtn.setAttribute("aria-label", `Borrar conversación ${conv.title}`);
     deleteBtn.textContent = "x";
     deleteBtn.onclick = (event) => {
         event.stopPropagation();
@@ -217,6 +491,7 @@ async function login() {
     }
 
     try {
+        setLoadingState(true, "Iniciando sesion...");
         const res = await fetch(`${API}/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -227,85 +502,253 @@ async function login() {
 
         if (res.ok) {
             currentUser = data.usuario;
-            document.getElementById("user-name-display").textContent = currentUser.nombre;
-            document.getElementById("user-avatar").textContent = currentUser.nombre.charAt(0).toUpperCase();
+            currentUser.authProvider = "local";
+            currentConversation = null;
+            activeChatMode = null;
+            setUserChrome();
             saveSession();
-            showView("chat");
             updateAdminVisibility();
-            await loadConversations();
+            showModeSelector();
         } else {
             document.getElementById("login-error").textContent = data.detail;
         }
     } catch {
-        document.getElementById("login-error").textContent = "Error de conexion con el servidor";
+        document.getElementById("login-error").textContent = "Error de conexión con el servidor.";
+    } finally {
+        setLoadingState(false);
     }
 }
 
-async function register() {
-    const name = document.getElementById("register-name").value.trim();
-    const email = document.getElementById("register-email").value.trim();
-    const password = document.getElementById("register-password").value;
+function showModeSelector() {
+    activeChatMode = null;
+    saveSession();
+    showView("selector");
+}
 
-    if (!name || !email || !password) {
-        document.getElementById("register-error").textContent = "Rellena todos los campos";
-        return;
+function goToChatSelector() {
+    if (isSending) return;
+    showModeSelector();
+}
+
+function askSuggestionFromChip(index) {
+    const suggestion = getActiveChatModeConfig().suggestions[index];
+    if (suggestion) {
+        askSuggestion(suggestion.text);
     }
+}
 
-    if (password.length < 6) {
-        document.getElementById("register-error").textContent = "La contrasena debe tener al menos 6 caracteres";
-        return;
+async function enterChatMode(mode) {
+    if (!currentUser) return;
+    activeChatMode = normalizeChatMode(mode) || "technical";
+    updateModeCopy();
+    showView("chat");
+    updateAdminVisibility();
+    saveSession();
+    setLoadingState(true, activeChatMode === "business" ? "Abriendo chatbot de negocio..." : "Abriendo chatbot tecnico...");
+    try {
+        await loadConversations();
+    } finally {
+        setLoadingState(false);
+    }
+}
+
+function normalizeChatMode(mode) {
+    return mode === "business" ? "business" : mode === "technical" ? "technical" : null;
+}
+
+function getActiveChatModeConfig() {
+    return CHAT_MODES[normalizeChatMode(activeChatMode) || "technical"];
+}
+
+function readJsonStorage(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function getConversationModeMap() {
+    return readJsonStorage(CHAT_MODE_MAP_KEY, {});
+}
+
+function saveConversationModeMap(map) {
+    localStorage.setItem(CHAT_MODE_MAP_KEY, JSON.stringify(map));
+}
+
+function setConversationMode(conversationId, mode) {
+    if (!conversationId) return;
+    const map = getConversationModeMap();
+    map[String(conversationId)] = mode;
+    saveConversationModeMap(map);
+}
+
+function clearConversationMode(conversationId) {
+    if (!conversationId) return;
+    const map = getConversationModeMap();
+    delete map[String(conversationId)];
+    saveConversationModeMap(map);
+}
+
+function getStoredConversationMode(conversationId) {
+    if (!conversationId) return null;
+    const map = getConversationModeMap();
+    return normalizeChatMode(map[String(conversationId)]);
+}
+
+function getModeConversationMemory() {
+    return readJsonStorage(CHAT_MODE_LAST_CONVERSATION_KEY, {});
+}
+
+function saveModeConversationMemory(memory) {
+    localStorage.setItem(CHAT_MODE_LAST_CONVERSATION_KEY, JSON.stringify(memory));
+}
+
+function rememberConversationForActiveMode(conversationId) {
+    if (!conversationId || !activeChatMode) return;
+    const memory = getModeConversationMemory();
+    memory[activeChatMode] = conversationId;
+    saveModeConversationMemory(memory);
+}
+
+function forgetConversationForMode(conversationId) {
+    if (!conversationId) return;
+    const memory = getModeConversationMemory();
+    for (const [mode, storedId] of Object.entries(memory)) {
+        if (storedId === conversationId) {
+            delete memory[mode];
+        }
+    }
+    saveModeConversationMemory(memory);
+}
+
+function getRememberedConversationForMode(mode) {
+    const memory = getModeConversationMemory();
+    const remembered = memory[mode];
+    return Number.isInteger(remembered) ? remembered : parseInt(remembered, 10) || null;
+}
+
+function shouldShowConversationInActiveMode(conv) {
+    const mode = normalizeChatMode(conv.mode) || getStoredConversationMode(conv.id) || "technical";
+    if (activeChatMode === "business") {
+        return mode === "business";
+    }
+    return mode !== "business";
+}
+
+function updateModeCopy() {
+    const config = getActiveChatModeConfig();
+    const sidebarModeLabel = document.getElementById("sidebar-mode-label");
+    const mobileModeLabel = document.getElementById("mobile-mode-label");
+    const chatModePill = document.getElementById("chat-mode-pill");
+    const welcomeTitle = document.getElementById("chat-welcome-title");
+    const welcomeDescription = document.getElementById("chat-welcome-description");
+    const questionInput = document.getElementById("question-input");
+    const disclaimer = document.getElementById("chat-input-disclaimer");
+
+    if (sidebarModeLabel) sidebarModeLabel.textContent = config.sidebarLabel;
+    if (mobileModeLabel) mobileModeLabel.textContent = config.sidebarLabel;
+    if (chatModePill) chatModePill.textContent = config.selectorLabel;
+    if (welcomeTitle) welcomeTitle.textContent = config.welcomeTitle;
+    if (welcomeDescription) welcomeDescription.textContent = config.welcomeDescription;
+    if (questionInput) questionInput.placeholder = config.inputPlaceholder;
+    if (disclaimer) disclaimer.textContent = config.inputDisclaimer;
+
+    config.suggestions.forEach((suggestion, index) => {
+        const chip = document.getElementById(`suggestion-chip-${index + 1}`);
+        if (chip) {
+            chip.textContent = suggestion.label;
+        }
+    });
+}
+
+function setUserChrome() {
+    if (!currentUser) return;
+    const displayName = normalizeMojibakeText(currentUser.nombre || "Usuario");
+    const initial = displayName.charAt(0).toUpperCase() || "U";
+
+    document.getElementById("user-name-display").textContent = displayName;
+    document.getElementById("user-avatar").textContent = initial;
+
+    const selectorUserName = document.getElementById("selector-user-name");
+    const selectorUserAvatar = document.getElementById("selector-user-avatar");
+    if (selectorUserName) selectorUserName.textContent = displayName;
+    if (selectorUserAvatar) selectorUserAvatar.textContent = initial;
+}
+
+async function loginWithEntra() {
+    const loginError = document.getElementById("login-error");
+    const entraNote = document.getElementById("entra-login-note");
+    if (loginError) loginError.textContent = "";
+    if (entraNote) {
+        entraNote.textContent = "";
+        entraNote.classList.add("hidden");
     }
 
     try {
-        const res = await fetch(`${API}/registro`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nombre: name, email, password }),
-        });
-
-        const data = await res.json();
-
-        if (res.ok) {
-            document.getElementById("register-error").textContent = "";
-            document.getElementById("register-success").textContent = "Cuenta creada correctamente. Ya puedes iniciar sesion.";
-            setTimeout(() => showView("login"), 2000);
-        } else {
-            document.getElementById("register-success").textContent = "";
-            document.getElementById("register-error").textContent = data.detail;
+        if (!window.msal?.PublicClientApplication) {
+            throw new Error("El acceso con Microsoft no está disponible ahora mismo en este navegador. Usa si quieres el acceso local.");
         }
-    } catch {
-        document.getElementById("register-error").textContent = "Error de conexion con el servidor";
+        setLoadingState(true, "Redirigiendo a Microsoft...");
+        const msalClient = await getMsalClient();
+        const scopes = ENTRA_CONFIG.apiScope ? [ENTRA_CONFIG.apiScope] : ["openid", "profile", "email"];
+        await msalClient.loginRedirect({ scopes, prompt: "select_account" });
+    } catch (err) {
+        setLoadingState(false);
+        if (loginError) {
+            loginError.textContent = err?.message || "No se pudo iniciar sesión con Microsoft. Usa si quieres el acceso local.";
+        }
+        if (entraNote) {
+            entraNote.textContent = err?.message || "No se pudo iniciar sesión con Microsoft.";
+            entraNote.classList.remove("hidden");
+        }
     }
 }
 
 function logout() {
     if (isSending) return;
+    const wasEntraSession = currentUser?.authProvider === "entra";
+    setLoadingState(true, "Cerrando sesion...");
     currentUser = null;
     currentConversation = null;
+    activeChatMode = null;
     clearSession();
     document.getElementById("chat-messages").innerHTML = "";
     document.getElementById("conversation-list").innerHTML = "";
     showWelcomeState();
+    closeConfirmModal(false);
     closeAdminPanel();
     closeAdmin503Modal();
     setSendingState(false);
     showView("login");
+    if (wasEntraSession) {
+        sessionStorage.setItem(ENTRA_SKIP_AUTOLOGIN_ONCE_KEY, "1");
+        getMsalClient()
+            .then((client) => client.logoutPopup({ postLogoutRedirectUri: SPA_REDIRECT_URI }))
+            .catch(() => {})
+            .finally(() => window.location.assign(SPA_REDIRECT_URI));
+        return;
+    }
+    window.location.assign(SPA_REDIRECT_URI);
 }
 
 // ===== CONVERSATIONS =====
 
 async function createConversation(reloadList = true) {
-    if (!currentUser || isSending) return;
+    if (!currentUser || !activeChatMode || isSending) return;
 
     try {
+        const config = getActiveChatModeConfig();
         const res = await fetch(`${API}/conversations`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: currentUser.id, title: "Nueva conversacion" }),
+            body: JSON.stringify({ user_id: currentUser.id, title: config.newConversationTitle, chat_mode: activeChatMode }),
         });
 
         const data = await res.json();
         currentConversation = data.conversation_id;
+        setConversationMode(currentConversation, normalizeChatMode(data.chat_mode) || activeChatMode);
         saveSession();
 
         document.getElementById("chat-messages").innerHTML = "";
@@ -320,7 +763,7 @@ async function createConversation(reloadList = true) {
 }
 
 async function loadConversations() {
-    if (!currentUser) return;
+    if (!currentUser || !activeChatMode) return;
 
     if (conversationsLoadPromise) {
         return conversationsLoadPromise;
@@ -332,19 +775,22 @@ async function loadConversations() {
         const data = await res.json();
 
         const list = document.getElementById("conversation-list");
+        const allConversations = data.conversations || [];
+        allConversations.forEach((conv) => setConversationMode(conv.id, normalizeChatMode(conv.mode) || "technical"));
+        let conversations = allConversations.filter(shouldShowConversationInActiveMode);
         list.innerHTML = "";
 
-        data.conversations.forEach((conv) => {
+        conversations.forEach((conv) => {
             list.appendChild(renderConversationItem(conv));
         });
-
-        let conversations = data.conversations || [];
 
         if (conversations.length === 0) {
             await createConversation(false);
             const retryRes = await fetch(`${API}/conversations/${currentUser.id}`);
             const retryData = await retryRes.json();
-            conversations = retryData.conversations || [];
+            const retryAllConversations = retryData.conversations || [];
+            retryAllConversations.forEach((conv) => setConversationMode(conv.id, normalizeChatMode(conv.mode) || "technical"));
+            conversations = retryAllConversations.filter(shouldShowConversationInActiveMode);
 
             list.innerHTML = "";
             conversations.forEach((conv) => {
@@ -353,9 +799,11 @@ async function loadConversations() {
         }
 
         if (conversations.length > 0) {
-            const currentConv = conversations.find((conv) => conv.id === currentConversation);
-            if (currentConv) {
-                await selectConversation(currentConv.id, currentConv.title);
+            const rememberedId = getRememberedConversationForMode(activeChatMode);
+            const preferredId = currentConversation || rememberedId;
+            const preferredConversation = conversations.find((conv) => conv.id === preferredId);
+            if (preferredConversation) {
+                await selectConversation(preferredConversation.id, preferredConversation.title);
             } else {
                 const first = conversations[0];
                 await selectConversation(first.id, first.title);
@@ -414,7 +862,14 @@ async function selectConversation(id) {
 
 async function deleteConversation(conversationId, title) {
     if (!currentUser || isSending) return;
-    const confirmed = window.confirm(`Quieres borrar la conversacion "${title}"?`);
+    const confirmed = await openConfirmModal(
+        `¿Quieres borrar la conversación "${title}"? Esta acción no se puede deshacer.`,
+        {
+            title: "Eliminar conversación",
+            acceptLabel: "Eliminar",
+            cancelLabel: "Cancelar",
+        },
+    );
     if (!confirmed) return;
 
     try {
@@ -423,10 +878,12 @@ async function deleteConversation(conversationId, title) {
         });
         const data = await res.json();
         if (!res.ok) {
-            throw new Error(data?.detail || "No se pudo borrar la conversacion.");
+            throw new Error(data?.detail || "No se pudo borrar la conversación.");
         }
 
         const wasCurrent = currentConversation === conversationId;
+        clearConversationMode(conversationId);
+        forgetConversationForMode(conversationId);
         if (wasCurrent) {
             currentConversation = null;
             activeConversationRequest += 1;
@@ -437,7 +894,7 @@ async function deleteConversation(conversationId, title) {
 
         await loadConversations();
     } catch (err) {
-        alert(err?.message || "No se pudo borrar la conversacion.");
+        alert(err?.message || "No se pudo borrar la conversación.");
     }
 }
 
@@ -522,6 +979,8 @@ function setSendingState(sending) {
     const newChatBtn = document.querySelector(".new-chat-btn");
     const logoutBtn = document.querySelector(".logout-btn");
     const adminBtn = document.querySelector(".admin-panel-btn");
+    const modeSwitchBtn = document.querySelector(".mode-switch-btn");
+    const mobileModeBackBtn = document.querySelector(".mobile-mode-back-btn");
     const suggestionButtons = document.querySelectorAll(".chip");
     const conversationItems = document.querySelectorAll(".conversation-item");
     const deleteButtons = document.querySelectorAll(".conversation-delete-btn");
@@ -554,6 +1013,16 @@ function setSendingState(sending) {
     if (adminBtn) {
         adminBtn.disabled = sending;
         adminBtn.setAttribute("aria-disabled", sending ? "true" : "false");
+    }
+
+    if (modeSwitchBtn) {
+        modeSwitchBtn.disabled = sending;
+        modeSwitchBtn.setAttribute("aria-disabled", sending ? "true" : "false");
+    }
+
+    if (mobileModeBackBtn) {
+        mobileModeBackBtn.disabled = sending;
+        mobileModeBackBtn.setAttribute("aria-disabled", sending ? "true" : "false");
     }
 
     suggestionButtons.forEach((button) => {
@@ -611,8 +1080,8 @@ async function sendMessage() {
 
         const res = await fetch(`${API}/messages`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ conversation_id: conversationId, question }),
+            headers: { "Content-Type": "application/json", ...getAdminHeaders() },
+            body: JSON.stringify({ conversation_id: conversationId, question, chat_mode: activeChatMode }),
         });
 
         const data = await res.json();
@@ -635,7 +1104,7 @@ async function sendMessage() {
         const titleEl = activeItem ? activeItem.querySelector(".conversation-title") : null;
         const currentTitle = titleEl ? titleEl.textContent.trim() : "";
 
-        if (titleEl && (currentTitle === "Nueva conversacion" || currentTitle === "Nueva conversación")) {
+        if (titleEl && currentTitle === getActiveChatModeConfig().newConversationTitle) {
             const shortTitle = question.length > 30 ? question.substring(0, 30) + "..." : question;
             titleEl.textContent = shortTitle;
             fetch(`${API}/conversations/${conversationId}/title`, {
@@ -652,7 +1121,7 @@ async function sendMessage() {
         });
     } catch (err) {
         removeTypingIndicator();
-        appendMessage("assistant", err?.message || "Error de conexion con el servidor.");
+        appendMessage("assistant", err?.message || "Error de conexión con el servidor.");
         clearPendingMessage();
     } finally {
         setSendingState(false);
@@ -683,7 +1152,7 @@ function autoResize(el) {
 
 function openAdminPanel() {
     if (isSending) return;
-    if (!currentUser || (currentUser.rol || "").toLowerCase() !== "administrador") {
+    if (!isAdminPanelAllowed()) {
         alert("Solo disponible para administradores.");
         return;
     }
@@ -1010,21 +1479,40 @@ async function rejectInteraction(interactionId) {
 // ===== INIT =====
 
 document.addEventListener("DOMContentLoaded", () => {
-    normalizeStaticTexts();
+    updateEntraLoginVisibility();
+    updateModeCopy();
     const unloadMark = consumePageUnloadMark();
     if (unloadMark) {
-        console.warn("La pagina se recargo o descargo durante la sesion:", unloadMark);
+        console.warn("La página se recargó o descargó durante la sesión:", unloadMark);
     }
-    if (restoreSession()) {
-        document.getElementById("user-name-display").textContent = currentUser.nombre;
-        document.getElementById("user-avatar").textContent = currentUser.nombre.charAt(0).toUpperCase();
-        showView("chat");
-        updateAdminVisibility();
-        loadConversations();
-    } else {
-        updateAdminVisibility();
-        showView("login");
-    }
+    setLoadingState(true, "Preparando acceso...");
+    handleEntraRedirect()
+        .catch((err) => {
+            const loginError = document.getElementById("login-error");
+            if (loginError) {
+                loginError.textContent = err?.message || "No se pudo iniciar sesión con Microsoft";
+            }
+        })
+        .finally(() => {
+            if (currentUser) {
+                return;
+            }
+            if (restoreSession()) {
+                setUserChrome();
+                updateAdminVisibility();
+                if (activeChatMode) {
+                    updateModeCopy();
+                    showView("chat");
+                    loadConversations();
+                } else {
+                    showModeSelector();
+                }
+            } else {
+                updateAdminVisibility();
+                showView("login");
+            }
+            setLoadingState(false);
+        });
 });
 
 window.addEventListener("beforeunload", markPageUnload);

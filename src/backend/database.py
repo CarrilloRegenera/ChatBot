@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -20,11 +21,52 @@ load_dotenv(ENV_PATH)
 pyodbc.pooling = True
 
 
+def _available_sql_drivers() -> list[str]:
+    return [driver for driver in pyodbc.drivers() if "SQL Server" in driver]
+
+
+def _normalize_sql_driver(connection_string: str) -> str:
+    """Reescribe el Driver si el declarado no existe en la maquina actual.
+
+    En Azure la imagen ya incluye el driver esperado, pero en local puede
+    existir solo ODBC Driver 17. Queremos aceptar una connection string
+    productiva y degradar de forma segura a un driver SQL Server instalado.
+    """
+    match = re.search(r"Driver=\{([^}]+)\}", connection_string, flags=re.IGNORECASE)
+    if not match:
+        return connection_string
+
+    configured_driver = match.group(1).strip()
+    available_drivers = _available_sql_drivers()
+    if not available_drivers or configured_driver in available_drivers:
+        return connection_string
+
+    preferred_order = [
+        "ODBC Driver 18 for SQL Server",
+        "ODBC Driver 17 for SQL Server",
+        "SQL Server",
+    ]
+    fallback_driver = next((driver for driver in preferred_order if driver in available_drivers), available_drivers[-1])
+
+    logger.warning(
+        "Driver ODBC configurado no disponible en esta maquina. Usando '%s' en lugar de '%s'.",
+        fallback_driver,
+        configured_driver,
+    )
+    return re.sub(
+        r"Driver=\{[^}]+\}",
+        f"Driver={{{fallback_driver}}}",
+        connection_string,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
 def _build_connection_string() -> str:
     """Connection string desde env (Azure-ready) sin dependencias locales hardcodeadas."""
     explicit = os.getenv("SQL_CONNECTION_STRING")
     if explicit:
-        return explicit
+        return _normalize_sql_driver(explicit)
     env_name = (os.getenv("ENVIRONMENT", "") or os.getenv("APP_ENV", "")).strip().lower()
     is_production = env_name in {"prod", "production"}
     allow_local_fallback = os.getenv("ALLOW_LOCAL_SQL_FALLBACK", "1").strip().lower() in {"1", "true", "yes", "on"}
@@ -60,7 +102,7 @@ def _build_connection_string() -> str:
         parts.append(f"PWD={password}")
     else:
         parts.append("Trusted_Connection=yes")
-    return ";".join(parts) + ";"
+    return _normalize_sql_driver(";".join(parts) + ";")
 
 
 _CONNECTION_STRING = _build_connection_string()
@@ -116,6 +158,96 @@ def ensure_app_schema() -> None:
 
     with db_conn() as conn:
         cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            IF OBJECT_ID('dbo.Usuarios', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.Usuarios (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    Nombre NVARCHAR(200) NOT NULL,
+                    Email NVARCHAR(255) NOT NULL,
+                    Password NVARCHAR(255) NOT NULL,
+                    Rol NVARCHAR(50) NOT NULL DEFAULT 'Usuario',
+                    AuthProvider NVARCHAR(50) NOT NULL DEFAULT 'local',
+                    FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+                );
+            END
+            """
+        )
+
+        cursor.execute(
+            """
+            IF COL_LENGTH('dbo.Usuarios', 'Rol') IS NULL
+                ALTER TABLE dbo.Usuarios ADD Rol NVARCHAR(50) NOT NULL CONSTRAINT DF_Usuarios_Rol DEFAULT 'Usuario';
+            IF COL_LENGTH('dbo.Usuarios', 'AuthProvider') IS NULL
+                ALTER TABLE dbo.Usuarios ADD AuthProvider NVARCHAR(50) NOT NULL CONSTRAINT DF_Usuarios_AuthProvider DEFAULT 'local';
+            IF COL_LENGTH('dbo.Usuarios', 'FechaCreacion') IS NULL
+                ALTER TABLE dbo.Usuarios ADD FechaCreacion DATETIME2 NOT NULL CONSTRAINT DF_Usuarios_FechaCreacion DEFAULT SYSUTCDATETIME();
+            """
+        )
+
+        cursor.execute(
+            """
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes WHERE name = 'UX_Usuarios_Email'
+                AND object_id = OBJECT_ID('dbo.Usuarios')
+            )
+                CREATE UNIQUE INDEX UX_Usuarios_Email ON dbo.Usuarios (Email);
+            """
+        )
+
+        cursor.execute(
+            """
+            IF OBJECT_ID('dbo.Conversaciones', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.Conversaciones (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    UsuarioId INT NOT NULL,
+                    Titulo NVARCHAR(255) NOT NULL,
+                    Estado NVARCHAR(50) NOT NULL DEFAULT 'Activa',
+                    ChatMode NVARCHAR(20) NOT NULL DEFAULT 'technical',
+                    FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+                );
+            END
+            """
+        )
+
+        cursor.execute(
+            """
+            IF COL_LENGTH('dbo.Conversaciones', 'Estado') IS NULL
+                ALTER TABLE dbo.Conversaciones ADD Estado NVARCHAR(50) NOT NULL CONSTRAINT DF_Conversaciones_Estado DEFAULT 'Activa';
+            IF COL_LENGTH('dbo.Conversaciones', 'ChatMode') IS NULL
+                ALTER TABLE dbo.Conversaciones ADD ChatMode NVARCHAR(20) NOT NULL CONSTRAINT DF_Conversaciones_ChatMode DEFAULT 'technical';
+            IF COL_LENGTH('dbo.Conversaciones', 'FechaCreacion') IS NULL
+                ALTER TABLE dbo.Conversaciones ADD FechaCreacion DATETIME2 NOT NULL CONSTRAINT DF_Conversaciones_FechaCreacion DEFAULT SYSUTCDATETIME();
+            """
+        )
+
+        cursor.execute(
+            """
+            IF OBJECT_ID('dbo.Mensajes', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.Mensajes (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    ConversacionId INT NOT NULL,
+                    Pregunta NVARCHAR(MAX) NOT NULL,
+                    Respuesta NVARCHAR(MAX) NOT NULL,
+                    TiempoRespuestaMs INT NULL,
+                    FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+                );
+            END
+            """
+        )
+
+        cursor.execute(
+            """
+            IF COL_LENGTH('dbo.Mensajes', 'TiempoRespuestaMs') IS NULL
+                ALTER TABLE dbo.Mensajes ADD TiempoRespuestaMs INT NULL;
+            IF COL_LENGTH('dbo.Mensajes', 'FechaCreacion') IS NULL
+                ALTER TABLE dbo.Mensajes ADD FechaCreacion DATETIME2 NOT NULL CONSTRAINT DF_Mensajes_FechaCreacion DEFAULT SYSUTCDATETIME();
+            """
+        )
 
         cursor.execute(
             """
@@ -225,6 +357,13 @@ def ensure_app_schema() -> None:
                            AND object_id = OBJECT_ID('dbo.InteraccionesRAG'))
                 CREATE INDEX IX_InteraccionesRAG_ConversacionId
                     ON dbo.InteraccionesRAG (ConversacionId);
+
+            IF OBJECT_ID('dbo.Conversaciones', 'U') IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Conversaciones_UsuarioId'
+                               AND object_id = OBJECT_ID('dbo.Conversaciones'))
+                CREATE INDEX IX_Conversaciones_UsuarioId
+                    ON dbo.Conversaciones (UsuarioId)
+                    INCLUDE (FechaCreacion, Estado);
 
             IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ModelErrorEvents_Modelo_Fecha'
                            AND object_id = OBJECT_ID('dbo.ModelErrorEvents'))
