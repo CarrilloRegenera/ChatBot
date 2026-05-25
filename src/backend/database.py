@@ -206,6 +206,7 @@ def ensure_app_schema() -> None:
                     UsuarioId INT NOT NULL,
                     Titulo NVARCHAR(255) NOT NULL,
                     Estado NVARCHAR(50) NOT NULL DEFAULT 'Activa',
+                    ChatMode NVARCHAR(20) NOT NULL DEFAULT 'technical',
                     FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
                 );
             END
@@ -216,6 +217,8 @@ def ensure_app_schema() -> None:
             """
             IF COL_LENGTH('dbo.Conversaciones', 'Estado') IS NULL
                 ALTER TABLE dbo.Conversaciones ADD Estado NVARCHAR(50) NOT NULL CONSTRAINT DF_Conversaciones_Estado DEFAULT 'Activa';
+            IF COL_LENGTH('dbo.Conversaciones', 'ChatMode') IS NULL
+                ALTER TABLE dbo.Conversaciones ADD ChatMode NVARCHAR(20) NOT NULL CONSTRAINT DF_Conversaciones_ChatMode DEFAULT 'technical';
             IF COL_LENGTH('dbo.Conversaciones', 'FechaCreacion') IS NULL
                 ALTER TABLE dbo.Conversaciones ADD FechaCreacion DATETIME2 NOT NULL CONSTRAINT DF_Conversaciones_FechaCreacion DEFAULT SYSUTCDATETIME();
             """

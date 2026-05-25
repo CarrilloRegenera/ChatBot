@@ -1,11 +1,11 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>REGENERA ChatBot</title>
+    <title>REGENERA</title>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <link rel="stylesheet" href="styles.css?v=7">
+    <link rel="stylesheet" href="styles.css?v=16">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -15,9 +15,6 @@
         <div class="auth-container">
             <div class="auth-left">
                 <div class="brand-area">
-                    <div class="logo-wrapper">
-                        <img src="logo-hd.png?v=2026" alt="REGENERA" class="logo" onerror="this.style.display='none'">
-                    </div>
                     <h1 class="brand-title">REGENERA</h1>
                     <p class="brand-subtitle">Asistente inteligente de normativa técnica</p>
                     <div class="brand-features">
@@ -39,34 +36,29 @@
                             </div>
                             <span>Información verificada y actualizada</span>
                         </div>
+                        <div class="feature">
+                            <div class="feature-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="M9 5v14"/></svg>
+                            </div>
+                            <span>Información de AppRegenera</span>
+                        </div>
                     </div>
                 </div>
             </div>
             <div class="auth-right">
                 <div class="auth-right-shell">
                     <div class="auth-topbar">
-                        <img src="logo-hd.png?v=2026" alt="REGENERA" class="auth-topbar-logo" onerror="this.style.display='none'">
+                        <img src="logo-hd.png?v=20260525a" alt="REGENERA" class="auth-topbar-logo" onerror="this.style.display='none'">
                     </div>
                 <div class="auth-form-container">
                     <h2 class="auth-title">Bienvenido de nuevo</h2>
                     <p class="auth-description">Inicia sesión para acceder al asistente</p>
 
-                    <div class="auth-options-stack">
-                        <button id="entra-login-btn" class="btn-primary hidden" onclick="loginWithEntra()">
-                            <span>Acceder con Microsoft</span>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18"/><path d="M12 3l9 9-9 9"/></svg>
-                        </button>
-                        <p id="entra-login-note" class="auth-note hidden"></p>
-                        <div class="auth-divider">
-                            <span>o accede con usuario y contraseña</span>
-                        </div>
-                    </div>
-
                     <div class="input-group local-auth-only">
-                        <label for="login-name">Usuario</label>
+                        <label for="login-name">Usuario o correo</label>
                         <div class="input-wrapper">
                             <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                            <input type="text" id="login-name" placeholder="Tu nombre de usuario">
+                            <input type="text" id="login-name" placeholder="Tu usuario o correo">
                         </div>
                     </div>
 
@@ -85,9 +77,20 @@
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                     </button>
 
-                    <div class="auth-switch local-auth-only">
-                        <span>¿No tienes cuenta?</span>
-                        <a href="#" onclick="showView('register')">Crear cuenta</a>
+                    <div class="auth-options-stack">
+                        <div class="auth-divider">
+                            <span>o accede con Microsoft</span>
+                        </div>
+                        <button id="entra-login-btn" class="btn-secondary" onclick="loginWithEntra()">
+                            <span class="microsoft-mark" aria-hidden="true">
+                                <span class="microsoft-square red"></span>
+                                <span class="microsoft-square green"></span>
+                                <span class="microsoft-square blue"></span>
+                                <span class="microsoft-square yellow"></span>
+                            </span>
+                            <span>Acceder con Microsoft</span>
+                        </button>
+                        <p id="entra-login-note" class="auth-note hidden"></p>
                     </div>
                 </div>
                 </div>
@@ -95,97 +98,11 @@
         </div>
     </div>
 
-    <!-- ==================== VIEW 2: REGISTER ==================== -->
-    <div id="register-view" class="auth-view local-auth-only">
-        <div class="auth-container">
-            <div class="auth-left">
-                <div class="brand-area">
-                    <div class="logo-wrapper">
-                        <img src="logo-hd.png?v=2026" alt="REGENERA" class="logo" onerror="this.style.display='none'">
-                    </div>
-                    <h1 class="brand-title">REGENERA</h1>
-                    <p class="brand-subtitle">Asistente inteligente de normativa técnica</p>
-                    <div class="brand-features">
-                        <div class="feature">
-                            <div class="feature-icon">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
-                            </div>
-                            <span>Consultas sobre REBT, RALT y RITE</span>
-                        </div>
-                        <div class="feature">
-                            <div class="feature-icon">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                            </div>
-                            <span>Respuestas instantáneas con IA</span>
-                        </div>
-                        <div class="feature">
-                            <div class="feature-icon">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                            </div>
-                            <span>Información verificada y actualizada</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="auth-right">
-                <div class="auth-right-shell">
-                    <div class="auth-topbar">
-                        <img src="logo-hd.png?v=2026" alt="REGENERA" class="auth-topbar-logo" onerror="this.style.display='none'">
-                    </div>
-                <div class="auth-form-container">
-                    <h2 class="auth-title">Crear cuenta</h2>
-                    <p class="auth-description">Regístrate para empezar a usar el asistente</p>
-                    
-                    <div class="input-group">
-                        <label for="register-name">Nombre</label>
-                        <div class="input-wrapper">
-                            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                            <input type="text" id="register-name" placeholder="Tu nombre completo">
-                        </div>
-                    </div>
-
-                    <div class="input-group">
-                        <label for="register-email">Email</label>
-                        <div class="input-wrapper">
-                            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-                            <input type="email" id="register-email" placeholder="tu@email.com">
-                        </div>
-                    </div>
-
-                    <div class="input-group">
-                        <label for="register-password">Contraseña</label>
-                        <div class="input-wrapper">
-                            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                            <input type="password" id="register-password" placeholder="Mínimo 6 caracteres">
-                        </div>
-                    </div>
-
-                    <p id="register-error" class="error-msg"></p>
-                    <p id="register-success" class="success-msg"></p>
-
-                    <button class="btn-primary" onclick="register()">
-                        <span>Crear cuenta</span>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                    </button>
-
-                    <div class="auth-switch">
-                        <span>¿Ya tienes cuenta?</span>
-                        <a href="#" onclick="showView('login')">Iniciar sesión</a>
-                    </div>
-                </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ==================== VIEW 3: MODE SELECTOR ==================== -->
+    <!-- ==================== VIEW 2: MODE SELECTOR ==================== -->
     <div id="selector-view" class="auth-view">
         <div class="auth-container">
             <div class="auth-left">
                 <div class="brand-area">
-                    <div class="logo-wrapper">
-                        <img src="logo-hd.png?v=2026" alt="REGENERA" class="logo" onerror="this.style.display='none'">
-                    </div>
                     <h1 class="brand-title">REGENERA</h1>
                     <p class="brand-subtitle">Elige el asistente con el que quieres trabajar.</p>
                     <div class="brand-features">
@@ -207,15 +124,34 @@
                             </div>
                             <span>Puedes volver al selector cuando quieras</span>
                         </div>
+                        <div class="feature">
+                            <div class="feature-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/><path d="M9 5v14"/></svg>
+                            </div>
+                            <span>Información de AppRegenera</span>
+                        </div>
                     </div>
                 </div>
             </div>
             <div class="auth-right">
                 <div class="auth-right-shell">
                     <div class="auth-topbar">
-                        <img src="logo-hd.png?v=2026" alt="REGENERA" class="auth-topbar-logo" onerror="this.style.display='none'">
+                        <img src="logo-hd.png?v=20260525a" alt="REGENERA" class="auth-topbar-logo" onerror="this.style.display='none'">
                     </div>
                 <div class="auth-form-container selector-form-container">
+                    <div class="selector-session-bar">
+                        <div class="selector-user-summary">
+                            <div class="selector-user-avatar" id="selector-user-avatar">U</div>
+                            <div class="selector-user-copy">
+                                <span class="selector-user-kicker">Sesión activa</span>
+                                <strong id="selector-user-name">Usuario</strong>
+                            </div>
+                        </div>
+                        <button class="selector-logout-btn" type="button" onclick="logout()">
+                            Cerrar sesión
+                        </button>
+                    </div>
+
                     <h2 class="auth-title">Selecciona un chatbot</h2>
                     <p class="auth-description">Escoge el entorno de trabajo según el tipo de consulta que vayas a hacer.</p>
 
@@ -232,24 +168,18 @@
                             <p>Consulta datos de AppRegenera de los módulos de Licitaciones y Producción con la misma experiencia de chat.</p>
                         </button>
                     </div>
-
-                    <div class="auth-switch">
-                        <span>¿Quieres cambiar de cuenta?</span>
-                        <a href="#" onclick="logout()">Cerrar sesión</a>
-                    </div>
                 </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- ==================== VIEW 4: CHAT ==================== -->
+    <!-- ==================== VIEW 3: CHAT ==================== -->
     <div id="chat-view" class="chat-view">
         
         <!-- Sidebar -->
         <aside id="sidebar">
             <div class="sidebar-header">
-                <img src="logo-hd.png?v=2026" alt="REGENERA" class="sidebar-logo" onerror="this.style.display='none'">
                 <div class="sidebar-brand-block">
                     <span class="sidebar-brand">REGENERA</span>
                     <span id="sidebar-mode-label" class="sidebar-mode-label">Chatbot reglamento técnico</span>
@@ -333,8 +263,8 @@
             </div>
             <div class="admin-range-selector">
                 <button class="admin-range-btn" type="button" data-days="1" onclick="setAdminRange(1, this)">Hoy</button>
-                <button class="admin-range-btn active" type="button" data-days="7" onclick="setAdminRange(7, this)">7 dias</button>
-                <button class="admin-range-btn" type="button" data-days="30" onclick="setAdminRange(30, this)">30 dias</button>
+                <button class="admin-range-btn active" type="button" data-days="7" onclick="setAdminRange(7, this)">7 días</button>
+                <button class="admin-range-btn" type="button" data-days="30" onclick="setAdminRange(30, this)">30 días</button>
             </div>
             <div class="admin-metrics-grid">
                 <div class="metric-card"><span>Total interacciones</span><strong id="metric-total-interactions">0</strong></div>
@@ -346,7 +276,7 @@
                 <div class="metric-card"><span>Interacciones con error</span><strong id="metric-total-errors">0</strong></div>
                 <div class="metric-card"><span>Pendientes</span><strong id="metric-total-pending">0</strong></div>
                 <div class="metric-card"><span>Validadas</span><strong id="metric-total-validated">0</strong></div>
-                <div class="metric-card"><span>Tasa validacion</span><strong id="metric-validation-rate">0%</strong></div>
+                <div class="metric-card"><span>Tasa validación</span><strong id="metric-validation-rate">0%</strong></div>
             </div>
             <div class="admin-section">
                 <div class="admin-section-header">
@@ -391,9 +321,37 @@
         </div>
     </div>
 
-    <script src="msal-browser.min.js"></script>
-    <script src="config.js"></script>
-    <script src="app.js?v=8"></script>
+    <div id="confirm-modal" class="confirm-modal hidden" aria-hidden="true">
+        <div class="confirm-modal-overlay" onclick="closeConfirmModal(false)"></div>
+        <div class="confirm-modal-content" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+            <div class="confirm-modal-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 9v4"></path>
+                    <path d="M12 17h.01"></path>
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                </svg>
+            </div>
+            <div class="confirm-modal-copy">
+                <h3 id="confirm-modal-title">Eliminar conversación</h3>
+                <p id="confirm-modal-message">¿Quieres borrar esta conversación?</p>
+            </div>
+            <div class="confirm-modal-actions">
+                <button id="confirm-modal-cancel" class="confirm-modal-btn secondary" type="button" onclick="closeConfirmModal(false)">Cancelar</button>
+                <button id="confirm-modal-accept" class="confirm-modal-btn danger" type="button" onclick="closeConfirmModal(true)">Eliminar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading-overlay" class="loading-overlay hidden" aria-hidden="true">
+        <div class="loading-overlay-backdrop"></div>
+        <div class="loading-overlay-card" role="status" aria-live="polite">
+            <div class="loading-spinner" aria-hidden="true"></div>
+            <p id="loading-overlay-message">Cargando...</p>
+        </div>
+    </div>
+
+    <script src="msal-browser.min.js?v=20260522h"></script>
+    <script src="config.js?v=20260525a"></script>
+    <script src="app.js?v=16"></script>
 </body>
 </html>
-

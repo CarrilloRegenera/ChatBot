@@ -87,6 +87,14 @@ ENTRA_ADMIN_EMAILS = {
     for email in os.getenv("ENTRA_ADMIN_EMAILS", "").split(",")
     if email.strip()
 }
+ADMIN_PANEL_ALLOWED_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv(
+        "ADMIN_PANEL_ALLOWED_EMAILS",
+        "jcanete@regeneraenergy.es,acarrillo@regeneraenergy.es",
+    ).split(",")
+    if email.strip()
+}
 APPREGENERA_API_BASE_URL = os.getenv("APPREGENERA_API_BASE_URL", _default_appregenera_api_base_url()).strip().rstrip("/")
 APPREGENERA_TIMEOUT_SECS = float(os.getenv("APPREGENERA_TIMEOUT_SECS", "20"))
 APPREGENERA_ALLOWED_MODULES = tuple(

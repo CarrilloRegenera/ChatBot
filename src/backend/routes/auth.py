@@ -40,13 +40,26 @@ def register(data: RegisterRequest):
 
 @router.post("/login")
 def login(data: LoginRequest):
+    login_identifier = (data.nombre or "").strip()
+    if not login_identifier:
+        raise HTTPException(status_code=400, detail="El usuario es obligatorio")
+
     with db_conn() as conn:
         cursor = conn.cursor()
 
-        # Login using username (Nombre) and password.
+        # Login using either username (Nombre) or email. Use a trimmed,
+        # case-insensitive comparison so historical imports and manual users
+        # remain accessible after deployment.
         cursor.execute(
-            "SELECT Id, Nombre, Rol, Password FROM Usuarios WHERE Nombre = ?",
-            data.nombre,
+            """
+            SELECT TOP 1 Id, Nombre, Rol, Password, Email, AuthProvider
+            FROM Usuarios
+            WHERE LOWER(LTRIM(RTRIM(Nombre))) = LOWER(?)
+               OR LOWER(LTRIM(RTRIM(Email))) = LOWER(?)
+            ORDER BY Id
+            """,
+            login_identifier,
+            login_identifier,
         )
         user = cursor.fetchone()
 
@@ -60,7 +73,7 @@ def login(data: LoginRequest):
             )
 
     if not user:
-        raise HTTPException(status_code=401, detail="Usuario y contrasena no coinciden")
+        raise HTTPException(status_code=401, detail="Usuario y contraseña no coinciden")
 
     return {
         "mensaje": "Login correcto",
@@ -68,6 +81,8 @@ def login(data: LoginRequest):
             "id": user[0],
             "nombre": user[1],
             "rol": user[2],
+            "email": user[4],
+            "auth_provider": user[5],
         },
     }
 

@@ -12,10 +12,12 @@ class LoginRequest(BaseModel):
 class ConversationRequest(BaseModel):
     user_id: int
     title: str
+    chat_mode: str | None = None
 
 class MessageRequest(BaseModel):
     conversation_id: int
     question: str
+    chat_mode: str | None = None
 
 
 class InteractionReviewRequest(BaseModel):

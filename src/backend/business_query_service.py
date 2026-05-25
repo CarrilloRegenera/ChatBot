@@ -22,6 +22,36 @@ MONTH_ALIASES = {
     "diciembre": 12,
 }
 
+MONTH_LABELS = {
+    1: "enero",
+    2: "febrero",
+    3: "marzo",
+    4: "abril",
+    5: "mayo",
+    6: "junio",
+    7: "julio",
+    8: "agosto",
+    9: "septiembre",
+    10: "octubre",
+    11: "noviembre",
+    12: "diciembre",
+}
+
+PRODUCTION_MONTH_FIELDS = {
+    1: "produccionEnero",
+    2: "produccionFebrero",
+    3: "produccionMarzo",
+    4: "produccionAbril",
+    5: "produccionMayo",
+    6: "produccionJunio",
+    7: "produccionJulio",
+    8: "produccionJulioAgosto",
+    9: "produccionSeptiembre",
+    10: "produccionEstimadaOctubre",
+    11: "produccionEstimadaNoviembre",
+    12: "produccionEstimadaDiciembre",
+}
+
 LICITACION_FIELD_SPECS = [
     ("numeroOferta", "numero de oferta", ("numero de oferta", "numero oferta", "n oferta")),
     ("numeroProyecto", "numero de proyecto", ("numero de proyecto", "numero proyecto", "n proyecto")),
@@ -41,10 +71,10 @@ LICITACION_FIELD_SPECS = [
     ("fechaApertura", "fecha de apertura", ("fecha de apertura", "fecha apertura")),
     ("carteraSiguienteAnio", "cartera del siguiente ano", ("cartera siguiente ano", "cartera del siguiente ano")),
     ("periodoEjecucion", "periodo de ejecucion", ("periodo de ejecucion", "periodo ejecucion", "plazo de ejecucion", "plazo ejecucion")),
-    ("plan2026", "plan 2026", ("plan 2026",)),
-    ("plan2027", "plan 2027", ("plan 2027",)),
-    ("plan2028", "plan 2028", ("plan 2028",)),
-    ("plan2029", "plan 2029", ("plan 2029",)),
+    ("plan2026", "plan 2026", ("plan 2026", "pipeline 2026")),
+    ("plan2027", "plan 2027", ("plan 2027", "pipeline 2027")),
+    ("plan2028", "plan 2028", ("plan 2028", "pipeline 2028")),
+    ("plan2029", "plan 2029", ("plan 2029", "pipeline 2029")),
     ("pendiente", "pendiente", ("pendiente",)),
     ("concurso", "concurso", ("concurso",)),
     ("tipologiaObra", "tipologia de obra", ("tipologia de obra", "tipologia obra")),
@@ -91,13 +121,22 @@ FIELD_LABELS.update(
         "produccion2028": "produccion 2028",
         "produccion2029": "produccion 2029",
         "produccionPrevio": "produccion previa",
-        "importeContratadoMes": "importe contratado mensual",
-        "importeContratadoPeriodo": "importe contratado",
-        "produccionMes": "produccion mensual",
-        "produccionPeriodo": "produccion",
         "produccionPrimerCuatrimestre": "produccion primer cuatrimestre",
         "produccionSegundoCuatrimestre": "produccion segundo cuatrimestre",
         "produccionEstimadaTercerCuatrimestre": "produccion estimada tercer cuatrimestre",
+        "periodosMensuales": "periodos mensuales",
+        "produccionEnero": "produccion enero",
+        "produccionFebrero": "produccion febrero",
+        "produccionMarzo": "produccion marzo",
+        "produccionAbril": "produccion abril",
+        "produccionMayo": "produccion mayo",
+        "produccionJunio": "produccion junio",
+        "produccionJulio": "produccion julio",
+        "produccionJulioAgosto": "produccion julio/agosto",
+        "produccionSeptiembre": "produccion septiembre",
+        "produccionEstimadaOctubre": "produccion estimada octubre",
+        "produccionEstimadaNoviembre": "produccion estimada noviembre",
+        "produccionEstimadaDiciembre": "produccion estimada diciembre",
     }
 )
 
@@ -119,36 +158,21 @@ def detect_business_route(question: str) -> str | None:
     if explicit_scope == "produccion":
         return "business_produccion"
 
-    licitaciones_hints = (
-        "licitacion", "licitaciones", "oferta", "adjudicacion", "adjudicada",
-        "fecha de presentacion", "fecha presentacion", "fecha de apertura", "numero de oferta",
-    )
-    produccion_hints = (
-        "produccion", "obra", "control de obras", "cartera", "rentabilidad", "responsable",
-        "cuatrimestre", "produccion enero", "produccion febrero", "produccion marzo",
-        "codigo de obra", "codigo obra",
-    )
-    business_hints = (
-        "importe contratado", "produccion", "cliente", "estado", "comentarios",
-        "tipo obra", "numero proyecto", "numero oferta", "fecha adjudicacion",
-        "fecha presentacion", "fecha apertura", "cartera", "responsable", "obra",
-    )
-
-    if any(hint in text for hint in licitaciones_hints):
-        return "business_licitaciones"
-    if any(hint in text for hint in produccion_hints):
-        return "business_produccion"
     if "importe contratado" in text:
         return "business_licitaciones"
-    if any(hint in text for hint in business_hints):
+    if any(hint in text for hint in ("produccion", "cartera", "rentabilidad", "responsable", "cuatrimestre")):
+        return "business_produccion"
+    if any(hint in text for hint in ("licitacion", "licitaciones", "oferta", "adjudicacion", "pipeline", "plan ")):
+        return "business_licitaciones"
+    if any(hint in text for hint in ("cliente", "estado", "numero proyecto", "numero oferta", "tipo obra")):
         return "business_licitaciones"
     return None
 
 
 def _detect_explicit_scope(text: str) -> str | None:
-    if any(hint in text for hint in ("licitacion", "licitaciones", "oferta")):
+    if any(hint in text for hint in ("licitacion", "licitaciones", "oferta", "pipeline", "plan ")):
         return "estudios"
-    if any(hint in text for hint in ("obra", "produccion", "control de obras", "codigo de obra", "codigo obra")):
+    if any(hint in text for hint in ("obra", "control de obras", "codigo de obra", "codigo obra", "cartera", "rentabilidad")):
         return "produccion"
     return None
 
@@ -158,6 +182,7 @@ def answer_business_question(
     *,
     user_token: str | None,
     preferred_route: str | None = None,
+    history: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     if not user_token and not APPREGENERA_DEV_BYPASS_KEY:
         return {
@@ -172,16 +197,32 @@ def answer_business_question(
 
     normalized = _normalize(question)
     explicit_scope = _detect_explicit_scope(normalized)
+    aggregate_request = _is_global_aggregate_request(normalized)
+    if aggregate_request:
+        return {
+            "response": (
+                "Las comparativas globales entre todos los proyectos aun no estan soportadas por el conector actual de AppRegenera. "
+                "Ahora mismo puedo responder mejor si indicas un proyecto, obra o licitacion concreta."
+            ),
+            "route": preferred_route or detect_business_route(question) or "business_licitaciones",
+            "confidence": 0.9,
+            "sources": [],
+        }
+
     preferred_module = "estudios" if (preferred_route or detect_business_route(question)) == "business_licitaciones" else "produccion"
     modules_to_try = _build_module_candidates(preferred_module, explicit_scope)
 
     try:
         first_not_found_message: str | None = None
         first_ambiguous_message: str | None = None
+        first_no_data_message: str | None = None
 
         for module in modules_to_try:
             route = "business_licitaciones" if module == "estudios" else "business_produccion"
-            parsed = _parse_question(question, module=module)
+            parsed = _parse_question(question, module=module, history=history or [])
+            if not parsed["reference"]:
+                continue
+
             search_path = "/api/chatbot/licitaciones/search" if module == "estudios" else "/api/chatbot/produccion/search"
             query_path = "/api/chatbot/licitaciones/query" if module == "estudios" else "/api/chatbot/produccion/query"
 
@@ -215,11 +256,15 @@ def answer_business_question(
             }
             result = post_json(query_path, payload, user_token=user_token)
             result = _enrich_result_with_match(result, match, module=module)
-            if not _result_has_relevant_fields(result):
-                if explicit_scope is None and len(modules_to_try) > 1:
-                    continue
-
             response_text = _format_business_response(result, module=module, parsed=parsed)
+
+            if response_text is None:
+                if first_no_data_message is None:
+                    first_no_data_message = _build_no_data_message(match, module=module, parsed=parsed)
+                if explicit_scope is None and len(modules_to_try) > 1 and not parsed.get("per_month"):
+                    continue
+                response_text = first_no_data_message
+
             return {
                 "response": response_text,
                 "route": route,
@@ -234,7 +279,12 @@ def answer_business_question(
                 ],
             }
 
-        fallback_message = first_ambiguous_message or first_not_found_message or "No he podido encontrar un dato de negocio que encaje con la pregunta."
+        fallback_message = (
+            first_ambiguous_message
+            or first_no_data_message
+            or first_not_found_message
+            or "No he podido encontrar un dato de negocio que encaje con la pregunta."
+        )
         return {
             "response": fallback_message,
             "route": preferred_route or detect_business_route(question) or "business_licitaciones",
@@ -248,7 +298,7 @@ def answer_business_question(
             message = f"No he podido consultar AppRegenera: {exc}"
         return {
             "response": message,
-            "route": route,
+            "route": preferred_route or detect_business_route(question) or "business_licitaciones",
             "confidence": 0.0,
             "sources": [],
         }
@@ -263,45 +313,61 @@ def _build_module_candidates(preferred_module: str, explicit_scope: str | None) 
     return [preferred_module, other]
 
 
-def _result_has_relevant_fields(result: Dict[str, Any]) -> bool:
-    fields = result.get("fields") or []
-    if not fields:
-        return False
-    for item in fields:
-        if item.get("value") is not None:
-            return True
-    return False
-
-
-def _enrich_result_with_match(result: Dict[str, Any], match: Dict[str, Any], *, module: str) -> Dict[str, Any]:
-    fields = result.get("fields") or []
-    if module == "produccion":
-        for item in fields:
-            if item.get("key") == "finalizada" and item.get("value") is None:
-                status = (match.get("status") or "").strip().lower()
-                if status == "finalizada":
-                    item["value"] = True
-                elif status == "activa":
-                    item["value"] = False
-    return result
-
-
-def _parse_question(question: str, *, module: str) -> Dict[str, Any]:
+def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
     normalized = _normalize(question)
     year_match = re.search(r"\b(20\d{2})\b", normalized)
+    year = int(year_match.group(1)) if year_match else None
     cuatrimestre = _extract_cuatrimestre(normalized)
     month = _extract_month(normalized)
-    reference = _extract_reference(question, normalized)
-    fields = _detect_fields(normalized, module=module, year=int(year_match.group(1)) if year_match else None, cuatrimestre=cuatrimestre, month=month)
-    primary_field = fields[0] if fields else None
+    reference = _resolve_reference(question, normalized, history)
+    per_month = _is_per_month_request(normalized)
+    fields = _detect_fields(
+        normalized,
+        module=module,
+        year=year,
+        cuatrimestre=cuatrimestre,
+        month=month,
+        per_month=per_month,
+    )
     return {
         "reference": reference,
-        "field": primary_field,
         "fields": fields,
-        "year": int(year_match.group(1)) if year_match else None,
+        "year": year,
         "cuatrimestre": cuatrimestre,
         "month": month,
+        "per_month": per_month,
     }
+
+
+def _resolve_reference(original_question: str, normalized: str, history: List[Dict[str, Any]]) -> str | None:
+    reference = _extract_reference(original_question, normalized)
+    if reference:
+        return reference
+
+    for item in reversed(history or []):
+        history_question = str(item.get("question") or "")
+        history_normalized = _normalize(history_question)
+        history_reference = _extract_reference(history_question, history_normalized)
+        if history_reference:
+            return history_reference
+    return None
+
+
+def _extract_reference(original_question: str, normalized: str) -> str | None:
+    explicit_code_match = re.search(r"\b(?:proyecto|obra|licitacion|oferta)\s+(\d{4,8})\b", normalized)
+    if explicit_code_match:
+        return explicit_code_match.group(1)
+
+    numeric_tokens = re.findall(r"\b\d{4,8}\b", normalized)
+    non_year_tokens = [token for token in numeric_tokens if not re.fullmatch(r"20\d{2}", token)]
+    if non_year_tokens:
+        return non_year_tokens[0]
+
+    quoted = re.search(r'"([^"]+)"|\'([^\']+)\'', original_question)
+    if quoted:
+        value = (quoted.group(1) or quoted.group(2) or "").strip()
+        return value or None
+    return None
 
 
 def _extract_cuatrimestre(text: str) -> int | None:
@@ -323,45 +389,47 @@ def _extract_month(text: str) -> int | None:
     return None
 
 
-def _extract_reference(original_question: str, normalized: str) -> str:
-    explicit_code_match = re.search(r"\b(?:proyecto|obra|licitacion|oferta)\s+(\d{4,8})\b", normalized)
-    if explicit_code_match:
-        return explicit_code_match.group(1)
-
-    numeric_tokens = re.findall(r"\b\d{4,8}\b", normalized)
-    if numeric_tokens:
-        non_year_tokens = [token for token in numeric_tokens if not re.fullmatch(r"20\d{2}", token)]
-        if non_year_tokens:
-            return non_year_tokens[0]
-        return numeric_tokens[0]
-
-    quoted = re.search(r'"([^"]+)"|\'([^\']+)\'', original_question)
-    if quoted:
-        return quoted.group(1) or quoted.group(2)
-
-    patterns = (
-        r"(?:proyecto|obra|licitacion|oferta)\s+([a-z0-9][a-z0-9\s\-_/&]{2,})",
-        r"(?:de|del)\s+([a-z0-9][a-z0-9\s\-_/&]{2,})",
+def _is_per_month_request(text: str) -> bool:
+    return any(
+        token in text
+        for token in (
+            "cada mes",
+            "por mes",
+            "mes a mes",
+            "en cada mes",
+            "todos los meses",
+        )
     )
-    for pattern in patterns:
-        match = re.search(pattern, normalized)
-        if match:
-            value = match.group(1).strip()
-            value = re.split(r"\b(en|del|de|para|con|durante)\b", value)[0].strip()
-            if value:
-                return value
-    return original_question.strip()
 
 
-def _detect_fields(text: str, *, module: str, year: int | None, cuatrimestre: int | None, month: int | None) -> List[str]:
+def _is_global_aggregate_request(text: str) -> bool:
+    return (
+        any(token in text for token in ("cual es el proyecto con mas", "que proyecto tiene mas", "proyecto con mayor"))
+        and any(token in text for token in ("importe contratado", "produccion", "cartera", "pipeline", "plan"))
+    )
+
+
+def _detect_fields(
+    text: str,
+    *,
+    module: str,
+    year: int | None,
+    cuatrimestre: int | None,
+    month: int | None,
+    per_month: bool,
+) -> List[str]:
     fields: List[str] = []
     text_without_type_client = text.replace("tipo de cliente", " ").replace("tipo cliente", " ")
 
+    if "pipeline" in text or "plan " in text:
+        for plan_year in (2026, 2027, 2028, 2029):
+            if str(plan_year) in text:
+                fields.append(f"plan{plan_year}")
+                break
+
     if "importe contratado" in text or "importe adjudicado" in text:
         if module == "estudios":
-            if month and year:
-                fields.append("importeContratadoMes")
-            elif year in {2026, 2027, 2028, 2029} and not cuatrimestre:
+            if year in {2026, 2027, 2028, 2029} and not cuatrimestre and not month:
                 fields.append(f"importeContratado{year}")
             elif any(token in text for token in ("previo", "anteriores", "anterior")):
                 fields.append("importeContratadoPrevio")
@@ -372,30 +440,31 @@ def _detect_fields(text: str, *, module: str, year: int | None, cuatrimestre: in
 
     if "produccion" in text:
         if module == "estudios":
-            if year in {2026, 2027, 2028, 2029} and not cuatrimestre:
+            if year in {2026, 2027, 2028, 2029} and not cuatrimestre and not month:
                 fields.append(f"produccion{year}")
             elif any(token in text for token in ("previa", "previo", "anteriores", "anterior")):
                 fields.append("produccionPrevio")
             else:
                 fields.append("produccion")
-        elif month:
-            fields.append("produccionMes")
-        elif cuatrimestre:
-            fields.append("produccionPeriodo")
         else:
-            fields.append("produccion")
+            if per_month:
+                fields.extend(_monthly_field_keys())
+                fields.append("periodosMensuales")
+            elif month:
+                fields.append(PRODUCTION_MONTH_FIELDS.get(month, "periodosMensuales"))
+            elif cuatrimestre == 1:
+                fields.append("produccionPrimerCuatrimestre")
+            elif cuatrimestre == 2:
+                fields.append("produccionSegundoCuatrimestre")
+            elif cuatrimestre == 3:
+                fields.append("produccionEstimadaTercerCuatrimestre")
+            else:
+                fields.append("periodosMensuales")
 
-    if module == "estudios":
-        for plan_year in (2026, 2027, 2028, 2029):
-            if f"plan {plan_year}" in text:
-                fields.append(f"plan{plan_year}")
-    else:
-        if "primer cuatrimestre" in text and "produccion" not in text:
-            fields.append("produccionPrimerCuatrimestre")
-        if "segundo cuatrimestre" in text and "produccion" not in text:
-            fields.append("produccionSegundoCuatrimestre")
-        if "tercer cuatrimestre" in text and "produccion" not in text:
-            fields.append("produccionEstimadaTercerCuatrimestre")
+    if module == "produccion" and "cartera" in text and year == 2026:
+        fields.append("cartera2026")
+    if module == "produccion" and "pendiente" in text and year == 2026:
+        fields.append("pendiente2026")
 
     field_specs = LICITACION_FIELD_SPECS if module == "estudios" else PRODUCCION_FIELD_SPECS
     for canonical, _, aliases in field_specs:
@@ -409,11 +478,51 @@ def _detect_fields(text: str, *, module: str, year: int | None, cuatrimestre: in
         fields.append("obra" if module == "estudios" else "nombreObra")
 
     if not fields:
-        fields = ["importeContratado", "cliente", "estado"] if module == "estudios" else ["importeContratado", "nombreObra", "licitacionEstado"]
-    return fields[:5]
+        fields = ["importeContratado", "cliente", "estado"] if module == "estudios" else ["nombreObra", "importeContratado"]
+    return _dedupe(fields)[:16]
 
 
-def _format_business_response(result: Dict[str, Any], *, module: str, parsed: Dict[str, Any]) -> str:
+def _monthly_field_keys() -> List[str]:
+    return [
+        PRODUCTION_MONTH_FIELDS[1],
+        PRODUCTION_MONTH_FIELDS[2],
+        PRODUCTION_MONTH_FIELDS[3],
+        PRODUCTION_MONTH_FIELDS[4],
+        PRODUCTION_MONTH_FIELDS[5],
+        PRODUCTION_MONTH_FIELDS[6],
+        PRODUCTION_MONTH_FIELDS[7],
+        PRODUCTION_MONTH_FIELDS[8],
+        PRODUCTION_MONTH_FIELDS[9],
+        PRODUCTION_MONTH_FIELDS[10],
+        PRODUCTION_MONTH_FIELDS[11],
+        PRODUCTION_MONTH_FIELDS[12],
+    ]
+
+
+def _dedupe(values: List[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+    return ordered
+
+
+def _enrich_result_with_match(result: Dict[str, Any], match: Dict[str, Any], *, module: str) -> Dict[str, Any]:
+    fields = result.get("fields") or []
+    if module == "produccion":
+        for item in fields:
+            if item.get("key") == "finalizada" and item.get("value") is None:
+                status = (match.get("status") or "").strip().lower()
+                if status == "finalizada":
+                    item["value"] = True
+                elif status == "activa":
+                    item["value"] = False
+    return result
+
+
+def _format_business_response(result: Dict[str, Any], *, module: str, parsed: Dict[str, Any]) -> str | None:
     status = result.get("status")
     if status == "ambiguous":
         matches = result.get("ambiguousMatches") or []
@@ -425,23 +534,69 @@ def _format_business_response(result: Dict[str, Any], *, module: str, parsed: Di
     entity = result.get("entity") or {}
     fields = result.get("fields") or []
     if not fields:
-        return "No se ha encontrado el dato solicitado en la entidad consultada."
+        return None
 
     prefix = "Licitacion" if module == "estudios" else "Obra"
     name = entity.get("displayName") or entity.get("primaryCode") or parsed["reference"]
     code = entity.get("primaryCode")
     period_text = _build_period_text(parsed)
 
-    if len(fields) == 1:
-        item = fields[0]
+    if module == "produccion" and parsed.get("per_month"):
+        monthly_text = _format_monthly_breakdown(fields, name=name, code=code, period_text=period_text)
+        if monthly_text:
+            return monthly_text
+        return None
+
+    relevant_fields = [item for item in fields if item.get("value") is not None and item.get("value") != []]
+    if not relevant_fields:
+        return None
+
+    if len(relevant_fields) == 1:
+        item = relevant_fields[0]
         label = FIELD_LABELS.get(item["key"], item["key"])
         return f"{prefix} {code or ''} {name}{period_text}: {label} = {_format_value(item.get('value'))}."
 
     summary = "; ".join(
         f"{FIELD_LABELS.get(item['key'], item['key'])} = {_format_value(item.get('value'))}"
-        for item in fields
+        for item in relevant_fields
     )
     return f"{prefix} {code or ''} {name}{period_text}: {summary}."
+
+
+def _format_monthly_breakdown(fields: List[Dict[str, Any]], *, name: str, code: str | None, period_text: str) -> str | None:
+    monthly_chunks: List[str] = []
+    for month_number in range(1, 13):
+        key = PRODUCTION_MONTH_FIELDS[month_number]
+        item = next((field for field in fields if field.get("key") == key), None)
+        value = item.get("value") if item else None
+        if value is not None:
+            monthly_chunks.append(f"{MONTH_LABELS[month_number]} = {_format_value(value)}")
+
+    if not monthly_chunks:
+        return None
+
+    return f"Obra {code or ''} {name}{period_text}: " + "; ".join(monthly_chunks) + "."
+
+
+def _build_no_data_message(match: Dict[str, Any], *, module: str, parsed: Dict[str, Any]) -> str:
+    prefix = "Licitacion" if module == "estudios" else "Obra"
+    name = match.get("displayName") or parsed["reference"]
+    code = match.get("primaryCode") or parsed["reference"]
+    period_text = _build_period_text(parsed)
+
+    if module == "produccion" and parsed.get("per_month"):
+        return (
+            f"{prefix} {code} {name}{period_text}: no hay produccion mensual cargada en AppRegenera para ese periodo."
+        )
+
+    if parsed.get("month") and module == "produccion":
+        return (
+            f"{prefix} {code} {name}{period_text}: no hay dato cargado para ese mes en AppRegenera."
+        )
+
+    requested_labels = [FIELD_LABELS.get(field, field) for field in parsed.get("fields") or []]
+    labels_text = ", ".join(requested_labels[:4]) if requested_labels else "el dato solicitado"
+    return f"{prefix} {code} {name}{period_text}: no hay datos disponibles para {labels_text}."
 
 
 def _build_period_text(parsed: Dict[str, Any]) -> str:
@@ -451,7 +606,7 @@ def _build_period_text(parsed: Dict[str, Any]) -> str:
     if parsed.get("cuatrimestre"):
         parts.append(f"C{parsed['cuatrimestre']}")
     if parsed.get("month"):
-        parts.append(f"mes {parsed['month']}")
+        parts.append(MONTH_LABELS.get(parsed["month"], f"mes {parsed['month']}"))
     return f" ({', '.join(parts)})" if parts else ""
 
 
