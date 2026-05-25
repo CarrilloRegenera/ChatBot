@@ -1,4 +1,16 @@
 function resolveApiBaseUrl() {
+    const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+    const productionApiUrl = "https://api-chatbot01-fnecg5cve3bzc5ds.westeurope-01.azurewebsites.net";
+    const currentHost = window.location.hostname;
+    const runningLocally = window.location.port === "8000" || localHosts.has(currentHost);
+
+    if (window.location.port === "8000") {
+        return window.location.origin;
+    }
+    if (localHosts.has(currentHost)) {
+        return "http://localhost:8000";
+    }
+
     const configuredUrl = (
         window.CHATBOT_CONFIG?.API_BASE_URL ||
         window.API_BASE_URL ||
@@ -6,15 +18,20 @@ function resolveApiBaseUrl() {
     ).trim();
 
     if (configuredUrl) {
-        return configuredUrl.replace(/\/+$/, "");
+        try {
+            const configuredHost = new URL(configuredUrl).hostname;
+            const configuredIsLocal = localHosts.has(configuredHost);
+            if (!configuredIsLocal || runningLocally) {
+                return configuredUrl.replace(/\/+$/, "");
+            }
+        } catch {
+            if (runningLocally) {
+                return configuredUrl.replace(/\/+$/, "");
+            }
+        }
     }
-
-    const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
-    if (window.location.port === "8000") {
-        return window.location.origin;
-    }
-    if (localHosts.has(window.location.hostname)) {
-        return "http://localhost:8000";
+    if (currentHost === "chatbot.appregenera.com") {
+        return productionApiUrl;
     }
 
     return window.location.origin;
@@ -117,8 +134,20 @@ async function finalizeEntraSession(token) {
     showModeSelector();
 }
 
+function hasEntraRedirectResponse() {
+    const search = new URLSearchParams(window.location.search);
+    if (search.has("code") || search.has("error") || search.has("state")) {
+        return true;
+    }
+
+    return /(code|id_token|access_token|error)=/i.test(String(window.location.hash || ""));
+}
+
 async function handleEntraRedirect() {
     if (!ENTRA_CONFIG.enabled || entraRedirectHandled) {
+        return;
+    }
+    if (!hasEntraRedirectResponse()) {
         return;
     }
     entraRedirectHandled = true;
@@ -239,6 +268,7 @@ let activeChatMode = null;
 let isSending = false;
 let activeConversationRequest = 0;
 let conversationsLoadPromise = null;
+const conversationMessagesCache = new Map();
 let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
 let adminActiveView = "overview";
@@ -339,6 +369,10 @@ function consumePageUnloadMark() {
     if (!value) return null;
     sessionStorage.removeItem(LAST_UNLOAD_KEY);
     return value;
+}
+
+function wait(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 // ===== VIEW MANAGEMENT =====
@@ -481,7 +515,7 @@ function renderConversationItem(conv) {
     item.appendChild(deleteBtn);
     item.onclick = () => {
         if (isSending) return;
-        selectConversation(conv.id, conv.title);
+        selectConversation(conv.id, { preferCached: true });
     };
     return item;
 }
@@ -553,7 +587,8 @@ async function enterChatMode(mode) {
     saveSession();
     setLoadingState(true, activeChatMode === "business" ? "Abriendo chatbot de negocio..." : "Abriendo chatbot tecnico...");
     try {
-        await loadConversations();
+        const loadPromise = loadConversations();
+        await Promise.race([loadPromise, wait(250)]);
     } finally {
         setLoadingState(false);
     }
@@ -684,6 +719,23 @@ function setUserChrome() {
     if (selectorUserAvatar) selectorUserAvatar.textContent = initial;
 }
 
+function renderConversationMessages(messages) {
+    const messagesDiv = document.getElementById("chat-messages");
+    messagesDiv.innerHTML = "";
+
+    if ((messages || []).length > 0) {
+        showMessagesState();
+        (messages || []).forEach((msg) => {
+            appendMessage("user", msg.question);
+            appendMessage("assistant", msg.response);
+        });
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        return;
+    }
+
+    showWelcomeState();
+}
+
 async function loginWithEntra() {
     const loginError = document.getElementById("login-error");
     const entraNote = document.getElementById("entra-login-note");
@@ -720,6 +772,7 @@ function logout() {
     currentUser = null;
     currentConversation = null;
     activeChatMode = null;
+    conversationMessagesCache.clear();
     clearSession();
     document.getElementById("chat-messages").innerHTML = "";
     document.getElementById("conversation-list").innerHTML = "";
@@ -756,6 +809,7 @@ async function createConversation(reloadList = true) {
         const data = await res.json();
         currentConversation = data.conversation_id;
         setConversationMode(currentConversation, normalizeChatMode(data.chat_mode) || activeChatMode);
+        conversationMessagesCache.set(currentConversation, []);
         saveSession();
 
         document.getElementById("chat-messages").innerHTML = "";
@@ -814,10 +868,14 @@ async function loadConversations() {
             const preferredId = currentConversation || rememberedId;
             const preferredConversation = conversations.find((conv) => conv.id === preferredId);
             if (preferredConversation) {
-                await selectConversation(preferredConversation.id, preferredConversation.title);
+                selectConversation(preferredConversation.id, { preferCached: true }).catch((err) => {
+                    console.error("Error selecting preferred conversation:", err);
+                });
             } else {
                 const first = conversations[0];
-                await selectConversation(first.id, first.title);
+                selectConversation(first.id, { preferCached: true }).catch((err) => {
+                    console.error("Error selecting first conversation:", err);
+                });
             }
         }
         } catch (err) {
@@ -830,8 +888,9 @@ async function loadConversations() {
     return conversationsLoadPromise;
 }
 
-async function selectConversation(id) {
+async function selectConversation(id, options = {}) {
     if (isSending) return;
+    const preferCached = options.preferCached === true;
     const requestId = ++activeConversationRequest;
     currentConversation = id;
     saveSession();
@@ -839,6 +898,10 @@ async function selectConversation(id) {
     document.querySelectorAll(".conversation-item").forEach((item) => {
         item.classList.toggle("active", item.dataset.conversationId === String(id));
     });
+
+    if (preferCached && conversationMessagesCache.has(id)) {
+        renderConversationMessages(conversationMessagesCache.get(id));
+    }
 
     try {
         const res = await fetch(`${API}/conversations/${id}/messages`, {
@@ -854,22 +917,15 @@ async function selectConversation(id) {
             return;
         }
 
-        const messagesDiv = document.getElementById("chat-messages");
-        messagesDiv.innerHTML = "";
-
-        if (data.messages.length > 0) {
-            showMessagesState();
-            data.messages.forEach((msg) => {
-                appendMessage("user", msg.question);
-                appendMessage("assistant", msg.response);
-            });
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        } else {
-            showWelcomeState();
-        }
+        const messages = data.messages || [];
+        conversationMessagesCache.set(id, messages);
+        renderConversationMessages(messages);
         await reconcilePendingMessage(id);
     } catch (err) {
         console.error("Error loading messages:", err);
+        if (!preferCached) {
+            showWelcomeState();
+        }
     }
 }
 
@@ -898,6 +954,7 @@ async function deleteConversation(conversationId, title) {
         const wasCurrent = currentConversation === conversationId;
         clearConversationMode(conversationId);
         forgetConversationForMode(conversationId);
+        conversationMessagesCache.delete(conversationId);
         if (wasCurrent) {
             currentConversation = null;
             activeConversationRequest += 1;
@@ -946,10 +1003,12 @@ async function reconcilePendingMessage(conversationId) {
             return;
         }
         const data = await res.json();
-        if (historyContainsQuestion(data.messages || [], pending.question)) {
+        const messages = data.messages || [];
+        conversationMessagesCache.set(conversationId, messages);
+        if (historyContainsQuestion(messages, pending.question)) {
             clearPendingMessage();
             if (currentConversation === conversationId && !isSending) {
-                await selectConversation(conversationId);
+                renderConversationMessages(messages);
             }
             return;
         }
@@ -1108,6 +1167,7 @@ async function sendMessage() {
         removeTypingIndicator();
         appendMessage("assistant", data.response);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        conversationMessagesCache.delete(conversationId);
         savePendingMessage({
             conversationId,
             question,
@@ -1524,9 +1584,30 @@ document.addEventListener("DOMContentLoaded", () => {
     updateEntraLoginVisibility();
     updateModeCopy();
     const unloadMark = consumePageUnloadMark();
+    const hasRedirectResponse = hasEntraRedirectResponse();
+    const restoredSession = restoreSession();
     if (unloadMark) {
         console.warn("La página se recargó o descargó durante la sesión:", unloadMark);
     }
+    if (restoredSession && currentUser) {
+        setUserChrome();
+        updateAdminVisibility();
+        if (activeChatMode) {
+            updateModeCopy();
+            showView("chat");
+            loadConversations();
+        } else {
+            showModeSelector();
+        }
+    } else {
+        updateAdminVisibility();
+        showView("login");
+    }
+
+    if (!hasRedirectResponse) {
+        return;
+    }
+
     setLoadingState(true, "Preparando acceso...");
     handleEntraRedirect()
         .catch((err) => {
@@ -1536,6 +1617,8 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         })
         .finally(() => {
+            setLoadingState(false);
+            return;
             try {
                 if (!currentUser && restoreSession()) {
                     setUserChrome();

@@ -169,17 +169,22 @@ CLOSURE_FIELD_HINTS = {
     "presupuesto vigente": "presupuestoVigente",
     "coste previsto final": "costePrevistoFinalObra",
     "produccion origen anio": "produccionOrigenAnio",
+    "produccion origen ano": "produccionOrigenAnio",
     "produccion origen": "produccionOrigen",
     "produccion mes": "produccionMes",
     "coste origen anio": "costeOrigenAnio",
+    "coste origen ano": "costeOrigenAnio",
     "coste origen": "costeOrigen",
     "produccion ejercicio mes anterior": "produccionEjercicioMesAnterior",
     "cartera anio": "carteraAnio",
+    "cartera ano": "carteraAnio",
     "cartera pendiente anio": "carteraPendienteAnio",
+    "cartera pendiente ano": "carteraPendienteAnio",
     "cartera 2027": "cartera2027",
     "cartera 2028": "cartera2028",
     "certificacion mes": "certificacionMes",
     "certificacion origen anio": "certificacionOrigenAnio",
+    "certificacion origen ano": "certificacionOrigenAnio",
     "certificacion origen": "certificacionOrigen",
     "certificacion acumulada mes anterior": "certificacionAcumuladaMesAnterior",
     "costes mes": "costesMes",
@@ -838,9 +843,10 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
 
 
 def _detect_aggregate_metric(text: str, fields: List[str], *, module: str, year: int | None) -> str | None:
-    for label, field in CLOSURE_FIELD_HINTS.items():
-        if label in text and (module == "produccion" or "cierre" in text):
-            return f"cierre:{field}"
+    if "cierre" in text or "cierres" in text or _contains_cierre_hint(text):
+        for label, field in CLOSURE_FIELD_HINTS.items():
+            if label in text:
+                return f"cierre:{field}"
     if module == "estudios":
         for metric, aliases in STUDIES_AGGREGATE_KEYWORDS.items():
             if any(alias in text for alias in aliases):
@@ -896,11 +902,9 @@ def _extract_filter_text(original_question: str, normalized: str) -> str | None:
 def _extract_expected_client(original_question: str, normalized: str) -> str | None:
     if "cliente" not in normalized or "?" not in original_question:
         return None
-    if normalized.startswith("que cliente tiene") or normalized.startswith("cual cliente tiene"):
+    if " es del cliente " not in f" {normalized} ":
         return None
-    if " es del cliente " not in f" {normalized} " and not re.search(r"\bcliente\s+[a-z0-9][a-z0-9 .&/-]{1,}$", normalized):
-        return None
-    match = re.search(r"(?:es del cliente|cliente)\s+([a-z0-9 .&/-]{2,})\??$", normalized)
+    match = re.search(r"(?:es del cliente)\s+([a-z0-9 .&/-]{2,})\??$", normalized)
     if not match:
         return None
     candidate = re.sub(r"\s+", " ", match.group(1)).strip(" ?.")
