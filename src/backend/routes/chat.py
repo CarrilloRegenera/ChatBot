@@ -185,8 +185,80 @@ def _assert_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
 
 
+def _load_user_by_id(user_id: int) -> tuple | None:
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT TOP 1 Id, Nombre, Email, Rol, AuthProvider FROM Usuarios WHERE Id = ?",
+            user_id,
+        )
+        return cursor.fetchone()
+
+
+def _resolve_request_user_id(request: Request) -> int:
+    auth_header = (request.headers.get("authorization") or "").strip()
+    if ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            claims = validate_entra_token(token)
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail=f"Token Entra no valido: {exc}") from exc
+
+        email = (
+            claims.get("preferred_username")
+            or claims.get("email")
+            or claims.get("upn")
+            or ""
+        ).strip().lower()
+        if not email:
+            raise HTTPException(status_code=401, detail="El token de Entra no contiene email")
+
+        with db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT TOP 1 Id FROM Usuarios WHERE LOWER(Email) = ?", email)
+            row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Usuario de Entra no sincronizado en el chatbot")
+        return int(row[0])
+
+    user_id_header = (request.headers.get("x-user-id") or "").strip()
+    if not user_id_header.isdigit():
+        raise HTTPException(status_code=401, detail="Identidad de usuario no disponible")
+
+    user_id = int(user_id_header)
+    user_row = _load_user_by_id(user_id)
+    if not user_row:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
+
+    header_provider = (request.headers.get("x-auth-provider") or "").strip().lower()
+    header_email = (request.headers.get("x-user-email") or "").strip().lower()
+    if header_provider and str(user_row[4] or "").strip().lower() not in {"", header_provider}:
+        raise HTTPException(status_code=403, detail="La sesion no coincide con el proveedor del usuario")
+    if header_email and str(user_row[2] or "").strip().lower() not in {"", header_email}:
+        raise HTTPException(status_code=403, detail="La sesion no coincide con el email del usuario")
+    return user_id
+
+
+def _assert_conversation_owner(conversation_id: int, request_user_id: int) -> tuple:
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT Id, UsuarioId, Titulo, ChatMode FROM Conversaciones WHERE Id = ?",
+            conversation_id,
+        )
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+    if int(row[1]) != int(request_user_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a esa conversacion")
+    return row
+
+
 @router.post("/conversations")
-def create_conversation(data: ConversationRequest):
+def create_conversation(data: ConversationRequest, request: Request):
+    request_user_id = _resolve_request_user_id(request)
+    if int(data.user_id) != request_user_id:
+        raise HTTPException(status_code=403, detail="No puedes crear conversaciones para otro usuario")
     chat_mode = _normalize_chat_mode(data.chat_mode)
     with db_conn() as conn:
         cursor = conn.cursor()
@@ -201,7 +273,9 @@ def create_conversation(data: ConversationRequest):
 
 
 @router.delete("/conversations/{conversation_id}")
-def delete_conversation(conversation_id: int):
+def delete_conversation(conversation_id: int, request: Request):
+    request_user_id = _resolve_request_user_id(request)
+    _assert_conversation_owner(conversation_id, request_user_id)
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT Id FROM Conversaciones WHERE Id = ?", conversation_id)
@@ -220,6 +294,8 @@ def delete_conversation(conversation_id: int):
 
 @router.post("/messages")
 def send_message(data: MessageRequest, request: Request):
+    request_user_id = _resolve_request_user_id(request)
+    _assert_conversation_owner(data.conversation_id, request_user_id)
     conversation_lock = _get_conversation_lock(data.conversation_id)
     acquired = conversation_lock.acquire(timeout=CONVERSATION_LOCK_TIMEOUT_SECS)
     if not acquired:
@@ -547,11 +623,14 @@ def reject_interaction_endpoint(interaction_id: int, data: InteractionReviewRequ
 
 
 @router.get("/conversations/{user_id}")
-def list_conversations(user_id: int):
+def list_conversations(user_id: int, request: Request):
+    request_user_id = _resolve_request_user_id(request)
+    if int(user_id) != request_user_id:
+        raise HTTPException(status_code=403, detail="No puedes consultar conversaciones de otro usuario")
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT Id, Titulo, Estado, FechaCreacion, ChatMode FROM Conversaciones WHERE UsuarioId = ?",
+            "SELECT Id, Titulo, Estado, FechaCreacion, ChatMode FROM Conversaciones WHERE UsuarioId = ? ORDER BY FechaCreacion DESC, Id DESC",
             user_id,
         )
         rows = cursor.fetchall()
@@ -571,7 +650,9 @@ def list_conversations(user_id: int):
 
 
 @router.get("/conversations/{conversation_id}/messages")
-def get_history(conversation_id: int):
+def get_history(conversation_id: int, request: Request):
+    request_user_id = _resolve_request_user_id(request)
+    _assert_conversation_owner(conversation_id, request_user_id)
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -587,7 +668,9 @@ def get_history(conversation_id: int):
 
 
 @router.put("/conversations/{conversation_id}/title")
-def update_title(conversation_id: int, data: dict):
+def update_title(conversation_id: int, data: dict, request: Request):
+    request_user_id = _resolve_request_user_id(request)
+    _assert_conversation_owner(conversation_id, request_user_id)
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(

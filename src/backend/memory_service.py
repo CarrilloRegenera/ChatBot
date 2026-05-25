@@ -214,10 +214,23 @@ def list_pending_interactions(limit: int = 50) -> List[Dict]:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT TOP (?) Id, ConversacionId, Pregunta, Respuesta, Fuentes, FechaCreacion, Confianza, TotalTokens, Modelo
-            FROM dbo.InteraccionesRAG
-            WHERE Estado = 'pendiente'
-            ORDER BY FechaCreacion DESC
+            SELECT TOP (?)
+                i.Id,
+                i.ConversacionId,
+                i.Pregunta,
+                i.Respuesta,
+                i.Fuentes,
+                i.FechaCreacion,
+                i.Confianza,
+                i.TotalTokens,
+                i.Modelo,
+                u.Nombre,
+                u.Email
+            FROM dbo.InteraccionesRAG i
+            LEFT JOIN dbo.Conversaciones c ON c.Id = i.ConversacionId
+            LEFT JOIN dbo.Usuarios u ON u.Id = c.UsuarioId
+            WHERE i.Estado = 'pendiente'
+            ORDER BY i.FechaCreacion DESC
             """,
             limit,
         )
@@ -235,6 +248,8 @@ def list_pending_interactions(limit: int = 50) -> List[Dict]:
                 "confidence": row[6],
                 "total_tokens": row[7] or 0,
                 "model": row[8] or "",
+                "user_name": row[9] or "",
+                "user_email": row[10] or "",
             }
         )
     return items

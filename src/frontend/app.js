@@ -157,9 +157,15 @@ function updateEntraLoginVisibility() {
 }
 
 function getAdminHeaders() {
-    const headers = {};
+    const headers = getUserHeaders();
     const adminKey = (getChatbotConfig().ADMIN_API_KEY || "").trim();
     if (adminKey) headers["x-admin-key"] = adminKey;
+    return headers;
+}
+
+function getUserHeaders() {
+    const headers = {};
+    if (currentUser?.id) headers["x-user-id"] = String(currentUser.id);
     if (currentUser?.rol) headers["x-user-role"] = currentUser.rol;
     if (currentUser?.nombre) headers["x-user-name"] = currentUser.nombre;
     if (currentUser?.email) headers["x-user-email"] = currentUser.email;
@@ -235,6 +241,7 @@ let activeConversationRequest = 0;
 let conversationsLoadPromise = null;
 let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
+let adminActiveView = "overview";
 let confirmModalResolver = null;
 let loadingStateDepth = 0;
 const PENDING_MESSAGE_KEY = "chatbot_pending_message";
@@ -742,7 +749,7 @@ async function createConversation(reloadList = true) {
         const config = getActiveChatModeConfig();
         const res = await fetch(`${API}/conversations`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getUserHeaders() },
             body: JSON.stringify({ user_id: currentUser.id, title: config.newConversationTitle, chat_mode: activeChatMode }),
         });
 
@@ -771,7 +778,9 @@ async function loadConversations() {
 
     conversationsLoadPromise = (async () => {
         try {
-        const res = await fetch(`${API}/conversations/${currentUser.id}`);
+        const res = await fetch(`${API}/conversations/${currentUser.id}`, {
+            headers: getUserHeaders(),
+        });
         const data = await res.json();
 
         const list = document.getElementById("conversation-list");
@@ -786,7 +795,9 @@ async function loadConversations() {
 
         if (conversations.length === 0) {
             await createConversation(false);
-            const retryRes = await fetch(`${API}/conversations/${currentUser.id}`);
+            const retryRes = await fetch(`${API}/conversations/${currentUser.id}`, {
+                headers: getUserHeaders(),
+            });
             const retryData = await retryRes.json();
             const retryAllConversations = retryData.conversations || [];
             retryAllConversations.forEach((conv) => setConversationMode(conv.id, normalizeChatMode(conv.mode) || "technical"));
@@ -830,7 +841,9 @@ async function selectConversation(id) {
     });
 
     try {
-        const res = await fetch(`${API}/conversations/${id}/messages`);
+        const res = await fetch(`${API}/conversations/${id}/messages`, {
+            headers: getUserHeaders(),
+        });
         const data = await res.json();
 
         if (requestId !== activeConversationRequest || currentConversation !== id) {
@@ -875,6 +888,7 @@ async function deleteConversation(conversationId, title) {
     try {
         const res = await fetch(`${API}/conversations/${conversationId}`, {
             method: "DELETE",
+            headers: getUserHeaders(),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -925,7 +939,9 @@ async function reconcilePendingMessage(conversationId) {
     }
 
     try {
-        const res = await fetch(`${API}/conversations/${conversationId}/messages`);
+        const res = await fetch(`${API}/conversations/${conversationId}/messages`, {
+            headers: getUserHeaders(),
+        });
         if (!res.ok) {
             return;
         }
@@ -1109,7 +1125,7 @@ async function sendMessage() {
             titleEl.textContent = shortTitle;
             fetch(`${API}/conversations/${conversationId}/title`, {
                 method: "PUT",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...getUserHeaders() },
                 body: JSON.stringify({ title: shortTitle }),
             }).catch(() => {
                 titleEl.textContent = currentTitle;
@@ -1157,6 +1173,7 @@ function openAdminPanel() {
         return;
     }
     document.getElementById("admin-panel").classList.remove("hidden");
+    setAdminView("overview");
     loadAdminPanel();
 }
 
@@ -1389,6 +1406,30 @@ function setAdminRange(days, button) {
     loadAdminPanel();
 }
 
+function setAdminView(view, button = null) {
+    adminActiveView = view === "pending" ? "pending" : "overview";
+    const overviewSection = document.getElementById("admin-view-overview");
+    const pendingSection = document.getElementById("admin-view-pending");
+    const overviewTab = document.getElementById("admin-tab-overview");
+    const pendingTab = document.getElementById("admin-tab-pending");
+
+    if (overviewSection) {
+        overviewSection.classList.toggle("hidden", adminActiveView !== "overview");
+    }
+    if (pendingSection) {
+        pendingSection.classList.toggle("hidden", adminActiveView !== "pending");
+    }
+    if (overviewTab) {
+        overviewTab.classList.toggle("active", adminActiveView === "overview");
+    }
+    if (pendingTab) {
+        pendingTab.classList.toggle("active", adminActiveView === "pending");
+    }
+    if (button) {
+        button.blur();
+    }
+}
+
 async function loadAdminPanel() {
     if (!currentUser) return;
     try {
@@ -1435,8 +1476,9 @@ function renderPendingList(items) {
     items.forEach((item) => {
         const card = document.createElement("div");
         card.className = "pending-card";
+        const userName = normalizeMojibakeText(item.user_name || item.user_email || "Usuario");
         card.innerHTML = `
-            <div class="pending-meta">#${item.id} - conf=${Number(item.confidence || 0).toFixed(2)} - tokens=${item.total_tokens || 0} - ${item.created_at}</div>
+            <div class="pending-meta">#${item.id} - usuario=${userName} - conf=${Number(item.confidence || 0).toFixed(2)} - tokens=${item.total_tokens || 0} - ${item.created_at}</div>
             <div class="pending-question">${item.question}</div>
             <div class="pending-answer">${item.answer}</div>
             <div class="pending-actions">
@@ -1494,24 +1536,26 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         })
         .finally(() => {
-            if (currentUser) {
-                return;
-            }
-            if (restoreSession()) {
-                setUserChrome();
-                updateAdminVisibility();
-                if (activeChatMode) {
-                    updateModeCopy();
-                    showView("chat");
-                    loadConversations();
+            try {
+                if (!currentUser && restoreSession()) {
+                    setUserChrome();
+                    updateAdminVisibility();
+                    if (activeChatMode) {
+                        updateModeCopy();
+                        showView("chat");
+                        loadConversations();
+                    } else {
+                        showModeSelector();
+                    }
                 } else {
-                    showModeSelector();
+                    if (!currentUser) {
+                        updateAdminVisibility();
+                        showView("login");
+                    }
                 }
-            } else {
-                updateAdminVisibility();
-                showView("login");
+            } finally {
+                setLoadingState(false);
             }
-            setLoadingState(false);
         });
 });
 

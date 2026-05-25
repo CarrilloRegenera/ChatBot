@@ -97,6 +97,7 @@ ADMIN_PANEL_ALLOWED_EMAILS = {
 }
 APPREGENERA_API_BASE_URL = os.getenv("APPREGENERA_API_BASE_URL", _default_appregenera_api_base_url()).strip().rstrip("/")
 APPREGENERA_TIMEOUT_SECS = float(os.getenv("APPREGENERA_TIMEOUT_SECS", "20"))
+APPREGENERA_SQL_CONNECTION_STRING = os.getenv("APPREGENERA_SQL_CONNECTION_STRING", "").strip()
 APPREGENERA_ALLOWED_MODULES = tuple(
     module.strip().lower()
     for module in os.getenv("APPREGENERA_ALLOWED_MODULES", "estudios,produccion").split(",")
