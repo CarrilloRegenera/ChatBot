@@ -1,8 +1,10 @@
 import hashlib
+import html as _html
 import json
 import logging
 import os
 import re
+import threading
 import time
 import unicodedata
 from collections import OrderedDict
@@ -88,6 +90,21 @@ NOISE_PAGE_NUMBER_PATTERN = re.compile(r"^[\d\s\-–/.,:;()]+$")
 NOISE_TOC_LINE_PATTERN = re.compile(r"\.{3,}\s*\d+\s*$")
 CORE_TERM_PENALTY = 4
 
+# ---------------------------------------------------------------------------
+# Scoring por dominio específico (BT-40 / generadoras).
+# Para escalar a otros departamentos (PRL, RRHH, etc.), añadir entradas
+# similares con los términos y pesos correspondientes.
+# ---------------------------------------------------------------------------
+BT40_DOMAIN_BOOST = 30          # boost al dominio guias_tecnicas cuando query menciona BT-40
+BT40_DOC_TERM_BOOST = 25        # boost por término de contenido BT-40 en documento
+BT40_SECTION_BOOST = 20         # boost por sección relevante (clasificacion, objeto…)
+BT40_MISMATCH_PENALTY = 20      # penalización si dominio no es guias_tecnicas
+GENERATORS_DOMAIN_BOOST = 18    # boost cuando query menciona generadoras y dominio coincide
+GENERATORS_ITC_BOOST = 24       # boost por referencia explícita a ITC-BT-40
+GENERATORS_TERM_BOOST = 8       # boost por término de generadoras en documento
+GENERATORS_LEXICAL_DOMAIN = 10  # boost léxico por dominio coincidente
+GENERATORS_LEXICAL_TERM = 16    # boost léxico por término de generadoras
+
 
 def _is_noise_chunk(text: str) -> bool:
     clean = text.strip()
@@ -156,15 +173,15 @@ TABLE_QUERY_PATTERN = re.compile(
     r"(?:\btabla\b|\bcircuitos?\s+minimos?\b|\bcircuitos?\s+mínimos?\b|\brelacion\s+de\b|\brelación\s+de\b|\blista\s+completa\b)",
     re.IGNORECASE,
 )
-PAGE_REFERENCE_PATTERN = re.compile(r"\b(?:pag(?:ina)?|p[Ã¡a]g(?:ina)?|page)\.?\s*(\d{1,4})\b", re.IGNORECASE)
-ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[iÃ­]a)[-\s]*(?:bt|lat|rat)?[-\s]*(\d{1,2})\b", re.IGNORECASE)
+PAGE_REFERENCE_PATTERN = re.compile(r"\b(?:pag(?:ina)?|p[áa]g(?:ina)?|page)\.?\s*(\d{1,4})\b", re.IGNORECASE)
+ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[ií]a)[-\s]*(?:bt|lat|rat)?[-\s]*(\d{1,2})\b", re.IGNORECASE)
 TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3})\b", re.IGNORECASE)
 LOCATION_QUERY_PATTERN = re.compile(
     r"\b(?:pagina|pag|page|donde\s+(?:aparece|esta|se\s+encuentra)|ubicacion|apartado\s+de)\b",
     re.IGNORECASE,
 )
 UNIT_QUERY_PATTERN = re.compile(
-    r"\b(?:mm2|mmÂ²|m2|mÂ²|cm|mm|kw|kva|w|v|a|ma|ohmios?|ohm|%|bar|hz|a/mm2|a/mmÂ²)\b|Ω",
+    r"\b(?:mm2|mm²|m2|m²|cm|mm|kw|kva|w|v|a|ma|ohmios?|ohm|%|bar|hz|a/mm2|a/mm²)\b|Ω",
     re.IGNORECASE,
 )
 LIST_CUE_PATTERN = re.compile(r"(?:^|\n)(?:[-*]\s+|\d+\.\s+)", re.IGNORECASE)
@@ -290,12 +307,13 @@ _QUERY_CACHE_TTL = float(os.getenv("RAG_QUERY_CACHE_TTL", "300"))  # 5 min
 
 
 class _QueryCache:
-    """Cache LRU simple con TTL por entrada."""
+    """Cache LRU thread-safe con TTL por entrada."""
 
     def __init__(self, max_size: int = _QUERY_CACHE_MAX, ttl: float = _QUERY_CACHE_TTL):
         self._cache: OrderedDict[str, Tuple[float, object]] = OrderedDict()
         self._max_size = max_size
         self._ttl = ttl
+        self._lock = threading.Lock()
 
     def _key(self, question: str, n_results: int, domain: str = "") -> str:
         normalized = _normalize_text(question.strip())
@@ -303,25 +321,28 @@ class _QueryCache:
 
     def get(self, question: str, n_results: int, domain: str = ""):
         key = self._key(question, n_results, domain)
-        entry = self._cache.get(key)
-        if entry is None:
-            return None
-        ts, value = entry
-        if time.monotonic() - ts > self._ttl:
-            self._cache.pop(key, None)
-            return None
-        self._cache.move_to_end(key)
-        return value
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return None
+            ts, value = entry
+            if time.monotonic() - ts > self._ttl:
+                self._cache.pop(key, None)
+                return None
+            self._cache.move_to_end(key)
+            return value
 
     def put(self, question: str, n_results: int, value: object, domain: str = "") -> None:
         key = self._key(question, n_results, domain)
-        self._cache[key] = (time.monotonic(), value)
-        self._cache.move_to_end(key)
-        while len(self._cache) > self._max_size:
-            self._cache.popitem(last=False)
+        with self._lock:
+            self._cache[key] = (time.monotonic(), value)
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._max_size:
+                self._cache.popitem(last=False)
 
     def clear(self) -> None:
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
 
 
 _query_cache = _QueryCache()
@@ -820,6 +841,12 @@ def _standalone_number_hits(numbers: List[str], text: str) -> int:
 
 
 def _domain_phrase_queries(clean_question: str) -> List[str]:
+    """Punto de extensión: frases exactas a buscar por dominio.
+
+    Retorna frases que se buscan con $contains y reciben boost ×80 en scoring.
+    Implementar por departamento cuando se necesite forzar retrieval de
+    fragmentos específicos (ej. "distancia mínima de 3 cm").
+    """
     return []
 
 def _extract_reference_terms(text: str) -> List[str]:
@@ -1244,14 +1271,19 @@ def _file_hash(filepath: str) -> str:
 
 
 def _get_indexed_sources() -> Dict[str, str]:
-    if collection.count() == 0:
+    total = collection.count()
+    if total == 0:
         return {}
-    results = collection.get(include=["metadatas"])
     sources: Dict[str, str] = {}
-    for meta in (results.get("metadatas") or []):
-        source = meta.get("source", "")
-        if source and source not in sources:
-            sources[source] = meta.get("file_hash", "")
+    batch_size = 5000
+    for offset in range(0, total, batch_size):
+        results = collection.get(
+            include=["metadatas"], limit=batch_size, offset=offset
+        )
+        for meta in (results.get("metadatas") or []):
+            source = meta.get("source", "")
+            if source and source not in sources:
+                sources[source] = meta.get("file_hash", "")
     return sources
 
 
@@ -1267,12 +1299,10 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     domain = _source_domain_key(source_name)
     regulation = _regulation_key(source_name, domain)
     documents, metadatas, ids = [], [], []
-    table_documents, table_metadatas, table_ids = [], [], []
 
     pdf = fitz.open(str(filepath))
     try:
         for page_index, page in enumerate(pdf):
-            import html as _html
             raw_html = page.get_text("html")
             p_pat = re.compile(r'<p style="top:([\d.]+)pt[^"]*line-height:([\d.]+)pt[^"]*"[^>]*>(.*?)</p>', re.DOTALL)
             lines = []
@@ -1325,10 +1355,11 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     chunk_kind = "text"
                 table_hint = "tabla" if "tabla" in _normalize_text(chunk) else ""
                 table_signal_count = _table_signal_count(chunk)
-                exact_refs = ", ".join(_extract_exact_refs(f"{source_name} {clean_section_name} {chunk}"))
+                chunk_context_str = f"{source_name} {clean_section_name} {chunk}"
+                exact_refs = ", ".join(_extract_exact_refs(chunk_context_str))
+                itc_refs_str = _extract_itc_refs(chunk_context_str)
                 content_intent = _content_intent(chunk, clean_section_name, chunk_kind)
                 # Prefijo de contexto para mejorar embedding y búsqueda léxica
-                itc_refs_str = _extract_itc_refs(f"{source_name} {clean_section_name} {chunk}")
                 context_prefix = ""
                 if itc_refs_str:
                     context_prefix = f"[{itc_refs_str}] "
@@ -1346,7 +1377,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     "chunk": chunk_index,
                     "section": clean_section_name,
                     "section_type": _section_type(clean_section_name),
-                    "itc_refs": _extract_itc_refs(f"{source_name} {clean_section_name} {chunk}"),
+                    "itc_refs": itc_refs_str,
                     "exact_refs": exact_refs,
                     "topics": ", ".join(chunk_topics),
                     "chunk_kind": chunk_kind,
@@ -1357,12 +1388,35 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     "file_hash": file_hash,
                 })
                 ids.append(f"{source_name}-{page_index + 1}-{chunk_index}")
+            # Contexto de página para enriquecer filas de tabla:
+            # ITC refs y sección dominante (primer bloque con sección no vacía).
+            page_itc_refs = _extract_itc_refs(f"{source_name} {text}")
+            page_section = ""
+            for blk in page_blocks:
+                if blk["section"]:
+                    page_section = _sanitize_section_label(
+                        blk["section"][:SECTION_LABEL_MAX_LENGTH]
+                    )
+                    break
             table_rows = _extract_table_row_chunks(page, text)
             for row in table_rows:
-                row_doc = str(row["document"])
+                raw_row_doc = str(row["document"])
                 row_index = int(row["row_index"])
                 table_index = int(row["table_index"])
                 table_title = str(row["table_title"])
+                # Enriquecer texto de fila con contexto de página para
+                # que el embedding capture la ITC y sección a la que pertenece.
+                row_prefix = ""
+                if page_itc_refs:
+                    row_prefix = f"[{page_itc_refs}] "
+                elif page_section:
+                    row_prefix = f"[{page_section}] "
+                if page_section and page_section not in raw_row_doc:
+                    row_doc = f"{row_prefix}{page_section}. {raw_row_doc}"
+                elif row_prefix:
+                    row_doc = f"{row_prefix}{raw_row_doc}"
+                else:
+                    row_doc = raw_row_doc
                 row_metadata = {
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
@@ -1390,16 +1444,14 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 documents.append(row_doc)
                 metadatas.append(row_metadata)
                 ids.append(row_id)
-                table_documents.append(row_doc)
-                table_metadatas.append(row_metadata)
-                table_ids.append(row_id)
+                # Las filas de tabla se indexan solo en la colección principal
+                # (filtrable por chunk_kind="table_row"). Se mantiene
+                # table_collection para consultas legacy hasta próxima reindex.
     finally:
         pdf.close()
 
     if documents:
         collection.add(documents=documents, metadatas=metadatas, ids=ids)
-    if table_documents:
-        table_collection.add(documents=table_documents, metadatas=table_metadatas, ids=table_ids)
     return len(documents)
 
 
@@ -1437,7 +1489,17 @@ def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
         current_hash = _file_hash(str(filepath))
         if source_name in indexed:
             if indexed[source_name] == current_hash:
-                continue
+                # Verificar integridad: si el hash coincide pero no hay chunks,
+                # reindexar (posible corrupción parcial de ChromaDB).
+                probe = collection.get(
+                    where={"source": source_name}, include=[], limit=1
+                )
+                if probe["ids"]:
+                    continue
+                logger.warning(
+                    "Hash coincide pero sin chunks para %s — reindexando",
+                    source_name,
+                )
             _delete_source_chunks(source_name)
             updated += 1
             logger.info("Actualizando índice: %s", source_name)
@@ -2058,9 +2120,9 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             score += source_title_hits * 5
         if mentions_bt_generators:
             if source_domain in {"baja_tension", "guias_tecnicas"}:
-                score += 18
+                score += GENERATORS_DOMAIN_BOOST
             if "itc-bt-40" in metadata_norm or "bt-40" in source_title or "bt40" in source_title:
-                score += 24
+                score += GENERATORS_ITC_BOOST
             generator_hits = sum(
                 1 for term in (
                     "instalaciones generadoras aisladas",
@@ -2074,16 +2136,16 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 )
                 if term in doc_norm or term in section_title or term in metadata_norm
             )
-            score += generator_hits * 8
+            score += generator_hits * GENERATORS_TERM_BOOST
         if mentions_bt40:
             if source_domain == "guias_tecnicas":
-                score += 30
+                score += BT40_DOMAIN_BOOST
                 if any(term in section_title for term in ("clasificacion", "objeto", "campo de aplicacion")):
-                    score += 20
+                    score += BT40_SECTION_BOOST
                 if any(term in doc_norm for term in ("instalaciones generadoras aisladas", "instalaciones generadoras asistidas", "instalaciones generadoras interconectadas")):
-                    score += 25
+                    score += BT40_DOC_TERM_BOOST
             else:
-                score -= 20
+                score -= BT40_MISMATCH_PENALTY
         if expected_domains:
             if source_domain in expected_domains:
                 score += 12
@@ -2219,9 +2281,9 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 lexical_score += TEMPORAL_PRIORITY_BOOST
             if mentions_bt_generators:
                 if _source_domain_key(str(metadata.get("source", "")), metadata) in {"baja_tension", "guias_tecnicas"}:
-                    lexical_score += 10
+                    lexical_score += GENERATORS_LEXICAL_DOMAIN
                 if any(term in doc_norm or term in metadata_norm or term in section_title for term in ("aisladas", "asistidas", "interconectadas", "itc-bt-40", "bt-40")):
-                    lexical_score += 16
+                    lexical_score += GENERATORS_LEXICAL_TERM
             document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
             doc_norm = _normalize_text(document)
             labeled_match_hits = 0

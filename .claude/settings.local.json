@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile src/backend/rag_service.py)",
+      "Bash(python -m py_compile src/backend/ai_service.py)",
+      "Bash(python -m py_compile src/backend/tests/test_eval_rag.py)"
+    ]
+  }
+}
