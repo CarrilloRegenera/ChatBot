@@ -41,6 +41,7 @@ FALLBACK_MIN_RETRIEVAL_QUALITY = (os.getenv("FALLBACK_MIN_RETRIEVAL_QUALITY", "m
 OPENAI_BASELINE_MODEL = (os.getenv("OPENAI_BASELINE_MODEL", "gpt-5.4-nano")).strip()
 TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", "6"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "reglamentos").strip()
+TABLE_COLLECTION_NAME = os.getenv("TABLE_COLLECTION_NAME", f"{COLLECTION_NAME}_tablas").strip()
 RECURSIVE_PDF_SCAN = os.getenv("RECURSIVE_PDF_SCAN", "true").strip().lower() in {"1", "true", "yes", "on"}
 ENABLE_RERANK = os.getenv("ENABLE_RERANK", "true").strip().lower() in {"1", "true", "yes", "on"}
 RERANK_MODEL = os.getenv("RERANK_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()

@@ -1,8 +1,11 @@
 import hashlib
+import json
 import logging
 import os
 import re
+import time
 import unicodedata
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -24,12 +27,22 @@ from config import (
     RERANK_MODEL_REVISION,
     RERANK_WEIGHT,
     STOPWORDS,
+    TABLE_COLLECTION_NAME,
     TOP_K_RESULTS,
 )
 
 
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "900"))
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
+REBT_ITC_PAGE_RANGES = {
+    "itc-bt-07": (69, 83),
+    "itc-bt-18": (123, 130),
+    "itc-bt-20": (132, 141),
+    "itc-bt-25": (172, 174),
+    "itc-bt-26": (176, 176),
+    "itc-bt-40": (236, 239),
+    "itc-bt-52": (293, 293),
+}
 
 # OCR opcional para PDFs escaneados. Activar con RAG_OCR_ENABLED=1.
 # Requiere Tesseract instalado en el sistema y `pytesseract` + `Pillow` en pip.
@@ -70,7 +83,30 @@ def _ocr_page_text(page) -> str:
         )
         return ""
 MIN_CHUNK_LENGTH = 80
+NOISE_MAX_ALPHA_RATIO = 0.3
+NOISE_PAGE_NUMBER_PATTERN = re.compile(r"^[\d\s\-–/.,:;()]+$")
+NOISE_TOC_LINE_PATTERN = re.compile(r"\.{3,}\s*\d+\s*$")
 CORE_TERM_PENALTY = 4
+
+
+def _is_noise_chunk(text: str) -> bool:
+    clean = text.strip()
+    if len(clean) < 40:
+        return True
+    if NOISE_PAGE_NUMBER_PATTERN.match(clean):
+        return True
+    alpha_count = sum(1 for c in clean if c.isalpha())
+    if alpha_count / max(len(clean), 1) < NOISE_MAX_ALPHA_RATIO:
+        return True
+    lines = [line.strip() for line in clean.splitlines() if line.strip()]
+    if lines:
+        toc_lines = sum(1 for line in lines if NOISE_TOC_LINE_PATTERN.search(line))
+        if toc_lines / len(lines) > 0.5:
+            return True
+    words = clean.split()
+    if len(words) >= 4 and len(set(w.lower() for w in words)) <= 2:
+        return True
+    return False
 MAX_TOPIC_TOKENS = 6
 SECTION_LABEL_MAX_LENGTH = 80
 HEADING_LINE_MAX_WORDS = 10
@@ -92,7 +128,10 @@ NORMATIVE_HEADING_PATTERN = re.compile(
     re.IGNORECASE,
 )
 REFERENCE_PATTERN = re.compile(r"\b(?:itc[-\s]*bt[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b", re.IGNORECASE)
-NUMERIC_PATTERN = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:m2|mm2|kw|w|v|a|ma|kv|hz|ohmios?|ohm|%)?\b", re.IGNORECASE)
+NUMERIC_PATTERN = re.compile(
+    r"\b\d+(?:[.,]\d+)?\s*(?:a/mm2|a/mm²|mm2|mm²|m2|m²|kva|kw|ma|kv|cm|mm|m|bar|hz|ohmios?|ohm|w|v|a|%)?\b",
+    re.IGNORECASE,
+)
 DEFINITION_QUERY_PATTERN = re.compile(
     r"(?:\bcomo\s+se\s+denomina\b|\bque\s+es\b|\bque\s+se\s+entiende\s+por\b|\bdefinicion\b|"
     r"\bque\s+funcion\s+cumple[n]?\b|\bpara\s+que\s+sirve[n]?\b|\bcual\s+es\s+su\s+funcion\b|"
@@ -245,6 +284,48 @@ DOMAIN_FOLDER_PREFIXES = {
 
 logger = logging.getLogger(__name__)
 
+# --- Query cache LRU con TTL ---
+_QUERY_CACHE_MAX = int(os.getenv("RAG_QUERY_CACHE_MAX", "64"))
+_QUERY_CACHE_TTL = float(os.getenv("RAG_QUERY_CACHE_TTL", "300"))  # 5 min
+
+
+class _QueryCache:
+    """Cache LRU simple con TTL por entrada."""
+
+    def __init__(self, max_size: int = _QUERY_CACHE_MAX, ttl: float = _QUERY_CACHE_TTL):
+        self._cache: OrderedDict[str, Tuple[float, object]] = OrderedDict()
+        self._max_size = max_size
+        self._ttl = ttl
+
+    def _key(self, question: str, n_results: int, domain: str = "") -> str:
+        normalized = _normalize_text(question.strip())
+        return f"{normalized}::{n_results}::{_normalize_text(domain)}"
+
+    def get(self, question: str, n_results: int, domain: str = ""):
+        key = self._key(question, n_results, domain)
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        ts, value = entry
+        if time.monotonic() - ts > self._ttl:
+            self._cache.pop(key, None)
+            return None
+        self._cache.move_to_end(key)
+        return value
+
+    def put(self, question: str, n_results: int, value: object, domain: str = "") -> None:
+        key = self._key(question, n_results, domain)
+        self._cache[key] = (time.monotonic(), value)
+        self._cache.move_to_end(key)
+        while len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+
+_query_cache = _QueryCache()
+
 
 def _load_sentence_transformer(local_files_only: bool) -> SentenceTransformer:
     kwargs = {"local_files_only": local_files_only}
@@ -285,7 +366,7 @@ class _MultilingualEF:
         return self._encode(input)
 
 
-_EF_VERSION = f"multilingual-minilm-v4-structured-refs-tables-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
+_EF_VERSION = f"multilingual-minilm-v5-structured-refs-table-split-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
@@ -306,6 +387,7 @@ def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -
 chroma_client = get_chroma_client()
 _embedding_fn = _MultilingualEF() if _st_model else None
 collection = _get_or_reset_collection(chroma_client, COLLECTION_NAME, _embedding_fn)
+table_collection = _get_or_reset_collection(chroma_client, TABLE_COLLECTION_NAME, _embedding_fn)
 
 
 def _find_chunk_boundary(text: str, chunk_size: int = CHUNK_SIZE, grace: int = CHUNK_SENTENCE_GRACE) -> int:
@@ -495,18 +577,38 @@ def _table_signal_count(text: str) -> int:
     return count
 
 
+SPECIFIC_SCOPE_TERMS = (
+    "quirofano", "quirófano", "sala de intervencion",
+    "recarga", "alta presion",
+)
+GENERAL_SCOPE_TERMS = (
+    "local", "emplazamiento", "vivienda", "red subterranea", "redes subterraneas",
+    "instalacion interior", "instalaciones interiores", "generadora", "generadoras",
+    "exterior", "interior",
+)
+SCOPE_PENALTY_SPECIFIC = 18
+
+
 def _scope_hint(text: str, section: str = "") -> str:
     normalized = _normalize_text(f"{section} {text}")
     hints = []
-    for term in (
-        "local", "emplazamiento", "vivienda", "red subterranea", "redes subterraneas",
-        "instalacion interior", "instalaciones interiores", "recarga", "quirófano",
-        "quirofano", "sala de intervencion", "generadora", "generadoras", "alta presion",
-        "exterior", "interior",
-    ):
+    for term in GENERAL_SCOPE_TERMS + SPECIFIC_SCOPE_TERMS:
         if _normalize_text(term) in normalized:
             hints.append(term)
+    # Fallback: usar el heading/section como scope genérico si no hay match
+    if not hints and section:
+        section_clean = _normalize_text(section).strip()
+        if section_clean and len(section_clean) >= 6:
+            hints.append(section_clean[:60])
     return ", ".join(list(dict.fromkeys(hints))[:8])
+
+
+def _question_mentions_specific_scope(normalized_question: str) -> set:
+    mentioned = set()
+    for term in SPECIFIC_SCOPE_TERMS:
+        if _normalize_text(term) in normalized_question:
+            mentioned.add(_normalize_text(term))
+    return mentioned
 
 
 def _content_intent(text: str, section: str = "", chunk_kind: str = "") -> str:
@@ -608,13 +710,27 @@ def _extract_numeric_terms(text: str) -> List[str]:
     return [match.group(0).strip().lower() for match in NUMERIC_PATTERN.finditer(text or "")]
 
 
+def _text_without_reference_numbers(text: str) -> str:
+    cleaned = text or ""
+    cleaned = ITC_REFERENCE_PATTERN.sub(" ", cleaned)
+    cleaned = TABLE_REFERENCE_PATTERN.sub(" ", cleaned)
+    cleaned = PAGE_REFERENCE_PATTERN.sub(" ", cleaned)
+    return cleaned
+
+
 def _numeric_query_variants(text: str) -> List[str]:
     variants = []
     seen = set()
     for term in _extract_numeric_terms(text):
         compact = re.sub(r"\s+", "", term)
         spaced = re.sub(r"^(\d+(?:[.,]\d+)?)([^\d\s].*)$", r"\1 \2", compact)
-        for value in (term, compact, spaced):
+        expanded_values = [term, compact, spaced]
+        expanded_match = re.match(r"^(\d+[.,])(\d)([^\d]*)$", compact)
+        if expanded_match:
+            expanded_compact = f"{expanded_match.group(1)}{expanded_match.group(2)}0{expanded_match.group(3)}"
+            expanded_spaced = re.sub(r"^(\d+(?:[.,]\d+)?)([^\d\s].*)$", r"\1 \2", expanded_compact)
+            expanded_values.extend((expanded_compact, expanded_spaced))
+        for value in expanded_values:
             value = value.strip().lower()
             if value and value not in seen:
                 seen.add(value)
@@ -622,13 +738,75 @@ def _numeric_query_variants(text: str) -> List[str]:
     return variants[:12]
 
 
+def _numeric_value_groups(text: str) -> List[List[str]]:
+    groups: List[List[str]] = []
+    seen_groups = set()
+    for term in _extract_numeric_terms(_text_without_reference_numbers(text)):
+        compact = re.sub(r"\s+", "", term.lower())
+        match = re.match(r"^(\d+(?:[.,]\d+)?)(.*)$", compact)
+        if not match:
+            continue
+        number = match.group(1)
+        unit = match.group(2)
+        numbers = [number]
+        sep_match = re.match(r"^(\d+[.,])(\d)$", number)
+        if sep_match:
+            numbers.append(number + "0")
+        terms = []
+        for num in numbers:
+            if unit:
+                terms.append(f"{num}{unit}")
+                terms.append(f"{num} {unit}")
+            else:
+                terms.append(num)
+        clean_terms = []
+        seen_terms = set()
+        for value in terms:
+            value = value.strip().lower()
+            if value and value not in seen_terms:
+                seen_terms.add(value)
+                clean_terms.append(value)
+        group_key = tuple(clean_terms)
+        if clean_terms and group_key not in seen_groups:
+            seen_groups.add(group_key)
+            groups.append(clean_terms)
+    return groups[:6]
+
+
+def _matches_numeric_group(group: List[str], text: str) -> bool:
+    if not group or not text:
+        return False
+    normalized = _normalize_text(text)
+    compact = re.sub(r"\s+", "", normalized)
+    for term in group:
+        normalized_term = _normalize_text(term)
+        compact_term = re.sub(r"\s+", "", normalized_term)
+        if re.fullmatch(r"\d+(?:[.,]\d+)?", normalized_term):
+            if re.search(rf"(?<![\d,.-]){re.escape(normalized_term)}(?![\d,.-])", normalized):
+                return True
+            continue
+        if (
+            re.search(rf"(?<![\d,.-]){re.escape(normalized_term)}(?![a-z0-9,.-])", normalized)
+            or re.search(rf"(?<![\d,.-]){re.escape(compact_term)}(?![a-z0-9,.-])", compact)
+        ):
+            return True
+    return False
+
+
 def _standalone_numbers(text: str) -> List[str]:
     numbers = []
     seen = set()
-    for value in re.findall(r"\d+(?:[.,]\d+)?", text or ""):
+    for value in re.findall(r"\d+(?:[.,]\d+)?", _text_without_reference_numbers(text)):
         if value not in seen:
             seen.add(value)
             numbers.append(value)
+        # Expand single-decimal-digit forms: "0,2" → also "0,20"
+        sep_match = re.match(r"^(\d+[.,])(\d)$", value)
+        if sep_match:
+            expanded = value + "0"
+            if expanded not in seen:
+                seen.add(expanded)
+                numbers.append(expanded)
     return numbers[:10]
 
 
@@ -642,17 +820,7 @@ def _standalone_number_hits(numbers: List[str], text: str) -> int:
 
 
 def _domain_phrase_queries(clean_question: str) -> List[str]:
-    normalized = _normalize_text(clean_question)
-    phrases = []
-    if "canalizaciones" in normalized and ("no electricas" in normalized or "3cm" in normalized or "3 cm" in normalized):
-        phrases.extend((
-            "canalizaciones electricas con otras no electricas",
-            "canalizaciones eléctricas con otras no eléctricas",
-            "distancia minima de 3 cm",
-            "distancia mínima de 3 cm",
-        ))
-    return phrases
-
+    return []
 
 def _extract_reference_terms(text: str) -> List[str]:
     return [match.group(0).strip().lower() for match in REFERENCE_PATTERN.finditer(text or "")]
@@ -705,13 +873,13 @@ def _query_intent(clean_question: str) -> str:
         return "document_location"
     if TABLE_REFERENCE_PATTERN.search(clean_question) or "tabla" in normalized:
         return "table_lookup"
+    if COMPARISON_QUERY_PATTERN.search(normalized):
+        return "comparison"
     if NUMERIC_PATTERN.search(clean_question) and (
         UNIT_QUERY_PATTERN.search(clean_question)
         or any(term in normalized for term in ("densidad", "corriente", "valor", "limite", "distancia", "seccion"))
     ):
         return "numeric_value"
-    if COMPARISON_QUERY_PATTERN.search(normalized):
-        return "comparison"
     if PROCEDURE_QUERY_PATTERN.search(normalized):
         return "procedure"
     if LIST_QUERY_PATTERN.search(normalized):
@@ -786,6 +954,7 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "normalized_question": normalized,
         "numeric_terms": _extract_numeric_terms(clean_question),
         "numeric_variants": _numeric_query_variants(clean_question),
+        "numeric_value_groups": _numeric_value_groups(clean_question),
         "standalone_numbers": _standalone_numbers(clean_question),
         "reference_terms": _extract_reference_terms(clean_question),
         "exact_refs": _extract_exact_refs(clean_question),
@@ -812,9 +981,56 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
     }
 
 
-def _extract_core_terms(question_keywords: set[str]) -> List[str]:
+def _extract_core_terms(question_keywords: set[str], clean_question: str = "") -> List[str]:
     ranked = sorted(question_keywords, key=lambda term: (len(term), term), reverse=True)
-    return ranked[:4]
+    terms = ranked[:4]
+    # Añadir bi-gramas relevantes del texto original si existen como concepto compuesto
+    if clean_question:
+        words = _normalize_text(clean_question).split()
+        for i in range(len(words) - 1):
+            bigram = f"{words[i]} {words[i+1]}"
+            if len(bigram) >= 10 and bigram not in terms and words[i] not in STOPWORDS and words[i+1] not in STOPWORDS:
+                terms.append(bigram)
+                if len(terms) >= 6:
+                    break
+    return terms
+
+
+def _split_metadata_refs(value: object) -> set[str]:
+    refs = set()
+    if isinstance(value, (list, tuple, set)):
+        raw_values = value
+    else:
+        raw_values = re.split(r"[,;]", str(value or ""))
+    for ref in raw_values:
+        normalized = _normalize_text(str(ref)).replace(" ", "-")
+        match = re.search(r"\bitc-bt-\d{1,2}\b", normalized)
+        if match:
+            parts = match.group(0).split("-")
+            refs.add(f"itc-bt-{int(parts[-1]):02d}")
+    return refs
+
+
+def _inferred_itc_refs(metadata: Dict[str, object], document: str = "") -> set[str]:
+    refs = set()
+    refs.update(_split_metadata_refs(metadata.get("itc_refs", "")))
+    refs.update(_split_metadata_refs(metadata.get("exact_refs", "")))
+    refs.update(_split_metadata_refs(f"{metadata.get('source', '')} {metadata.get('section', '')} {document}"))
+    # Fallback legacy: inferir ITC por rango de páginas del BOE-326.
+    # Deprecado — tras reindexar, los chunks llevan itc_refs en metadata
+    # y prefijo [ITC-BT-XX] en el texto, haciendo innecesario este mapeo.
+    source = _normalize_text(str(metadata.get("source", "")))
+    if not refs and ("boe-326" in source or "reglamento_electrotecnico" in source):
+        try:
+            page = int(metadata.get("page", 0) or 0)
+        except Exception:
+            page = 0
+        for ref, (start, end) in REBT_ITC_PAGE_RANGES.items():
+            if start <= page <= end:
+                refs.add(ref)
+    return refs
+
+
 
 
 def _candidate_window(base_results: int, question_keywords: set[str], clean_question: str) -> int:
@@ -1000,10 +1216,20 @@ def _query_mentions_rebt_regulation(question: str) -> bool:
 
 
 def reset_documents() -> None:
-    chroma_client.delete_collection(COLLECTION_NAME)
-    global collection
+    global collection, table_collection
+    _query_cache.clear()
+    for name in (COLLECTION_NAME, TABLE_COLLECTION_NAME):
+        try:
+            chroma_client.delete_collection(name)
+        except Exception:
+            pass
     collection = chroma_client.create_collection(
         name=COLLECTION_NAME,
+        embedding_function=_embedding_fn,
+        metadata={"ef_version": _EF_VERSION},
+    )
+    table_collection = chroma_client.create_collection(
+        name=TABLE_COLLECTION_NAME,
         embedding_function=_embedding_fn,
         metadata={"ef_version": _EF_VERSION},
     )
@@ -1030,9 +1256,10 @@ def _get_indexed_sources() -> Dict[str, str]:
 
 
 def _delete_source_chunks(source_name: str) -> None:
-    results = collection.get(where={"source": source_name}, include=[])
-    if results["ids"]:
-        collection.delete(ids=results["ids"])
+    for col in (collection, table_collection):
+        results = col.get(where={"source": source_name}, include=[])
+        if results["ids"]:
+            col.delete(ids=results["ids"])
 
 
 def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
@@ -1040,6 +1267,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     domain = _source_domain_key(source_name)
     regulation = _regulation_key(source_name, domain)
     documents, metadatas, ids = [], [], []
+    table_documents, table_metadatas, table_ids = [], [], []
 
     pdf = fitz.open(str(filepath))
     try:
@@ -1053,6 +1281,8 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
             for top_s, lh_s, content in p_pat.findall(raw_html):
                 top, lh = float(top_s), float(lh_s)
                 txt = _html.unescape(re.sub(r"<[^>]+>", "", content)).strip()
+                # Normalizar encoding: reemplazar secuencias mojibake comunes
+                txt = unicodedata.normalize("NFC", txt)
                 if txt:
                     if prev_top is not None and (top - prev_top) > prev_lh + 3.0:
                         lines.append("")
@@ -1078,6 +1308,8 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
             printed_page = _extract_printed_page(text)
             page_exact_refs = ", ".join(_extract_exact_refs(f"{source_name} {text}"))
             for chunk_index, chunk in enumerate(_split_text(text), start=1):
+                if _is_noise_chunk(chunk):
+                    continue
                 section_name = ""
                 chunk_topics = _extract_topic_terms(chunk)
                 for block in page_blocks:
@@ -1095,7 +1327,15 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 table_signal_count = _table_signal_count(chunk)
                 exact_refs = ", ".join(_extract_exact_refs(f"{source_name} {clean_section_name} {chunk}"))
                 content_intent = _content_intent(chunk, clean_section_name, chunk_kind)
-                documents.append(chunk)
+                # Prefijo de contexto para mejorar embedding y búsqueda léxica
+                itc_refs_str = _extract_itc_refs(f"{source_name} {clean_section_name} {chunk}")
+                context_prefix = ""
+                if itc_refs_str:
+                    context_prefix = f"[{itc_refs_str}] "
+                elif clean_section_name:
+                    context_prefix = f"[{clean_section_name}] "
+                indexed_chunk = f"{context_prefix}{chunk}" if context_prefix else chunk
+                documents.append(indexed_chunk)
                 metadatas.append({
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
@@ -1123,8 +1363,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 row_index = int(row["row_index"])
                 table_index = int(row["table_index"])
                 table_title = str(row["table_title"])
-                documents.append(row_doc)
-                metadatas.append({
+                row_metadata = {
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
                     "domain": domain,
@@ -1146,13 +1385,21 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     "row_index": row_index,
                     "table_signal_count": max(_table_signal_count(row_doc), 1),
                     "file_hash": file_hash,
-                })
-                ids.append(f"{source_name}-{page_index + 1}-t{table_index}-r{row_index}")
+                }
+                row_id = f"{source_name}-{page_index + 1}-t{table_index}-r{row_index}"
+                documents.append(row_doc)
+                metadatas.append(row_metadata)
+                ids.append(row_id)
+                table_documents.append(row_doc)
+                table_metadatas.append(row_metadata)
+                table_ids.append(row_id)
     finally:
         pdf.close()
 
     if documents:
         collection.add(documents=documents, metadatas=metadatas, ids=ids)
+    if table_documents:
+        table_collection.add(documents=table_documents, metadatas=table_metadatas, ids=table_ids)
     return len(documents)
 
 
@@ -1220,7 +1467,7 @@ def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> in
     return collection.count()
 
 
-def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
+def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESULTS, domain: str = "") -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
         return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
     if _embedding_fn is None:
@@ -1231,6 +1478,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     mentions_bt40 = _query_mentions_bt40(clean_question)
     mentions_bt_generators = _query_mentions_bt_generators(clean_question)
     mentions_rebt_regulation = _query_mentions_rebt_regulation(clean_question)
+    question_specific_scopes = _question_mentions_specific_scope(_normalize_text(clean_question))
     if collection.count() == 0:
         try:
             sync_documents()
@@ -1242,9 +1490,13 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     n_results = max(n_results, 6)
     question_tokens = set(_tokenize(clean_question))
     question_keywords = {token for token in question_tokens if token not in STOPWORDS and len(token) >= 5}
-    core_terms = [_normalize_text(term) for term in _extract_core_terms(question_keywords)]
+    core_terms = [_normalize_text(term) for term in _extract_core_terms(question_keywords, clean_question)]
     query_profile = _build_query_profile(clean_question, question_keywords)
     normalized_question = query_profile["normalized_question"]
+    target_itc_refs = {
+        ref for ref in query_profile["exact_refs"]
+        if re.fullmatch(r"itc-bt-\d{2}", ref)
+    }
     if query_profile["temporal_query"]:
         for t in TEMPORAL_INJECT_TERMS:
             if t not in core_terms:
@@ -1265,9 +1517,11 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         for t in ("generadoras", "aisladas", "asistidas", "interconectadas", "clasificacion", "condiciones"):
             if t not in core_terms:
                 core_terms.append(t)
-    expected_domains = _expected_domains(clean_question)
+    expected_domains = [domain] if domain else _expected_domains(clean_question)
     if mentions_bt40 and "guias_tecnicas" not in expected_domains:
         expected_domains.append("guias_tecnicas")
+    if target_itc_refs and "baja_tension" not in expected_domains:
+        expected_domains.insert(0, "baja_tension")
     if mentions_bt_generators and not expected_domains:
         for domain in ("baja_tension", "guias_tecnicas"):
             if domain not in expected_domains:
@@ -1298,7 +1552,6 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         n_results = max(n_results, 10)
     if query_profile["intent"] in {"numeric_value", "table_lookup"}:
         n_results = max(n_results, 10)
-
     candidate_count = _candidate_window(n_results, question_keywords, clean_question)
     if broad_query:
         candidate_count = min(candidate_count + 12, 80)
@@ -1306,6 +1559,118 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     ids = results.get("ids", [[]])[0]
+    table_collection_hits = 0
+    numeric_comparison_hits = 0
+
+    if target_itc_refs and len(target_itc_refs) <= 3:
+        existing_ids = set(ids)
+        for ref in sorted(target_itc_refs):
+            # Búsqueda por texto (chunks con prefijo [ITC-BT-XX])
+            ref_upper = ref.upper()
+            for search_term in (ref_upper, ref_upper.replace("-", " ")):
+                try:
+                    itc_results = collection.get(
+                        where_document={"$contains": search_term},
+                        include=["documents", "metadatas"],
+                        limit=20,
+                    )
+                    for doc, meta, fid in zip(
+                        itc_results.get("documents", []) or [],
+                        itc_results.get("metadatas", []) or [],
+                        itc_results.get("ids", []) or [],
+                    ):
+                        if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                            continue
+                        if fid not in existing_ids:
+                            documents.append(doc)
+                            metadatas.append(meta)
+                            ids.append(fid)
+                            existing_ids.add(fid)
+                except Exception as exc:
+                    logger.warning("ITC-forced retrieval failed for %s: %s", search_term, exc)
+            # Fallback legacy: búsqueda por rango de páginas (hasta reindexar)
+            page_range = REBT_ITC_PAGE_RANGES.get(ref)
+            if page_range:
+                for page_ref in range(page_range[0], page_range[1] + 1):
+                    try:
+                        itc_results = collection.get(
+                            where={"page": page_ref},
+                            include=["documents", "metadatas"],
+                            limit=16,
+                        )
+                        for doc, meta, fid in zip(
+                            itc_results.get("documents", []) or [],
+                            itc_results.get("metadatas", []) or [],
+                            itc_results.get("ids", []) or [],
+                        ):
+                            if "boe-326" not in _normalize_text(str(meta.get("source", ""))):
+                                continue
+                            if fid not in existing_ids:
+                                documents.append(doc)
+                                metadatas.append(meta)
+                                ids.append(fid)
+                                existing_ids.add(fid)
+                    except Exception as exc:
+                        logger.warning("ITC page-range fallback failed for %s page %s: %s", ref, page_ref, exc)
+
+    table_collection_query = (
+        query_profile["intent"] == "table_lookup"
+        or query_profile["table_query"]
+        or (query_profile["intent"] == "numeric_value" and not query_profile["comparison"])
+    )
+    if table_collection_query:
+        existing_ids = set(ids)
+        try:
+            table_candidate_count = min(max(n_results * 3, 18), 50)
+            table_results = table_collection.query(
+                query_texts=[clean_question],
+                n_results=table_candidate_count,
+            )
+            for doc, meta, fid in zip(
+                table_results.get("documents", [[]])[0],
+                table_results.get("metadatas", [[]])[0],
+                table_results.get("ids", [[]])[0],
+            ):
+                if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                    continue
+                if fid not in existing_ids:
+                    documents.append(doc)
+                    metadatas.append(meta)
+                    ids.append(fid)
+                    existing_ids.add(fid)
+                    table_collection_hits += 1
+        except Exception as exc:
+            logger.warning("Table collection retrieval failed: %s", exc)
+
+    if query_profile["comparison"] and len(query_profile["numeric_value_groups"]) >= 2:
+        existing_ids = set(ids)
+        for group in query_profile["numeric_value_groups"]:
+            for term in group:
+                comparison_collections = (collection, table_collection) if query_profile["table_query"] else (collection,)
+                for col in comparison_collections:
+                    try:
+                        value_results = col.get(
+                            where_document={"$contains": term},
+                            include=["documents", "metadatas"],
+                            limit=16,
+                        )
+                        for doc, meta, fid in zip(
+                            value_results.get("documents", []) or [],
+                            value_results.get("metadatas", []) or [],
+                            value_results.get("ids", []) or [],
+                        ):
+                            if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                                continue
+                            if fid not in existing_ids:
+                                documents.append(doc)
+                                metadatas.append(meta)
+                                ids.append(fid)
+                                existing_ids.add(fid)
+                                numeric_comparison_hits += 1
+                                if col is table_collection:
+                                    table_collection_hits += 1
+                    except Exception as exc:
+                        logger.warning("Numeric comparison retrieval failed for %s: %s", term, exc)
 
     if query_profile["page_refs"]:
         existing_ids = set(ids)
@@ -1335,41 +1700,17 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     if query_profile["numeric_variants"] or query_profile["phrase_queries"]:
         existing_ids = set(ids)
         for term in list(query_profile["numeric_variants"]) + list(query_profile["phrase_queries"]):
-            try:
-                forced_results = collection.get(
-                    where_document={"$contains": term},
-                    include=["documents", "metadatas"],
-                    limit=18,
-                )
-                for doc, meta, fid in zip(
-                    forced_results.get("documents", []) or [],
-                    forced_results.get("metadatas", []) or [],
-                    forced_results.get("ids", []) or [],
-                ):
-                    if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
-                        continue
-                    if fid not in existing_ids:
-                        documents.append(doc)
-                        metadatas.append(meta)
-                        ids.append(fid)
-                        existing_ids.add(fid)
-            except Exception as exc:
-                logger.warning("Value/phrase-forced retrieval failed for %s: %s", term, exc)
-
-    if query_profile["exact_refs"]:
-        existing_ids = set(ids)
-        for ref in query_profile["exact_refs"]:
-            for term in (ref, ref.replace("-", " "), ref.upper()):
+            for col in (collection, table_collection):
                 try:
-                    ref_results = collection.get(
+                    forced_results = col.get(
                         where_document={"$contains": term},
                         include=["documents", "metadatas"],
                         limit=18,
                     )
                     for doc, meta, fid in zip(
-                        ref_results.get("documents", []) or [],
-                        ref_results.get("metadatas", []) or [],
-                        ref_results.get("ids", []) or [],
+                        forced_results.get("documents", []) or [],
+                        forced_results.get("metadatas", []) or [],
+                        forced_results.get("ids", []) or [],
                     ):
                         if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
                             continue
@@ -1378,8 +1719,38 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                             metadatas.append(meta)
                             ids.append(fid)
                             existing_ids.add(fid)
+                            if col is table_collection:
+                                table_collection_hits += 1
                 except Exception as exc:
-                    logger.warning("Reference-forced retrieval failed for %s: %s", term, exc)
+                    logger.warning("Value/phrase-forced retrieval failed for %s: %s", term, exc)
+
+    if query_profile["exact_refs"]:
+        existing_ids = set(ids)
+        for ref in query_profile["exact_refs"]:
+            for term in (ref, ref.replace("-", " "), ref.upper()):
+                for col in (collection, table_collection):
+                    try:
+                        ref_results = col.get(
+                            where_document={"$contains": term},
+                            include=["documents", "metadatas"],
+                            limit=18,
+                        )
+                        for doc, meta, fid in zip(
+                            ref_results.get("documents", []) or [],
+                            ref_results.get("metadatas", []) or [],
+                            ref_results.get("ids", []) or [],
+                        ):
+                            if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                                continue
+                            if fid not in existing_ids:
+                                documents.append(doc)
+                                metadatas.append(meta)
+                                ids.append(fid)
+                                existing_ids.add(fid)
+                                if col is table_collection:
+                                    table_collection_hits += 1
+                    except Exception as exc:
+                        logger.warning("Reference-forced retrieval failed for %s: %s", term, exc)
 
     if expected_domains:
         existing_ids = set(ids)
@@ -1406,23 +1777,31 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
 
     if query_profile["table_query"]:
         existing_ids = set(ids)
-        for table_kind in ("table_row", "table"):
+        for table_kind, col in (("table_row", table_collection), ("table_row", collection), ("table", collection)):
             try:
-                table_results = collection.query(
-                    query_texts=[clean_question],
-                    n_results=min(n_results + 6, 16),
-                    where={"chunk_kind": table_kind},
-                )
+                table_query_args = {
+                    "query_texts": [clean_question],
+                    "n_results": min(n_results + 6, 16),
+                }
+                if col is collection:
+                    table_query_args["where"] = {"chunk_kind": table_kind}
+                table_results = col.query(**table_query_args)
                 for doc, meta, fid in zip(
                     table_results.get("documents", [[]])[0],
                     table_results.get("metadatas", [[]])[0],
                     table_results.get("ids", [[]])[0],
                 ):
+                    if str(meta.get("chunk_kind", "")) != table_kind:
+                        continue
+                    if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                        continue
                     if fid not in existing_ids:
                         documents.append(doc)
                         metadatas.append(meta)
                         ids.append(fid)
                         existing_ids.add(fid)
+                        if col is table_collection:
+                            table_collection_hits += 1
             except Exception as exc:
                 logger.warning("Table-forced retrieval failed for %s: %s", table_kind, exc)
 
@@ -1518,6 +1897,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         section_title = _normalize_text(str(metadata.get("section", "")))
         source_title = _normalize_text(str(metadata.get("source", "")).replace("/", " "))
         source_domain = _source_domain_key(str(metadata.get("source", "")), metadata)
+        inferred_itcs = _inferred_itc_refs(metadata, document)
         document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
         metadata_page = int(metadata.get("page", 0) or 0)
         printed_page = str(metadata.get("printed_page", "") or "")
@@ -1530,6 +1910,12 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             if _normalize_text(term) in doc_norm or re.sub(r"\s+", "", _normalize_text(term)) in doc_compact
         )
         standalone_number_hits = _standalone_number_hits(query_profile["standalone_numbers"], document)
+        numeric_group_hits = 0
+        if query_profile["comparison"] and len(query_profile["numeric_value_groups"]) >= 2:
+            numeric_group_hits = sum(
+                1 for group in query_profile["numeric_value_groups"]
+                if _matches_numeric_group(group, document)
+            )
         reference_hits = sum(1 for term in query_profile["reference_terms"] if term in doc_norm or term in metadata_norm)
         section_hits = sum(1 for term in query_profile["section_terms"] if term in metadata_norm)
         section_title_hits = sum(1 for term in query_profile["section_terms"] if term in section_title)
@@ -1583,9 +1969,25 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             score += (numeric_hits + numeric_variant_hits) * 8
         if standalone_number_hits:
             score += standalone_number_hits * 18
+        if query_profile["comparison"] and len(query_profile["numeric_value_groups"]) >= 2:
+            if numeric_group_hits:
+                context_overlap = sum(1 for kw in question_keywords if _normalize_text(kw) in doc_norm)
+                score += (numeric_group_hits * 22) + (context_overlap * 4)
+            else:
+                score -= 18
+            if str(metadata.get("chunk_kind", "")) in {"table", "table_row"} and not query_profile["table_query"]:
+                score -= 35
         if query_profile["phrase_queries"]:
             phrase_hits = sum(1 for phrase in query_profile["phrase_queries"] if _normalize_text(phrase) in doc_norm)
             score += phrase_hits * 80
+        if target_itc_refs:
+            if query_profile["comparison"] and len(query_profile["numeric_value_groups"]) >= 2:
+                if (inferred_itcs & target_itc_refs) and numeric_group_hits:
+                    score += 18 + (6 * len(inferred_itcs & target_itc_refs))
+            elif inferred_itcs & target_itc_refs:
+                score += 70 + (10 * len(inferred_itcs & target_itc_refs))
+            elif source_domain in {"baja_tension", "guias_tecnicas"}:
+                score -= 8
         # Scope/objeto/finalidad questions benefit from early normative sections.
         if query_profile.get("scope_query"):
             if int(metadata.get("page", 9999) or 9999) <= 3:
@@ -1693,7 +2095,22 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             score -= CORE_TERM_PENALTY
         if overlap_score == 0 and core_hits == 0 and metadata.get("chunk_kind") not in {"numeric", "table"}:
             score -= 6
+        chunk_scope = _normalize_text(str(metadata.get("scope_hint", "")))
+        if chunk_scope and not question_specific_scopes:
+            for specific_term in SPECIFIC_SCOPE_TERMS:
+                if _normalize_text(specific_term) in chunk_scope:
+                    score -= SCOPE_PENALTY_SPECIFIC
+                    break
 
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[SCORE] %s p.%s s=%d | overlap=%d kw=%d core=%d num=%d numvar=%d standalone=%d ref=%d sec=%d phrase=%d",
+                metadata.get("source", "?")[-40:], metadata.get("page", "?"),
+                score, overlap_score, keyword_hits, core_hits, numeric_hits,
+                numeric_variant_hits, standalone_number_hits, reference_hits,
+                section_hits,
+                sum(1 for phrase in query_profile["phrase_queries"] if _normalize_text(phrase) in doc_norm) if query_profile["phrase_queries"] else 0,
+            )
         ranked_items.append((score, doc_id, document, metadata))
         seen_ids.add(doc_id)
 
@@ -1724,6 +2141,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             metadata_norm = _metadata_text(metadata)
             section_title = _normalize_text(str(metadata.get("section", "")))
             lexical_score = 8
+            inferred_itcs = _inferred_itc_refs(metadata, document)
             try:
                 metadata_page = int(metadata.get("page", 0) or 0)
             except Exception:
@@ -1753,8 +2171,25 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                     if _normalize_text(term) in doc_norm or re.sub(r"\s+", "", _normalize_text(term)) in doc_compact
                 ) * 8
             lexical_score += _standalone_number_hits(query_profile["standalone_numbers"], document) * 16
+            if query_profile["comparison"] and len(query_profile["numeric_value_groups"]) >= 2:
+                numeric_group_hits = sum(
+                    1 for group in query_profile["numeric_value_groups"]
+                    if _matches_numeric_group(group, document)
+                )
+                if numeric_group_hits:
+                    context_overlap = sum(1 for kw in question_keywords if _normalize_text(kw) in doc_norm)
+                    lexical_score += (numeric_group_hits * 18) + (context_overlap * 4)
+                else:
+                    lexical_score -= 12
+                if str(metadata.get("chunk_kind", "")) in {"table", "table_row"} and not query_profile["table_query"]:
+                    lexical_score -= 30
             if query_profile["phrase_queries"]:
                 lexical_score += sum(1 for phrase in query_profile["phrase_queries"] if _normalize_text(phrase) in doc_norm) * 70
+            if target_itc_refs:
+                if inferred_itcs & target_itc_refs:
+                    lexical_score += 55 + (8 * len(inferred_itcs & target_itc_refs))
+                elif _source_domain_key(str(metadata.get("source", "")), metadata) in {"baja_tension", "guias_tecnicas"}:
+                    lexical_score -= 6
             if core_terms and not any(core in doc_norm for core in core_terms):
                 lexical_score -= CORE_TERM_PENALTY
             if query_profile["reference_terms"] and any(ref in doc_norm for ref in query_profile["reference_terms"]):
@@ -1800,6 +2235,12 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 )
                 if query_profile["disambiguation_terms"] and disambiguation_hits == 0:
                     lexical_score -= LABELED_CONTEXT_PENALTY
+            chunk_scope = _normalize_text(str(metadata.get("scope_hint", "")))
+            if chunk_scope and not question_specific_scopes:
+                for specific_term in SPECIFIC_SCOPE_TERMS:
+                    if _normalize_text(specific_term) in chunk_scope:
+                        lexical_score -= SCOPE_PENALTY_SPECIFIC
+                        break
             ranked_items.append((lexical_score, doc_id, document, metadata))
             seen_ids.add(doc_id)
 
@@ -1900,6 +2341,95 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         if focused:
             focused.sort(key=lambda item: (_focus_hits(item[2], core_terms), item[0]), reverse=True)
             selected = (focused + non_focused)[:n_results]
+
+    if query_profile["comparison"] and len(query_profile["numeric_value_groups"]) >= 2 and selected:
+        value_groups = query_profile["numeric_value_groups"]
+        covered = set()
+        for group_index, group in enumerate(value_groups):
+            if any(_matches_numeric_group(group, item[2]) for item in selected):
+                covered.add(group_index)
+        missing = [idx for idx in range(len(value_groups)) if idx not in covered]
+        if missing:
+            candidates_outside = [
+                item for item in ranked_items
+                if item[1] not in selected_ids
+            ]
+            for group_index in missing:
+                group = value_groups[group_index]
+                for cand in candidates_outside:
+                    if _matches_numeric_group(group, cand[2]):
+                        old_id = selected[-1][1]
+                        selected[-1] = cand
+                        selected_ids.discard(old_id)
+                        selected_ids.add(cand[1])
+                        break
+
+        def _comparison_context_terms(group_index: int) -> List[str]:
+            def _numeric_context_text(document: str, group: List[str]) -> str:
+                normalized_document = _normalize_text(document)
+                for term in group:
+                    normalized_term = _normalize_text(term)
+                    idx = normalized_document.find(normalized_term)
+                    if idx >= 0:
+                        start = max(0, idx - 240)
+                        end = min(len(normalized_document), idx + len(normalized_term) + 240)
+                        return normalized_document[start:end]
+                return normalized_document
+
+            term_counts: Dict[str, int] = {}
+            for other_index, other_group in enumerate(value_groups):
+                if other_index == group_index:
+                    continue
+                for _, _, document, metadata in selected:
+                    if not _matches_numeric_group(other_group, document):
+                        continue
+                    text = f"{metadata.get('section', '')} {_numeric_context_text(document, other_group)}"
+                    for token in _tokenize(text):
+                        normalized = _normalize_text(token)
+                        if (
+                            len(normalized) < 7
+                            or normalized in STOPWORDS
+                            or re.search(r"\d", normalized)
+                            or normalized.startswith("itc")
+                        ):
+                            continue
+                        term_counts[normalized] = term_counts.get(normalized, 0) + 1
+            return [
+                term for term, _ in sorted(
+                    term_counts.items(),
+                    key=lambda item: (item[1], len(item[0]), item[0]),
+                    reverse=True,
+                )[:10]
+            ]
+
+        for group_index, group in enumerate(value_groups):
+            context_terms = _comparison_context_terms(group_index)
+            if not context_terms:
+                continue
+            group_candidates = [item for item in ranked_items if _matches_numeric_group(group, item[2])]
+            if not group_candidates:
+                continue
+
+            def _context_hit_count(item: Tuple[float, str, str, Dict[str, object]]) -> int:
+                doc_norm = _normalize_text(f"{item[3].get('section', '')} {item[2]}")
+                return sum(1 for term in context_terms if term in doc_norm)
+
+            selected_group_items = [item for item in selected if _matches_numeric_group(group, item[2])]
+            current_context = max((_context_hit_count(item) for item in selected_group_items), default=0)
+            best_candidate = max(group_candidates, key=lambda item: (_context_hit_count(item), item[0]))
+            best_context = _context_hit_count(best_candidate)
+            if best_context <= current_context or best_candidate[1] in selected_ids:
+                continue
+            replace_index = None
+            if selected_group_items:
+                weakest_id = min(selected_group_items, key=lambda item: (_context_hit_count(item), item[0]))[1]
+                replace_index = next((idx for idx, item in enumerate(selected) if item[1] == weakest_id), None)
+            if replace_index is None:
+                replace_index = len(selected) - 1
+            old_id = selected[replace_index][1]
+            selected[replace_index] = best_candidate
+            selected_ids.discard(old_id)
+            selected_ids.add(best_candidate[1])
 
     if mentions_rebt_regulation and query_profile["scope_query"] and selected:
         selected.sort(
@@ -2033,7 +2563,9 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         section_suffix = f", {clean_section}" if clean_section else ""
         printed_suffix = f", pag. doc {metadata.get('printed_page')}" if metadata.get("printed_page") else ""
         kind_suffix = f", {metadata.get('chunk_kind')}" if metadata.get("chunk_kind") in {"table", "table_row"} else ""
-        source_label = f"{metadata['source']} (pag. {metadata['page']}{printed_suffix}{section_suffix}{kind_suffix})"
+        inferred_itcs = sorted(_inferred_itc_refs(metadata, document))
+        itc_suffix = f", {', '.join(ref.upper() for ref in inferred_itcs[:3])}" if inferred_itcs else ""
+        source_label = f"{metadata['source']} (pag. {metadata['page']}{printed_suffix}{itc_suffix}{section_suffix}{kind_suffix})"
         context_parts.append(f"[{source_label}]\n{document}")
         if source_label not in seen_sources:
             sources.append(source_label)
@@ -2077,20 +2609,37 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         "domain_match_ratio": round(matched_domains / max(len(selected), 1), 4) if expected_domains else 1.0,
         "broad_query": broad_query,
         "table_selected_chunks": table_selected_chunks,
+        "table_collection_hits": table_collection_hits,
+        "numeric_comparison_hits": numeric_comparison_hits,
+        "target_itc_refs": sorted(target_itc_refs),
         "table_selected_signal_count": table_selected_signal_count,
         "table_candidate_signal_count": table_candidate_signal_count,
         "table_coverage_ratio": table_coverage_ratio,
     }
+    if logger.isEnabledFor(logging.DEBUG):
+        for rank, item in enumerate(selected, 1):
+            logger.debug(
+                "[SELECTED #%d] score=%.1f src=%s p.%s sect=%s",
+                rank, item[0], item[3].get("source", "?")[-45:],
+                item[3].get("page", "?"), item[3].get("section", "")[:40],
+            )
     return "\n\n".join(context_parts), sources, retrieval_stats
 
 
-def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
+def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, domain: str = "") -> Tuple[str, List[str], Dict[str, object]]:
+    cached = _query_cache.get(question, n_results, domain)
+    if cached is not None:
+        logger.debug("Cache hit para query: %s", question[:60])
+        return cached
     if RAG_BACKEND == "azure_search":
         from azure_rag_service import search_documents_detailed_azure
-        return search_documents_detailed_azure(question, n_results=n_results)
-    return _search_documents_detailed_chroma(question, n_results=n_results)
+        result = search_documents_detailed_azure(question, n_results=n_results)
+    else:
+        result = _search_documents_detailed_chroma(question, n_results=n_results, domain=domain)
+    _query_cache.put(question, n_results, result, domain)
+    return result
 
 
-def search_documents(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str]]:
-    context, sources, _ = search_documents_detailed(question, n_results=n_results)
+def search_documents(question: str, n_results: int = TOP_K_RESULTS, domain: str = "") -> Tuple[str, List[str]]:
+    context, sources, _ = search_documents_detailed(question, n_results=n_results, domain=domain)
     return context, sources

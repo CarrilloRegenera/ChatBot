@@ -2,6 +2,7 @@ from openai import OpenAI
 import logging
 import re
 import time
+import unicodedata
 from typing import Dict, List, Optional, Tuple
 
 from config import (
@@ -280,7 +281,10 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
                 "- Si el contexto contiene lineas que empiezan por FILA_TABLA, tratalas como datos estructurados: respeta la relacion columna-valor y no reasignes valores a otra columna.\n"
             )
         if profile["comparison"]:
-            intent_hint += "- Si la pregunta compara conceptos, responde alineando diferencias o similitudes relevantes sin extenderte.\n"
+            intent_hint += (
+                "- Si la pregunta compara conceptos, valores o distancias, identifica cada valor con su fuente, ITC/apartado y ambito cuando aparezcan en el contexto.\n"
+                "- Si el contexto contiene ambos valores comparados, no respondas que falta informacion; explica que corresponden a supuestos distintos.\n"
+            )
         if profile["motivation"]:
             intent_hint += (
                 "- Si la pregunta pide por que se aprobo una norma, prioriza la justificacion, finalidad o adaptacion normativa del preambulo; "
@@ -314,37 +318,52 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
 
         output_instruction = _build_output_instruction(profile)
 
-        return f"""Eres un asistente tecnico especializado en normativa tecnica espanola.
-Tu tarea es responder usando SOLO el contexto proporcionado.
-No uses conocimiento externo, no completes huecos y no hagas suposiciones.
+        return f"""Eres un asistente tecnico interno de Regenera Energy, especializado en normativa tecnica espanola.
+Respondes usando EXCLUSIVAMENTE el contexto proporcionado. No usas conocimiento externo.
 
-Reglas obligatorias:
-1. Responde solo a lo preguntado.
-2. Usa un tono tecnico y claro.
-3. Prioriza valores numericos, limites, condiciones, excepciones, tablas, apartados y requisitos.
-4. Si el dato aparece de forma explicita en el contexto, dilo de forma directa.
-5. Si solo hay informacion parcial, responde solo con esa parte y deja claro lo que falta.
-6. Si el contexto no permite responder de forma suficiente, escribe exactamente: "No hay informacion suficiente en el contexto recuperado".
-7. No incluyas informacion tangencial aunque aparezca en el contexto.
-8. No menciones normas, ITC, articulos, tablas o conceptos que no aparezcan en el contexto.
-9. Si hay cifras en el contexto, copialas textualmente.
-10. Si la pregunta pide numeros y el contexto no los contiene, indicalo explicitamente.
-11. Si hay varias fuentes y aportan datos distintos o parciales, integralo sin inventar relaciones entre ellas.
-12. No copies fragmentos incompletos del contexto; si una frase esta truncada, reformulala solo con la parte segura.
-13. Si el contexto contiene expresiones como "segun se indica mas adelante" o referencias internas incompletas, no las copies literalmente; resume la condicion recuperada y aclara si falta el detalle posterior.
-14. No conviertas un requisito de una ITC, tabla, emplazamiento o caso concreto en requisito general de todas las instalaciones.
-15. Si el contexto recuperado trae varios fragmentos complementarios del mismo apartado, integralo en una unica respuesta; no digas que no hay informacion suficiente solo porque un fragmento aislado sea parcial.
-16. Si aparecen filas estructuradas "FILA_TABLA", usa cada par columna: valor como fuente prioritaria para consultas numericas o tabulares; no mezcles columnas de filas distintas.
-17. Si el usuario menciona una pagina, tabla, apartado o ITC concreta y el contexto la contiene, responde desde esa referencia antes que desde fragmentos parecidos.
-18. Responde en texto plano. No uses formato markdown: sin asteriscos ni cabeceras. Si la respuesta es una lista, usa lineas numeradas simples 1. 2. 3.; si no es una lista, escribe frases completas que terminen con punto.
-19. Maxima precision: distingue entre dato literal, sintesis razonable y falta de evidencia. No presentes una inferencia como si fuera una cita literal.
-20. Generalizacion controlada: puedes sintetizar una regla, funcion o criterio comun solo cuando el contexto lo soporte; conserva siempre condiciones, excepciones, ambito y vigencia.
+PRINCIPIO FUNDAMENTAL:
+Precision sobre completitud. Una respuesta parcial y correcta es mejor que una completa con invenciones.
+
+A) AISLAMIENTO DE DOMINIO:
+- Cada fragmento del contexto indica su fuente entre corchetes. Identifica el dominio de cada uno (REBT, RITE, LAT, guias tecnicas, etc.).
+- Si la pregunta es sobre un reglamento concreto, usa SOLO fragmentos de ese reglamento. Ignora los demas aunque parezcan relacionados.
+- No combines requisitos de reglamentos distintos como si fueran una unica regla.
+- Si un valor, limite o condicion aparece en un contexto de ITC o reglamento diferente al preguntado, no lo uses.
+- Excepcion para preguntas comparativas: si el usuario compara dos valores, ITC, tablas, apartados o casos distintos, usa los fragmentos de cada referencia recuperada para explicar la diferencia de ambito. No los mezcles como una sola regla.
+- Si el usuario menciona una pagina, tabla, apartado o ITC concreta y el contexto la contiene, responde desde esa referencia antes que desde fragmentos parecidos.
+- Si la pregunta pide la ITC y el encabezado de fuente contiene una ITC, cita esa ITC junto con el apartado o tabla cuando sea posible.
+
+B) MANEJO DE RUIDO:
+- Ignora fragmentos que sean indices, encabezados repetidos, pies de pagina, marcas de agua, o texto sin contenido tecnico.
+- Si un fragmento esta truncado o incompleto, usa solo la parte comprensible. No completes lo que falta.
+- Si el contexto contiene expresiones como "segun se indica mas adelante" o referencias internas sin contenido, no las copies. Resume solo lo que el contexto muestra.
+- No copies fragmentos incompletos del contexto; si una frase esta truncada, reformulala solo con la parte segura.
+
+C) NIVELES DE CONFIANZA EN TU RESPUESTA:
+- Dato literal del contexto: afirmalo directamente, copia cifras textualmente con sus unidades y condiciones.
+- Sintesis de varios fragmentos del MISMO reglamento y MISMO apartado: integra en una respuesta coherente. No digas que no hay informacion suficiente solo porque un fragmento aislado sea parcial.
+- Fragmentos de fuentes distintas con datos parciales: integralos sin inventar relaciones entre ellas. Responde lo que puedas y di que falta.
+- Sin evidencia suficiente: escribe exactamente "No hay informacion suficiente en el contexto recuperado".
+- Maxima precision: no presentes una inferencia como si fuera una cita literal.
+
+D) PRECISION TECNICA:
+- Prioriza valores numericos, limites, condiciones, excepciones, tablas, apartados y requisitos.
+- No conviertas un requisito de una ITC, tabla, emplazamiento o caso concreto en requisito general de todas las instalaciones.
+- Conserva siempre excepciones, condiciones, limites de ambito y vigencia que aparezcan en el contexto.
+- Generalizacion controlada: puedes sintetizar una regla o criterio comun solo cuando el contexto lo soporte.
+- Si el contexto contiene filas "FILA_TABLA", respeta la relacion columna-valor sin mezclar filas distintas.
+- Si la pregunta pide numeros y el contexto no los contiene, indicalo explicitamente.
 {definition_hint}
 {intent_hint}
 
-{history_section}Formato de salida obligatorio:
+E) RESPONDE SOLO LO PREGUNTADO:
+- No incluyas informacion tangencial aunque aparezca en el contexto.
+- No menciones normas, ITCs, articulos, tablas o conceptos que no aparezcan en el contexto.
+- Usa un tono tecnico y claro.
+
+{history_section}FORMATO DE SALIDA:
 {output_instruction}
-Texto plano unicamente. No anadas lineas finales de metadatos como "Base documental" o "Fuentes".
+Texto plano unicamente. Sin asteriscos, sin cabeceras, sin lineas de metadatos finales como "Base documental" o "Fuentes".
 
 CONTEXTO:
 {context}
@@ -514,6 +533,135 @@ def postprocess_answer(text: str, question: str = "") -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = re.sub(r" {2,}", " ", cleaned)
     return cleaned
+
+
+def _is_insufficient_answer(text: str) -> bool:
+    lower_text = (text or "").lower()
+    return any(
+        phrase in lower_text
+        for phrase in (
+            "no hay informacion suficiente",
+            "no hay información suficiente",
+            "no tengo informacion suficiente",
+            "no tengo información suficiente",
+            "no dispongo de contexto",
+            "no hay contexto documental",
+            "no dispongo de contexto documental",
+        )
+    )
+
+
+def _question_numeric_groups(question: str) -> List[List[str]]:
+    groups: List[List[str]] = []
+    seen_groups = set()
+    for match in re.finditer(
+        r"\b\d+(?:[.,]\d+)?\s*(?:a/mm2|a/mm²|mm2|mm²|m2|m²|kva|kw|ma|kv|cm|mm|m|bar|hz|ohmios?|ohm|w|v|a|%)?\b",
+        question or "",
+        flags=re.IGNORECASE,
+    ):
+        term = re.sub(r"\s+", "", match.group(0).lower())
+        parsed = re.match(r"^(\d+(?:[.,]\d+)?)(.*)$", term)
+        if not parsed:
+            continue
+        number, unit = parsed.group(1), parsed.group(2)
+        numbers = [number]
+        if re.match(r"^\d+[.,]\d$", number):
+            numbers.append(number + "0")
+        terms = []
+        for value in numbers:
+            terms.append(value)
+            if unit:
+                terms.append(f"{value}{unit}")
+                terms.append(f"{value} {unit}")
+        clean_terms = []
+        seen_terms = set()
+        for value in terms:
+            if value and value not in seen_terms:
+                seen_terms.add(value)
+                clean_terms.append(value)
+        group_key = tuple(clean_terms)
+        if clean_terms and group_key not in seen_groups:
+            seen_groups.add(group_key)
+            groups.append(clean_terms)
+    return groups[:6]
+
+
+def _context_matches_numeric_group(group: List[str], text: str) -> bool:
+    normalized = unicodedata.normalize("NFD", text or "")
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn").lower()
+    compact = re.sub(r"\s+", "", normalized)
+    for term in group:
+        normalized_term = unicodedata.normalize("NFD", term or "")
+        normalized_term = "".join(ch for ch in normalized_term if unicodedata.category(ch) != "Mn").lower()
+        compact_term = re.sub(r"\s+", "", normalized_term)
+        if normalized_term in normalized or compact_term in compact:
+            return True
+    return False
+
+
+def _sentence_with_numeric_group(group: List[str], chunk: str) -> str:
+    body = re.sub(r"^\[[^\]]+\]\s*", "", chunk or "").strip()
+    sentences = re.split(r"(?<=[.;:])\s+", body)
+    for sentence in sentences:
+        if _context_matches_numeric_group(group, sentence):
+            return re.sub(r"\s+", " ", sentence).strip()
+    return re.sub(r"\s+", " ", body).strip()[:260].rstrip()
+
+
+def _display_numeric_group_value(group: List[str], chunk: str) -> str:
+    normalized_chunk = unicodedata.normalize("NFD", chunk or "")
+    normalized_chunk = "".join(ch for ch in normalized_chunk if unicodedata.category(ch) != "Mn").lower()
+    compact_chunk = re.sub(r"\s+", "", normalized_chunk)
+    for term in sorted(group, key=len, reverse=True):
+        normalized_term = unicodedata.normalize("NFD", term or "")
+        normalized_term = "".join(ch for ch in normalized_term if unicodedata.category(ch) != "Mn").lower()
+        compact_term = re.sub(r"\s+", "", normalized_term)
+        if normalized_term in normalized_chunk or compact_term in compact_chunk:
+            return term
+    return group[0]
+
+
+def _repair_numeric_comparison_insufficient(question: str, answer: str, context: str) -> Optional[str]:
+    normalized_question = (question or "").lower()
+    if not _is_insufficient_answer(answer):
+        return None
+    if not any(term in normalized_question for term in ("diferencia", "compara", "comparar", "frente", "versus")):
+        return None
+
+    groups = _question_numeric_groups(question)
+    if len(groups) < 2:
+        return None
+
+    chunks = _split_context_chunks(context)
+    matched = []
+    used_chunks = set()
+    for group in groups:
+        match = None
+        for idx, chunk in enumerate(chunks):
+            if idx in used_chunks:
+                continue
+            if _context_matches_numeric_group(group, chunk):
+                label_match = re.match(r"\[([^\]]+)\]", chunk)
+                label = label_match.group(1) if label_match else "contexto recuperado"
+                sentence = _sentence_with_numeric_group(group, chunk)
+                match = {
+                    "value": _display_numeric_group_value(group, chunk),
+                    "label": label,
+                    "sentence": sentence,
+                }
+                used_chunks.add(idx)
+                break
+        if match:
+            matched.append(match)
+
+    if len(matched) < 2:
+        return None
+
+    lines = ["No son requisitos equivalentes; corresponden a supuestos distintos."]
+    for item in matched[:3]:
+        lines.append(f"- {item['value']}: aparece en {item['label']}. {item['sentence']}")
+    lines.append("Por tanto, compara siempre el valor junto con su ITC/apartado y el tipo de canalización o instalación al que se aplica.")
+    return "\n".join(lines)
 
 
 def _infer_document_basis(answer: str) -> str:
@@ -955,6 +1103,11 @@ def generate_ai_response_with_fallback(
         result["avail_fallback"] = True
         result["source_model"] = OPENAI_MODEL
 
+    repaired_answer = _repair_numeric_comparison_insufficient(question, result.get("text", ""), context)
+    if repaired_answer:
+        result["text"] = repaired_answer
+        result["repaired_numeric_comparison"] = True
+
     _, confidence = validate_answer(question, result["text"], context, sources)
     table_coverage_ratio = float((retrieval_stats or {}).get("table_coverage_ratio", 1.0) or 0.0)
     domain_match_ratio = float((retrieval_stats or {}).get("domain_match_ratio", 1.0) or 0.0)
@@ -1000,6 +1153,11 @@ def generate_ai_response_with_fallback(
     )
     try:
         result_pro = generate_ai_response(question, context=context, history=history, model=LLM_SECONDARY_MODEL)
+        repaired_answer = _repair_numeric_comparison_insufficient(question, result_pro.get("text", ""), context)
+        if repaired_answer:
+            result_pro["text"] = repaired_answer
+            result_pro["repaired_numeric_comparison"] = True
+
         result_pro["escalated"] = True
         result_pro["flash_confidence"] = round(confidence, 4)
         result_pro["base_confidence"] = round(confidence, 4)
