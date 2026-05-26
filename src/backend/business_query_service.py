@@ -3,6 +3,19 @@ import unicodedata
 from typing import Any, Dict, List
 
 from appregenera_client import AppRegeneraClientError, get_json, post_json
+from appregenera_sql_service import (
+    first_non_null,
+    get_cierre_detail as sql_get_cierre_detail,
+    get_licitacion_detail as sql_get_licitacion_detail,
+    get_produccion_detail as sql_get_produccion_detail,
+    is_available as appregenera_sql_available,
+    parse_decimal,
+    query_cierre_aggregate as sql_query_cierre_aggregate,
+    query_licitaciones_aggregate as sql_query_licitaciones_aggregate,
+    query_produccion_aggregate as sql_query_produccion_aggregate,
+    search_licitaciones as sql_search_licitaciones,
+    search_produccion as sql_search_produccion,
+)
 from config import APPREGENERA_DEV_BYPASS_KEY
 
 
@@ -53,32 +66,43 @@ PRODUCTION_MONTH_FIELDS = {
 }
 
 LICITACION_FIELD_SPECS = [
-    ("numeroOferta", "numero de oferta", ("numero de oferta", "numero oferta", "n oferta")),
-    ("numeroProyecto", "numero de proyecto", ("numero de proyecto", "numero proyecto", "n proyecto")),
-    ("obra", "obra", ("nombre de la obra", "nombre obra")),
-    ("cliente", "cliente", ("cliente",)),
-    ("tipo", "tipo", ("tipo de licitacion", "tipo licitacion")),
+    ("tipo", "tipo", ("tipo",)),
     ("tipoRegistro", "tipo de registro", ("tipo de registro", "tipo registro")),
-    ("importeContratado", "importe contratado", ("importe contratado", "importe adjudicado")),
-    ("produccion", "produccion", ("produccion",)),
+    ("numeroOferta", "numero de estudio", ("numero de estudio", "n estudio", "estudio", "numero de oferta", "numero oferta", "n oferta")),
+    ("numeroProyecto", "numero de proyecto", ("numero de proyecto", "numero proyecto", "n proyecto")),
+    ("obra", "obra", ("obra", "nombre de la obra", "nombre obra")),
+    ("cliente", "cliente", ("cliente",)),
     ("tipoObra", "tipo de obra", ("tipo de obra", "tipo obra")),
-    ("observaciones", "observaciones", ("observaciones",)),
-    ("enlaceLicitacion", "enlace de licitacion", ("enlace de licitacion", "enlace licitacion", "url licitacion", "enlace")),
-    ("situacionOferta", "situacion de la oferta", ("situacion de la oferta", "situacion oferta")),
-    ("fechaAdjudicacion", "fecha de adjudicacion", ("fecha de adjudicacion", "fecha adjudicacion", "cuando se adjudico", "cuando fue adjudicada")),
-    ("fechaPresentacion", "fecha de presentacion", ("fecha de presentacion", "fecha presentacion", "cuando se presento")),
-    ("probabilidadAdjudicacion", "probabilidad de adjudicacion", ("probabilidad de adjudicacion", "probabilidad adjudicacion")),
-    ("fechaApertura", "fecha de apertura", ("fecha de apertura", "fecha apertura")),
-    ("carteraSiguienteAnio", "cartera del siguiente ano", ("cartera siguiente ano", "cartera del siguiente ano")),
-    ("periodoEjecucion", "periodo de ejecucion", ("periodo de ejecucion", "periodo ejecucion", "plazo de ejecucion", "plazo ejecucion")),
-    ("plan2026", "plan 2026", ("plan 2026", "pipeline 2026")),
-    ("plan2027", "plan 2027", ("plan 2027", "pipeline 2027")),
-    ("plan2028", "plan 2028", ("plan 2028", "pipeline 2028")),
-    ("plan2029", "plan 2029", ("plan 2029", "pipeline 2029")),
-    ("pendiente", "pendiente", ("pendiente",)),
-    ("concurso", "concurso", ("concurso",)),
     ("tipologiaObra", "tipologia de obra", ("tipologia de obra", "tipologia obra")),
     ("estado", "estado", ("estado",)),
+    ("situacionOferta", "situacion de la oferta", ("situacion de la oferta", "situacion oferta")),
+    ("probabilidadAdjudicacion", "probabilidad de adjudicacion", ("probabilidad de adjudicacion", "probabilidad adjudicacion")),
+    ("fechaPresentacion", "fecha de presentacion", ("fecha de presentacion", "fecha presentacion")),
+    ("fechaApertura", "fecha de apertura", ("fecha de apertura", "fecha apertura")),
+    ("fechaAdjudicacion", "fecha de adjudicacion", ("fecha de adjudicacion", "fecha adjudicacion")),
+    ("periodoEjecucion", "periodo de ejecucion", ("periodo de ejecucion", "periodo ejecucion")),
+    ("observaciones", "observaciones", ("observaciones", "observacion")),
+    ("enlaceLicitacion", "enlace de licitacion", ("enlace de licitacion", "enlace licitacion", "url licitacion")),
+    ("importeContratado", "importe contratado", ("importe contratado", "importe adjudicado")),
+    ("importeContratadoPrevio", "importe contratado previo", ("importe previo", "importe contratado previo")),
+    ("importeContratado2026C1", "importe contratado C1 2026", ("importe contratado c1 2026", "importe contratado primer cuatrimestre 2026")),
+    ("importeContratado2026C2", "importe contratado C2 2026", ("importe contratado c2 2026", "importe contratado segundo cuatrimestre 2026")),
+    ("importeContratado2026C3", "importe contratado C3 2026", ("importe contratado c3 2026", "importe contratado tercer cuatrimestre 2026")),
+    ("produccion", "backlog", ("backlog", "produccion", "backlog total")),
+    ("produccionPrevio", "backlog previo", ("backlog previo", "produccion previa", "produccion previo")),
+    ("plan2026", "pipeline 2026", ("pipeline 2026", "plan 2026")),
+    ("plan2027", "pipeline 2027", ("pipeline 2027", "plan 2027")),
+    ("plan2028", "pipeline 2028", ("pipeline 2028", "plan 2028")),
+    ("plan2029", "pipeline 2029", ("pipeline 2029", "plan 2029")),
+    ("produccion2026", "backlog 2026", ("backlog 2026", "produccion 2026")),
+    ("produccion2026C1", "backlog C1 2026", ("backlog c1 2026", "produccion c1 2026", "backlog primer cuatrimestre 2026")),
+    ("produccion2026C2", "backlog C2 2026", ("backlog c2 2026", "produccion c2 2026", "backlog segundo cuatrimestre 2026")),
+    ("produccion2026C3", "backlog C3 2026", ("backlog c3 2026", "produccion c3 2026", "backlog tercer cuatrimestre 2026")),
+    ("produccion2027", "backlog 2027", ("backlog 2027", "produccion 2027")),
+    ("produccion2028", "backlog 2028", ("backlog 2028", "produccion 2028")),
+    ("produccion2029", "backlog 2029", ("backlog 2029", "produccion 2029")),
+    ("concurso", "concurso", ("concurso", "esta en concurso", "esta en concurso?", "esta en concurso o no")),
+    ("pendiente", "pendiente", ("pendiente",)),
 ]
 
 PRODUCCION_FIELD_SPECS = [
@@ -87,8 +111,7 @@ PRODUCCION_FIELD_SPECS = [
     ("tipoCliente", "tipo de cliente", ("tipo de cliente", "tipo cliente")),
     ("finalizada", "finalizada", ("finalizada", "finalizado", "esta finalizada", "esta finalizado")),
     ("oculta", "oculta", ("oculta", "oculto", "esta oculta", "esta oculto")),
-    ("responsableNombre", "responsable", ("responsable", "quien es el responsable", "responsable de la obra")),
-    ("responsableCodigo", "codigo del responsable", ("codigo del responsable", "codigo responsable")),
+    ("responsableNombreCompleto", "responsable", ("responsable", "quien es el responsable", "responsable de la obra")),
     ("tipoObra", "tipo de obra", ("tipo de obra", "tipo obra")),
     ("importeContratado", "importe contratado", ("importe contratado", "importe adjudicado")),
     ("rentabilidadPrevista2026", "rentabilidad prevista 2026", ("rentabilidad prevista 2026", "rentabilidad 2026", "rentabilidad prevista", "rentabilidad")),
@@ -101,11 +124,17 @@ PRODUCCION_FIELD_SPECS = [
     ("pendiente2026", "pendiente 2026", ("pendiente 2026",)),
     ("diferencia", "diferencia", ("diferencia",)),
     ("comentarios", "comentarios", ("comentarios",)),
-    ("ultimaSincronizacionExcelUtc", "ultima sincronizacion excel", ("ultima sincronizacion excel", "ultima actualizacion excel")),
+    ("responsableCodigo", "codigo del responsable", ("codigo del responsable", "responsable codigo")),
     ("licitacionNumeroProyecto", "numero de proyecto", ("numero de proyecto", "numero proyecto", "n proyecto")),
-    ("licitacionNumeroOferta", "numero de oferta", ("numero de oferta", "numero oferta", "n oferta")),
+    ("licitacionNumeroOferta", "numero de estudio", ("numero de estudio", "estudio", "numero de oferta", "numero oferta", "n oferta")),
     ("licitacionCliente", "cliente", ("cliente",)),
     ("licitacionEstado", "estado", ("estado",)),
+    ("produccionPrimerCuatrimestre", "produccion primer cuatrimestre", ("primer cuatrimestre", "c1")),
+    ("produccionSegundoCuatrimestre", "produccion segundo cuatrimestre", ("segundo cuatrimestre", "c2")),
+    ("produccionPrimerSegundoCuatrimestre", "produccion acumulada primer y segundo cuatrimestre", ("primer y segundo cuatrimestre", "primer segundo cuatrimestre", "c1 c2")),
+    ("produccionEstimadaPendiente", "produccion estimada pendiente", ("produccion estimada pendiente", "estimada pendiente")),
+    ("produccionEstimadaTercerCuatrimestre", "produccion tercer cuatrimestre", ("tercer cuatrimestre", "c3")),
+    ("ultimaSincronizacionExcelUtc", "ultima sincronizacion excel", ("ultima sincronizacion excel", "ultima sincronizacion")),
 ]
 
 FIELD_LABELS = {key: label for key, label, _ in LICITACION_FIELD_SPECS + PRODUCCION_FIELD_SPECS}
@@ -115,16 +144,6 @@ FIELD_LABELS.update(
         "importeContratado2027": "importe contratado 2027",
         "importeContratado2028": "importe contratado 2028",
         "importeContratado2029": "importe contratado 2029",
-        "importeContratadoPrevio": "importe contratado previo",
-        "produccion2026": "produccion 2026",
-        "produccion2027": "produccion 2027",
-        "produccion2028": "produccion 2028",
-        "produccion2029": "produccion 2029",
-        "produccionPrevio": "produccion previa",
-        "produccionPrimerCuatrimestre": "produccion primer cuatrimestre",
-        "produccionSegundoCuatrimestre": "produccion segundo cuatrimestre",
-        "produccionEstimadaTercerCuatrimestre": "produccion estimada tercer cuatrimestre",
-        "periodosMensuales": "periodos mensuales",
         "produccionEnero": "produccion enero",
         "produccionFebrero": "produccion febrero",
         "produccionMarzo": "produccion marzo",
@@ -137,15 +156,87 @@ FIELD_LABELS.update(
         "produccionEstimadaOctubre": "produccion estimada octubre",
         "produccionEstimadaNoviembre": "produccion estimada noviembre",
         "produccionEstimadaDiciembre": "produccion estimada diciembre",
+        "periodosMensuales": "periodos mensuales",
+        "produccionTotal": "produccion total",
+        "cierre": "cierre",
     }
 )
+
+_FOLLOW_UP_PREFIXES = ("y ", "y para", "y el", "y la", "y los", "y las", "y de", "y del", "tambien", "tambien ")
+SOURCE_INFO_PATTERNS = ("de estudios o produccion", "de estudios o de produccion", "de produccion o estudios", "de donde sale", "que modulo", "de que modulo")
+CLOSURE_FIELD_HINTS = {
+    "presupuesto total": "presupuestoTotal",
+    "presupuesto vigente": "presupuestoVigente",
+    "coste previsto final": "costePrevistoFinalObra",
+    "produccion origen anio": "produccionOrigenAnio",
+    "produccion origen ano": "produccionOrigenAnio",
+    "produccion origen": "produccionOrigen",
+    "produccion mes": "produccionMes",
+    "coste origen anio": "costeOrigenAnio",
+    "coste origen ano": "costeOrigenAnio",
+    "coste origen": "costeOrigen",
+    "produccion ejercicio mes anterior": "produccionEjercicioMesAnterior",
+    "cartera anio": "carteraAnio",
+    "cartera ano": "carteraAnio",
+    "cartera pendiente anio": "carteraPendienteAnio",
+    "cartera pendiente ano": "carteraPendienteAnio",
+    "cartera 2027": "cartera2027",
+    "cartera 2028": "cartera2028",
+    "certificacion mes": "certificacionMes",
+    "certificacion origen anio": "certificacionOrigenAnio",
+    "certificacion origen ano": "certificacionOrigenAnio",
+    "certificacion origen": "certificacionOrigen",
+    "certificacion acumulada mes anterior": "certificacionAcumuladaMesAnterior",
+    "costes mes": "costesMes",
+    "costes mes n": "costesMesN",
+    "total costes mes n": "totalCostesMesN",
+    "coste previsto ejercicio": "costePrevistoEjercicio",
+    "coste ejercicio": "costeEjercicio",
+    "resultado actual ejercicio": "resultadoActualEjercicio",
+    "resultado actual mes": "resultadoActualMes",
+    "resultado origen": "resultadoOrigen",
+    "resultado previsto ejercicio": "resultadoPrevistoEjercicio",
+    "resultado previsto fin obra": "resultadoPrevistoFinObra",
+    "ppc origen": "ppcOrigen",
+    "ppc ejercicio": "ppcEjercicio",
+    "ppc mes": "ppcMes",
+    "publico privado": "publicoPrivado",
+    "situacion": "situacion",
+}
+
+STUDIES_AGGREGATE_KEYWORDS = {
+    "pipeline": ("pipeline", "plan "),
+    "backlog": ("backlog",),
+    "importecontratado": ("importe contratado", "importe adjudicado"),
+    "importecontratadoprevio": ("importe previo", "importe contratado previo"),
+    "produccion": ("produccion",),
+}
+
+PRODUCCION_AGGREGATE_KEYWORDS = {
+    "cartera2026": ("cartera",),
+    "pendiente2026": ("pendiente 2026",),
+    "diferencia": ("diferencia",),
+    "importecontratado": ("importe contratado", "importe adjudicado"),
+    "rentabilidadprevista2026": ("rentabilidad prevista", "rentabilidad 2026", "rentabilidad"),
+    "produccionorigen2025": ("produccion origen 2025",),
+    "produccionorigenanosanteriores": ("produccion origen anos anteriores",),
+    "ventamaster2025": ("venta master 2025",),
+    "porcentajemateriales": ("porcentaje de materiales", "porcentaje materiales"),
+    "porcentajemanoobra": ("porcentaje de mano de obra", "porcentaje mano de obra"),
+    "produccionprimercuatrimestre": ("primer cuatrimestre", "c1"),
+    "produccionsegundocuatrimestre": ("segundo cuatrimestre", "c2"),
+    "produccionprimersegundocuatrimestre": ("primer y segundo cuatrimestre", "primer segundo cuatrimestre", "c1 c2"),
+    "produccionestimadapendiente": ("produccion estimada pendiente", "estimada pendiente"),
+    "produccionestimadatercercuatrimestre": ("tercer cuatrimestre", "c3"),
+    "producciontotal": ("produccion total",),
+}
 
 
 def _normalize(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
     normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
     normalized = normalized.lower().strip()
-    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    normalized = re.sub(r"[^\w\s/-]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized)
     return normalized
 
@@ -158,21 +249,23 @@ def detect_business_route(question: str) -> str | None:
     if explicit_scope == "produccion":
         return "business_produccion"
 
-    if "importe contratado" in text:
-        return "business_licitaciones"
-    if any(hint in text for hint in ("produccion", "cartera", "rentabilidad", "responsable", "cuatrimestre")):
+    if any(hint in text for hint in ("control de produccion", "cierre", "cartera", "rentabilidad", "produccion estimada", "produccion marzo", "produccion abril")):
         return "business_produccion"
-    if any(hint in text for hint in ("licitacion", "licitaciones", "oferta", "adjudicacion", "pipeline", "plan ")):
+    if any(hint in text for hint in ("pipeline", "backlog", "licitacion", "licitaciones", "estudio", "oferta", "adjudicacion", "plan ")):
         return "business_licitaciones"
-    if any(hint in text for hint in ("cliente", "estado", "numero proyecto", "numero oferta", "tipo obra")):
+    if any(hint in text for hint in ("cliente", "estado", "numero proyecto", "numero oferta", "tipo obra", "concurso")):
+        return "business_licitaciones"
+    if any(hint in text for hint in ("importe contratado", "importe adjudicado", "probabilidad de adjudicacion", "situacion oferta", "periodo de ejecucion", "tipologia de obra")):
         return "business_licitaciones"
     return None
 
 
 def _detect_explicit_scope(text: str) -> str | None:
-    if any(hint in text for hint in ("licitacion", "licitaciones", "oferta", "pipeline", "plan ")):
+    if any(hint in text for hint in ("licitacion", "licitaciones", "estudio", "estudios", "oferta", "pipeline", "backlog", "plan ")):
         return "estudios"
-    if any(hint in text for hint in ("obra", "control de obras", "codigo de obra", "codigo obra", "cartera", "rentabilidad")):
+    if any(hint in text for hint in ("control de produccion", "produccion", "cierre", "codigo de obra", "codigo obra", "cartera", "rentabilidad")):
+        return "produccion"
+    if _contains_cierre_hint(text):
         return "produccion"
     return None
 
@@ -195,22 +288,295 @@ def answer_business_question(
             "sources": [],
         }
 
+    if appregenera_sql_available():
+        sql_result = _answer_business_question_sql(
+            question,
+            preferred_route=preferred_route,
+            history=history or [],
+        )
+        if sql_result:
+            return sql_result
+
+    return _answer_business_question_http(
+        question,
+        user_token=user_token,
+        preferred_route=preferred_route,
+        history=history or [],
+    )
+
+
+def _answer_business_question_sql(
+    question: str,
+    *,
+    preferred_route: str | None,
+    history: List[Dict[str, Any]],
+) -> Dict[str, Any] | None:
     normalized = _normalize(question)
     explicit_scope = _detect_explicit_scope(normalized)
-    aggregate_request = _is_global_aggregate_request(normalized)
-    if aggregate_request:
+    preferred_module = "estudios" if (preferred_route or detect_business_route(question)) == "business_licitaciones" else "produccion"
+    reference_hint = _detect_reference_module(_extract_reference(question, normalized))
+    if _is_source_info_request(normalized):
+        source_module = _infer_source_module_from_history(history, fallback=preferred_module)
+        route = "business_licitaciones" if source_module == "estudios" else "business_produccion"
+        parsed = _parse_question(question, module=source_module, history=history or [])
+        return _build_source_info_response(parsed, module=source_module, route=route)
+    modules_to_try = _build_module_candidates(preferred_module, explicit_scope, reference_hint)
+
+    aggregate_fallback: Dict[str, Any] | None = None
+    for index, module in enumerate(modules_to_try):
+        route = "business_licitaciones" if module == "estudios" else "business_produccion"
+        parsed = _parse_question(question, module=module, history=history or [])
+
+        if parsed.get("aggregate"):
+            aggregate_result = _answer_aggregate_sql(parsed, module=module, route=route)
+            if aggregate_result:
+                if (
+                    explicit_scope is None
+                    and index < len(modules_to_try) - 1
+                    and aggregate_result.get("is_zero_value")
+                ):
+                    aggregate_fallback = aggregate_result
+                    continue
+                return aggregate_result
+
+        if module == "estudios":
+            detail_result = _answer_estudios_detail_sql(parsed, route=route)
+        else:
+            detail_result = _answer_produccion_detail_sql(parsed, route=route, normalized_question=normalized)
+
+        if detail_result:
+            return detail_result
+
+    return aggregate_fallback
+
+
+def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) -> Dict[str, Any] | None:
+    aggregate = parsed.get("aggregate") or {}
+    metric = aggregate.get("metric")
+    if not metric:
+        return None
+
+    aggregate_kind = aggregate.get("kind", "top")
+    if metric.startswith("cierre:"):
+        rows = sql_query_cierre_aggregate(
+            campo=metric.split(":", 1)[1],
+            agg=aggregate_kind,
+            top=aggregate.get("top_n", 1),
+            periodo=aggregate.get("periodo"),
+            area=aggregate.get("area"),
+            free_text=aggregate.get("filter_text"),
+        )
+    elif module == "produccion":
+        rows = sql_query_produccion_aggregate(
+            select_field=metric,
+            agg=aggregate_kind,
+            top=aggregate.get("top_n", 1),
+            free_text=aggregate.get("filter_text"),
+        )
+    else:
+        rows = sql_query_licitaciones_aggregate(
+            select_field=metric,
+            agg=aggregate_kind,
+            top=aggregate.get("top_n", 1),
+            year=parsed.get("year"),
+            scope=aggregate.get("scope"),
+            free_text=aggregate.get("filter_text"),
+        )
+    if not rows:
         return {
-            "response": (
-                "Las comparativas globales entre todos los proyectos aun no estan soportadas por el conector actual de AppRegenera. "
-                "Ahora mismo puedo responder mejor si indicas un proyecto, obra o licitacion concreta."
-            ),
-            "route": preferred_route or detect_business_route(question) or "business_licitaciones",
-            "confidence": 0.9,
+            "response": "No he encontrado datos agregados que encajen con esa consulta.",
+            "route": route,
+            "confidence": 0.95,
             "sources": [],
         }
 
+    label = _aggregate_label(metric, parsed.get("year"))
+    filter_text = aggregate.get("filter_text")
+    scope_label = aggregate.get("scope")
+    period_text = _build_period_text(parsed)
+
+    if aggregate_kind == "sum":
+        value = rows[0].get("Valor")
+        scope_copy = f" en {scope_label}" if scope_label else ""
+        filter_copy = f" para {filter_text}" if filter_text else ""
+        numeric_value = parse_decimal(value) or 0.0
+        return {
+            "response": f"Total de {label}{period_text}{scope_copy}{filter_copy}: {_format_value(value)}.",
+            "route": route,
+            "confidence": 1.0,
+            "sources": [{"source": "AppRegenera SQL", "module": module}],
+            "is_zero_value": numeric_value == 0.0,
+        }
+
+    top_rows = rows[: max(1, min(int(aggregate.get("top_n", 1) or 1), 10))]
+    if len(top_rows) == 1:
+        row = top_rows[0]
+        code = row.get("NumeroProyecto") or row.get("NumeroOferta") or row.get("CodigoObra") or "-"
+        name = row.get("Obra") or row.get("NombreObra") or row.get("Nombre") or row.get("Cliente") or "-"
+        return {
+            "response": f"El proyecto con mayor {label}{period_text} es {code} - {name}: {_format_value(row.get('Valor'))}.",
+            "route": route,
+            "confidence": 1.0,
+            "sources": [{"source": "AppRegenera SQL", "module": module, "code": code, "entity": name}],
+            "is_zero_value": (parse_decimal(row.get("Valor")) or 0.0) == 0.0,
+        }
+
+    lines = []
+    for index, row in enumerate(top_rows, start=1):
+        code = row.get("NumeroProyecto") or row.get("NumeroOferta") or row.get("CodigoObra") or "-"
+        name = row.get("Obra") or row.get("NombreObra") or row.get("Nombre") or row.get("Cliente") or "-"
+        lines.append(f"{index}. {code} - {name}: {_format_value(row.get('Valor'))}")
+    return {
+        "response": f"Top {len(top_rows)} por {label}{period_text}: " + " | ".join(lines),
+        "route": route,
+        "confidence": 1.0,
+        "sources": [{"source": "AppRegenera SQL", "module": module}],
+        "is_zero_value": all((parse_decimal(row.get("Valor")) or 0.0) == 0.0 for row in top_rows),
+    }
+
+
+def _answer_estudios_detail_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
+    reference = parsed.get("reference")
+    if not reference:
+        return None
+
+    matches = sql_search_licitaciones(reference, take=8)
+    match = _pick_best_licitacion_match(matches, reference)
+    if match == "ambiguous":
+        options = "; ".join(_match_label(item, module="estudios") for item in matches[:5])
+        return {
+            "response": f"He encontrado varias coincidencias en Licitaciones: {options}. Indica un codigo mas concreto.",
+            "route": route,
+            "confidence": 0.95,
+            "sources": [],
+        }
+    if not match:
+        return None
+
+    detail = sql_get_licitacion_detail(str(match["Id"]))
+    if not detail:
+        return None
+
+    result = _build_estudios_result(detail, parsed)
+    response = _format_business_response(result, module="estudios", parsed=parsed)
+    if not response:
+        response = _build_no_data_message(
+            {"primaryCode": detail.get("NumeroProyecto") or detail.get("NumeroOferta"), "displayName": detail.get("Obra")},
+            module="estudios",
+            parsed=parsed,
+        )
+
+    return {
+        "response": response,
+        "route": route,
+        "confidence": 1.0,
+        "sources": [
+            {
+                "source": "AppRegenera SQL",
+                "module": "estudios",
+                "entity": detail.get("Obra") or detail.get("Cliente") or reference,
+                "code": detail.get("NumeroProyecto") or detail.get("NumeroOferta") or reference,
+            }
+        ],
+    }
+
+
+def _answer_produccion_detail_sql(parsed: Dict[str, Any], *, route: str, normalized_question: str) -> Dict[str, Any] | None:
+    reference = parsed.get("reference")
+    if not reference:
+        return None
+
+    if "cierre" in normalized_question or "cierre" in (parsed.get("fields") or []) or _contains_cierre_hint(normalized_question):
+        cierre_result = _answer_cierre_sql(parsed, route=route)
+        if cierre_result:
+            return cierre_result
+
+    matches = sql_search_produccion(reference, take=8)
+    match = _pick_best_produccion_match(matches, reference)
+    if match == "ambiguous":
+        options = "; ".join(_match_label(item, module="produccion") for item in matches[:5])
+        return {
+            "response": f"He encontrado varias coincidencias en Produccion: {options}. Indica un codigo mas concreto.",
+            "route": route,
+            "confidence": 0.95,
+            "sources": [],
+        }
+    if not match:
+        return None
+
+    detail = sql_get_produccion_detail(str(match["Id"]), year=parsed.get("year"))
+    if not detail:
+        return None
+
+    result = _build_produccion_result(detail, parsed)
+    response = _format_business_response(result, module="produccion", parsed=parsed)
+    if not response:
+        response = _build_no_data_message(
+            {"primaryCode": detail.get("CodigoObra") or detail.get("LicitacionNumeroProyecto"), "displayName": detail.get("NombreObra")},
+            module="produccion",
+            parsed=parsed,
+        )
+
+    return {
+        "response": response,
+        "route": route,
+        "confidence": 1.0,
+        "sources": [
+            {
+                "source": "AppRegenera SQL",
+                "module": "produccion",
+                "entity": detail.get("NombreObra") or reference,
+                "code": detail.get("CodigoObra") or detail.get("LicitacionNumeroProyecto") or reference,
+            }
+        ],
+    }
+
+
+def _answer_cierre_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
+    reference = parsed.get("reference")
+    if not reference:
+        return None
+
+    cierre = sql_get_cierre_detail(reference)
+    if not cierre:
+        return None
+
+    matches = _match_cierre_fields(cierre, parsed)
+    if not matches:
+        resumen = _summarize_cierre(cierre)
+        if not resumen:
+            return None
+        return {
+            "response": resumen,
+            "route": route,
+            "confidence": 1.0,
+            "sources": [{"source": "AppRegenera SQL", "module": "cierre", "code": reference}],
+        }
+
+    fragments = [f"{item['label']} = {_format_value(item['value'])}" for item in matches]
+    titulo = cierre.get("Nombre") or cierre.get("Numero") or reference
+    periodo = cierre.get("Periodo")
+    period_copy = f" ({periodo})" if periodo else ""
+    return {
+        "response": f"Cierre de {titulo}{period_copy}: " + "; ".join(fragments) + ".",
+        "route": route,
+        "confidence": 1.0,
+        "sources": [{"source": "AppRegenera SQL", "module": "cierre", "code": reference}],
+    }
+
+
+def _answer_business_question_http(
+    question: str,
+    *,
+    user_token: str | None,
+    preferred_route: str | None = None,
+    history: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    normalized = _normalize(question)
+    explicit_scope = _detect_explicit_scope(normalized)
     preferred_module = "estudios" if (preferred_route or detect_business_route(question)) == "business_licitaciones" else "produccion"
-    modules_to_try = _build_module_candidates(preferred_module, explicit_scope)
+    reference_hint = _detect_reference_module(_extract_reference(question, normalized))
+    modules_to_try = _build_module_candidates(preferred_module, explicit_scope, reference_hint)
 
     try:
         first_not_found_message: str | None = None
@@ -236,13 +602,17 @@ def answer_business_question(
                 continue
 
             if len(matches) > 1:
-                if first_ambiguous_message is None:
-                    options = "; ".join(f"{item['primaryCode']} - {item['displayName']}" for item in matches[:5])
-                    first_ambiguous_message = (
-                        f"He encontrado varias coincidencias en {'Licitaciones' if module == 'estudios' else 'Produccion'}: "
-                        f"{options}. Indica un codigo o nombre mas concreto."
-                    )
-                continue
+                exact = _pick_exact_http_match(matches, parsed["reference"])
+                if exact:
+                    matches = [exact]
+                else:
+                    if first_ambiguous_message is None:
+                        options = "; ".join(f"{item['primaryCode']} - {item['displayName']}" for item in matches[:5])
+                        first_ambiguous_message = (
+                            f"He encontrado varias coincidencias en {'Licitaciones' if module == 'estudios' else 'Produccion'}: "
+                            f"{options}. Indica un codigo o nombre mas concreto."
+                        )
+                    continue
 
             match = matches[0]
             payload = {
@@ -304,21 +674,30 @@ def answer_business_question(
         }
 
 
-def _build_module_candidates(preferred_module: str, explicit_scope: str | None) -> List[str]:
+def _build_module_candidates(preferred_module: str, explicit_scope: str | None, reference_hint: str | None) -> List[str]:
     if explicit_scope == "estudios":
         return ["estudios"]
     if explicit_scope == "produccion":
         return ["produccion"]
+    if reference_hint == "estudios":
+        return ["estudios", "produccion"]
+    if reference_hint == "produccion":
+        return ["produccion", "estudios"]
     other = "produccion" if preferred_module == "estudios" else "estudios"
     return [preferred_module, other]
 
 
 def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
     normalized = _normalize(question)
+    history_context = _extract_history_context(history)
     year_match = re.search(r"\b(20\d{2})\b", normalized)
     year = int(year_match.group(1)) if year_match else None
+    if year is None and _looks_like_follow_up(normalized):
+        year = history_context.get("year")
     cuatrimestre = _extract_cuatrimestre(normalized)
     month = _extract_month(normalized)
+    if month is None and _looks_like_follow_up(normalized):
+        month = history_context.get("month")
     reference = _resolve_reference(question, normalized, history)
     per_month = _is_per_month_request(normalized)
     fields = _detect_fields(
@@ -329,20 +708,48 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
         month=month,
         per_month=per_month,
     )
+    aggregate = _detect_aggregate(question, normalized, module=module, fields=fields, year=year, reference=reference)
+    expected_client = _extract_expected_client(question, normalized)
     return {
+        "question": question,
         "reference": reference,
         "fields": fields,
         "year": year,
         "cuatrimestre": cuatrimestre,
         "month": month,
         "per_month": per_month,
+        "aggregate": aggregate,
+        "expected_client": expected_client,
     }
+
+
+def _extract_history_context(history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    for item in reversed(history or []):
+        question = str(item.get("question") or "")
+        normalized = _normalize(question)
+        year_match = re.search(r"\b(20\d{2})\b", normalized)
+        month = _extract_month(normalized)
+        reference = _extract_reference(question, normalized)
+        if reference or year_match or month:
+            return {
+                "reference": reference,
+                "year": int(year_match.group(1)) if year_match else None,
+                "month": month,
+            }
+    return {}
+
+
+def _looks_like_follow_up(text: str) -> bool:
+    return any(text.startswith(prefix) for prefix in _FOLLOW_UP_PREFIXES) or len(text.split()) <= 4
 
 
 def _resolve_reference(original_question: str, normalized: str, history: List[Dict[str, Any]]) -> str | None:
     reference = _extract_reference(original_question, normalized)
     if reference:
         return reference
+
+    if not _looks_like_follow_up(normalized):
+        return None
 
     for item in reversed(history or []):
         history_question = str(item.get("question") or "")
@@ -354,9 +761,15 @@ def _resolve_reference(original_question: str, normalized: str, history: List[Di
 
 
 def _extract_reference(original_question: str, normalized: str) -> str | None:
-    explicit_code_match = re.search(r"\b(?:proyecto|obra|licitacion|oferta)\s+(\d{4,8})\b", normalized)
-    if explicit_code_match:
-        return explicit_code_match.group(1)
+    reference_patterns = (
+        r"\b(est[-\s]?\d{1,4}[-\s]?20\d{2})\b",
+        r"\b([a-z]{2,6}-\d{1,5}-20\d{2})\b",
+        r"\b(?:proyecto|obra|licitacion|licitacion|oferta|estudio)\s+([a-z0-9-]{4,30})\b",
+    )
+    for pattern in reference_patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper().replace(" ", "-")
 
     numeric_tokens = re.findall(r"\b\d{4,8}\b", normalized)
     non_year_tokens = [token for token in numeric_tokens if not re.fullmatch(r"20\d{2}", token)]
@@ -390,23 +803,143 @@ def _extract_month(text: str) -> int | None:
 
 
 def _is_per_month_request(text: str) -> bool:
-    return any(
-        token in text
-        for token in (
-            "cada mes",
-            "por mes",
-            "mes a mes",
-            "en cada mes",
-            "todos los meses",
-        )
-    )
+    return any(token in text for token in ("cada mes", "por mes", "mes a mes", "en cada mes", "todos los meses"))
 
 
-def _is_global_aggregate_request(text: str) -> bool:
-    return (
-        any(token in text for token in ("cual es el proyecto con mas", "que proyecto tiene mas", "proyecto con mayor"))
-        and any(token in text for token in ("importe contratado", "produccion", "cartera", "pipeline", "plan"))
-    )
+def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str], year: int | None, reference: str | None) -> Dict[str, Any] | None:
+    top_match = re.search(r"\btop\s+(\d+)\b", text)
+    top_n = int(top_match.group(1)) if top_match else 1
+    is_top = bool(top_match) or any(token in text for token in ("proyecto con mas", "proyecto con mayor", "obra con mas", "obra con mayor", "estudio con mas", "ranking"))
+    is_sum = any(token in text for token in ("cuanto ", "cuanta ", "cuantos ", "cuantas ", "total de ", "suma de "))
+    has_specific_reference = bool(reference)
+    asks_plural = any(token in text for token in ("proyectos", "obras", "estudios", "cierres"))
+
+    if has_specific_reference and not is_top:
+        return None
+    if is_sum and not asks_plural and not is_top and not text.startswith("top "):
+        return None
+
+    metric = _detect_aggregate_metric(text, fields, module=module, year=year)
+    if not metric:
+        return None
+    if not is_top and not is_sum:
+        return None
+
+    scope = None
+    if "pipeline" in text or any(field.startswith("plan20") for field in fields):
+        scope = "pipeline"
+    elif "backlog" in text:
+        scope = "backlog"
+
+    return {
+        "kind": "top" if is_top else "sum",
+        "top_n": top_n,
+        "metric": metric,
+        "scope": scope,
+        "filter_text": _extract_filter_text(question, text),
+        "periodo": _extract_periodo(text),
+        "area": _extract_area(text),
+    }
+
+
+def _detect_aggregate_metric(text: str, fields: List[str], *, module: str, year: int | None) -> str | None:
+    if "cierre" in text or "cierres" in text or _contains_cierre_hint(text):
+        for label, field in CLOSURE_FIELD_HINTS.items():
+            if label in text:
+                return f"cierre:{field}"
+    if module == "estudios":
+        for metric, aliases in STUDIES_AGGREGATE_KEYWORDS.items():
+            if any(alias in text for alias in aliases):
+                return metric
+        if year in {2026, 2027, 2028, 2029} and any(field.startswith("importeContratado") for field in fields):
+            return "importecontratado"
+        return None
+    if module == "produccion":
+        for field in fields:
+            if field in {"produccionTotal", *PRODUCTION_MONTH_FIELDS.values()}:
+                return field.lower()
+        for metric, aliases in PRODUCCION_AGGREGATE_KEYWORDS.items():
+            if any(alias in text for alias in aliases):
+                return metric
+        if "produccion" in text:
+            return "producciontotal"
+    return None
+
+
+def _extract_periodo(text: str) -> str | None:
+    match = re.search(r"\b(20\d{2}-\d{2})\b", text)
+    return match.group(1) if match else None
+
+
+def _extract_area(text: str) -> str | None:
+    for candidate in ("oi", "o&i", "man", "mt", "bt"):
+        if candidate in text:
+            return candidate.upper()
+    return None
+
+
+def _extract_filter_text(original_question: str, normalized: str) -> str | None:
+    candidates = re.findall(r"\b(?:de|del|de la|de los|de las|para)\s+([a-z0-9][a-z0-9 .&/-]{1,60})", normalized)
+    cleaned_candidates: List[str] = []
+    for candidate in candidates:
+        cleaned = candidate
+        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|del|de|la|las|los)\b", " ", cleaned)
+        cleaned = re.sub(r"\b20\d{2}\b", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
+        if cleaned and len(cleaned) >= 2:
+            cleaned_candidates.append(cleaned)
+
+    if cleaned_candidates:
+        value = cleaned_candidates[-1]
+        return value.upper() if value.isalpha() and len(value) <= 6 else value
+
+    quoted = re.search(r'"([^"]+)"|\'([^\']+)\'', original_question)
+    if quoted:
+        return (quoted.group(1) or quoted.group(2) or "").strip() or None
+    return None
+
+
+def _extract_expected_client(original_question: str, normalized: str) -> str | None:
+    if "cliente" not in normalized or "?" not in original_question:
+        return None
+    if " es del cliente " not in f" {normalized} ":
+        return None
+    match = re.search(r"(?:es del cliente)\s+([a-z0-9 .&/-]{2,})\??$", normalized)
+    if not match:
+        return None
+    candidate = re.sub(r"\s+", " ", match.group(1)).strip(" ?.")
+    if candidate:
+        return candidate.upper()
+    return None
+
+
+def _is_source_info_request(text: str) -> bool:
+    return any(pattern in text for pattern in SOURCE_INFO_PATTERNS)
+
+
+def _build_source_info_response(parsed: Dict[str, Any], *, module: str, route: str) -> Dict[str, Any]:
+    source_name = "Estudios" if module == "estudios" else "Produccion"
+    reference = parsed.get("reference")
+    fields = parsed.get("fields") or []
+    fields_text = ", ".join(FIELD_LABELS.get(field, field) for field in fields[:4]) or "el dato consultado"
+    ref_text = f" para {reference}" if reference else ""
+    return {
+        "response": f"Este dato lo estoy consultando desde {source_name}{ref_text}. La pregunta se ha interpretado sobre {fields_text}.",
+        "route": route,
+        "confidence": 1.0,
+        "sources": [{"source": f"AppRegenera SQL {source_name}", "module": module}],
+    }
+
+
+def _infer_source_module_from_history(history: List[Dict[str, Any]], fallback: str) -> str:
+    for item in reversed(history or []):
+        question = str(item.get("question") or "")
+        route = detect_business_route(question)
+        if route == "business_licitaciones":
+            return "estudios"
+        if route == "business_produccion":
+            return "produccion"
+    return fallback
 
 
 def _detect_fields(
@@ -422,10 +955,16 @@ def _detect_fields(
     text_without_type_client = text.replace("tipo de cliente", " ").replace("tipo cliente", " ")
 
     if "pipeline" in text or "plan " in text:
-        for plan_year in (2026, 2027, 2028, 2029):
-            if str(plan_year) in text:
-                fields.append(f"plan{plan_year}")
-                break
+        if year in {2026, 2027, 2028, 2029}:
+            fields.append(f"plan{year}")
+        else:
+            fields.append("plan2026")
+
+    if "backlog" in text:
+        if year in {2026, 2027, 2028, 2029}:
+            fields.append(f"produccion{year}")
+        else:
+            fields.append("produccion")
 
     if "importe contratado" in text or "importe adjudicado" in text:
         if module == "estudios":
@@ -438,7 +977,7 @@ def _detect_fields(
         else:
             fields.append("importeContratado")
 
-    if "produccion" in text:
+    if "produccion" in text and "backlog" not in text:
         if module == "estudios":
             if year in {2026, 2027, 2028, 2029} and not cuatrimestre and not month:
                 fields.append(f"produccion{year}")
@@ -447,7 +986,11 @@ def _detect_fields(
             else:
                 fields.append("produccion")
         else:
-            if per_month:
+            if "cierre" in text:
+                fields.append("cierre")
+            elif "total" in text:
+                fields.append("produccionTotal")
+            elif per_month:
                 fields.extend(_monthly_field_keys())
                 fields.append("periodosMensuales")
             elif month:
@@ -461,6 +1004,10 @@ def _detect_fields(
             else:
                 fields.append("periodosMensuales")
 
+    if module == "produccion" and "cierre" in text and "cierre" not in fields:
+        fields.append("cierre")
+    if module == "produccion" and _contains_cierre_hint(text) and "cierre" not in fields:
+        fields.append("cierre")
     if module == "produccion" and "cartera" in text and year == 2026:
         fields.append("cartera2026")
     if module == "produccion" and "pendiente" in text and year == 2026:
@@ -470,12 +1017,15 @@ def _detect_fields(
     for canonical, _, aliases in field_specs:
         for alias in aliases:
             haystack = text_without_type_client if alias == "cliente" and module == "produccion" else text
-            if alias in haystack and canonical not in fields:
+            if _alias_in_text(haystack, alias) and canonical not in fields:
                 fields.append(canonical)
                 break
 
     if not fields and re.search(r"\bcual es la obra\b|\bque obra\b|\bnombre de la obra\b|\bnombre obra\b", text):
         fields.append("obra" if module == "estudios" else "nombreObra")
+
+    if "obra" in fields and any(field in fields for field in {"tipologiaObra", "tipoObra"}):
+        fields = [field for field in fields if field != "obra"]
 
     if not fields:
         fields = ["importeContratado", "cliente", "estado"] if module == "estudios" else ["nombreObra", "importeContratado"]
@@ -483,20 +1033,7 @@ def _detect_fields(
 
 
 def _monthly_field_keys() -> List[str]:
-    return [
-        PRODUCTION_MONTH_FIELDS[1],
-        PRODUCTION_MONTH_FIELDS[2],
-        PRODUCTION_MONTH_FIELDS[3],
-        PRODUCTION_MONTH_FIELDS[4],
-        PRODUCTION_MONTH_FIELDS[5],
-        PRODUCTION_MONTH_FIELDS[6],
-        PRODUCTION_MONTH_FIELDS[7],
-        PRODUCTION_MONTH_FIELDS[8],
-        PRODUCTION_MONTH_FIELDS[9],
-        PRODUCTION_MONTH_FIELDS[10],
-        PRODUCTION_MONTH_FIELDS[11],
-        PRODUCTION_MONTH_FIELDS[12],
-    ]
+    return [PRODUCTION_MONTH_FIELDS[index] for index in range(1, 13)]
 
 
 def _dedupe(values: List[str]) -> List[str]:
@@ -507,6 +1044,277 @@ def _dedupe(values: List[str]) -> List[str]:
             seen.add(value)
             ordered.append(value)
     return ordered
+
+
+def _pick_best_licitacion_match(matches: List[Dict[str, Any]], reference: str) -> Dict[str, Any] | str | None:
+    if not matches:
+        return None
+    ref = _normalize(reference).replace(" ", "-")
+    exact: List[Dict[str, Any]] = []
+    for item in matches:
+        candidates = [
+            _normalize(str(item.get("NumeroProyecto") or "")).replace(" ", "-"),
+            _normalize(str(item.get("NumeroOferta") or "")).replace(" ", "-"),
+        ]
+        if ref in candidates:
+            exact.append(item)
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return "ambiguous"
+    return matches[0] if len(matches) == 1 else "ambiguous"
+
+
+def _pick_best_produccion_match(matches: List[Dict[str, Any]], reference: str) -> Dict[str, Any] | str | None:
+    if not matches:
+        return None
+    ref = _normalize(reference).replace(" ", "-")
+    exact: List[Dict[str, Any]] = []
+    for item in matches:
+        candidates = [
+            _normalize(str(item.get("CodigoObra") or "")).replace(" ", "-"),
+            _normalize(str(item.get("NumeroProyecto") or "")).replace(" ", "-"),
+            _normalize(str(item.get("NumeroOferta") or "")).replace(" ", "-"),
+        ]
+        if ref in candidates:
+            exact.append(item)
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return "ambiguous"
+    return matches[0] if len(matches) == 1 else "ambiguous"
+
+
+def _pick_exact_http_match(matches: List[Dict[str, Any]], reference: str) -> Dict[str, Any] | None:
+    ref = _normalize(reference).replace(" ", "-")
+    for item in matches:
+        primary = _normalize(str(item.get("primaryCode") or "")).replace(" ", "-")
+        display = _normalize(str(item.get("displayName") or "")).replace(" ", "-")
+        if ref in {primary, display}:
+            return item
+    return None
+
+
+def _match_label(item: Dict[str, Any], *, module: str) -> str:
+    if module == "estudios":
+        code = item.get("NumeroProyecto") or item.get("NumeroOferta") or "-"
+        name = item.get("Obra") or item.get("Cliente") or "-"
+        return f"{code} - {name}"
+    code = item.get("CodigoObra") or item.get("NumeroProyecto") or item.get("NumeroOferta") or "-"
+    name = item.get("NombreObra") or item.get("Cliente") or "-"
+    return f"{code} - {name}"
+
+
+def _build_estudios_result(detail: Dict[str, Any], parsed: Dict[str, Any]) -> Dict[str, Any]:
+    fields = []
+    for key in parsed.get("fields") or []:
+        value = _extract_estudios_value(detail, key, parsed)
+        fields.append({"key": key, "value": value})
+
+    if parsed.get("expected_client"):
+        actual_client = str(detail.get("Cliente") or "").strip()
+        expected = str(parsed["expected_client"]).strip()
+        answer = actual_client.upper() == expected.upper()
+        fields = [{"key": "cliente", "value": f"{'si' if answer else 'no'}; cliente real = {actual_client or 'sin dato'}"}]
+
+    return {
+        "status": "ok",
+        "entity": {
+            "primaryCode": detail.get("NumeroProyecto") or detail.get("NumeroOferta") or parsed.get("reference"),
+            "displayName": detail.get("Obra") or detail.get("Cliente") or parsed.get("reference"),
+        },
+        "fields": fields,
+    }
+
+
+def _build_produccion_result(detail: Dict[str, Any], parsed: Dict[str, Any]) -> Dict[str, Any]:
+    fields = []
+    for key in parsed.get("fields") or []:
+        value = _extract_produccion_value(detail, key)
+        if key == "periodosMensuales" and parsed.get("per_month"):
+            value = detail.get("PeriodosMensuales") or []
+        fields.append({"key": key, "value": value})
+
+    return {
+        "status": "ok",
+        "entity": {
+            "primaryCode": detail.get("CodigoObra") or detail.get("LicitacionNumeroProyecto") or detail.get("LicitacionNumeroOferta") or parsed.get("reference"),
+            "displayName": detail.get("NombreObra") or parsed.get("reference"),
+        },
+        "fields": fields,
+    }
+
+
+def _extract_estudios_value(detail: Dict[str, Any], key: str, parsed: Dict[str, Any]) -> Any:
+    if key == "tipo":
+        return detail.get("Tipo")
+    if key == "tipoRegistro":
+        return detail.get("TipoRegistro")
+    if key == "numeroOferta":
+        return detail.get("NumeroOferta")
+    if key == "numeroProyecto":
+        return detail.get("NumeroProyecto")
+    if key == "obra":
+        return detail.get("Obra")
+    if key == "cliente":
+        return detail.get("Cliente")
+    if key == "tipoObra":
+        return detail.get("TipoObra")
+    if key == "tipologiaObra":
+        return detail.get("TipologiaObra")
+    if key == "estado":
+        return detail.get("Estado")
+    if key == "situacionOferta":
+        return detail.get("SituacionOferta")
+    if key == "probabilidadAdjudicacion":
+        return detail.get("ProbabilidadAdjudicacion")
+    if key == "fechaPresentacion":
+        return detail.get("FechaPresentacion")
+    if key == "fechaApertura":
+        return detail.get("FechaApertura")
+    if key == "fechaAdjudicacion":
+        return detail.get("FechaAdjudicacion")
+    if key == "periodoEjecucion":
+        return detail.get("PeriodoEjecucion")
+    if key == "observaciones":
+        return detail.get("Observaciones")
+    if key == "enlaceLicitacion":
+        return detail.get("EnlaceLicitacion")
+    if key == "pendiente":
+        return detail.get("Pendiente")
+    if key == "concurso":
+        return detail.get("Concurso")
+    if key == "importeContratado":
+        return detail.get("ImporteContratado")
+    if key == "importeContratadoPrevio":
+        return detail.get("ImporteContratadoPrevio")
+    if key.startswith("importeContratado20"):
+        return detail.get(key[0].upper() + key[1:])
+    if key == "produccion":
+        return first_non_null([detail.get("Produccion"), detail.get("Produccion2026")])
+    if key == "produccionPrevio":
+        return detail.get("ProduccionPrevio")
+    if key.startswith("produccion20"):
+        column = key[0].upper() + key[1:]
+        if key == "produccion2026":
+            return first_non_null([detail.get("Produccion2026"), detail.get("Produccion")])
+        return detail.get(column)
+    if key.startswith("plan20"):
+        return detail.get(key[0].upper() + key[1:])
+    return detail.get(key[0].upper() + key[1:])
+
+
+def _extract_produccion_value(detail: Dict[str, Any], key: str) -> Any:
+    direct_map = {
+        "codigoObra": "CodigoObra",
+        "nombreObra": "NombreObra",
+        "tipoCliente": "TipoCliente",
+        "finalizada": "Finalizada",
+        "oculta": "Oculta",
+        "responsableNombreCompleto": "ResponsableNombreCompleto",
+        "responsableCodigo": "ResponsableCodigo",
+        "tipoObra": "TipoObra",
+        "importeContratado": "ImporteContratado",
+        "rentabilidadPrevista2026": "RentabilidadPrevista2026",
+        "produccionOrigen2025": "ProduccionOrigen2025",
+        "produccionOrigenAnosAnteriores": "ProduccionOrigenAnosAnteriores",
+        "ventaMaster2025": "VentaMaster2025",
+        "porcentajeMateriales": "PorcentajeMateriales",
+        "porcentajeManoObra": "PorcentajeManoObra",
+        "cartera2026": "Cartera2026",
+        "pendiente2026": "Pendiente2026",
+        "diferencia": "Diferencia",
+        "comentarios": "Comentarios",
+        "licitacionNumeroProyecto": "LicitacionNumeroProyecto",
+        "licitacionNumeroOferta": "LicitacionNumeroOferta",
+        "licitacionCliente": "LicitacionCliente",
+        "licitacionEstado": "LicitacionEstado",
+        "produccionPrimerCuatrimestre": "ProduccionPrimerCuatrimestre",
+        "produccionSegundoCuatrimestre": "ProduccionSegundoCuatrimestre",
+        "produccionPrimerSegundoCuatrimestre": "ProduccionPrimerSegundoCuatrimestre",
+        "produccionEstimadaPendiente": "ProduccionEstimadaPendiente",
+        "produccionEstimadaTercerCuatrimestre": "ProduccionEstimadaTercerCuatrimestre",
+        "periodosMensuales": "PeriodosMensuales",
+        "ultimaSincronizacionExcelUtc": "UltimaSincronizacionExcelUtc",
+    }
+    column = direct_map.get(key)
+    if column:
+        return detail.get(column)
+    if key == "produccionTotal":
+        periodos = detail.get("PeriodosMensuales") or []
+        total = sum(parse_decimal(item.get("Importe")) or 0.0 for item in periodos)
+        if total > 0:
+            return total
+        return first_non_null(
+            [
+                detail.get("LicitacionProduccion2026"),
+                detail.get("LicitacionProduccion"),
+                detail.get("ProduccionPrimerCuatrimestre"),
+                detail.get("ProduccionSegundoCuatrimestre"),
+                detail.get("ProduccionEstimadaTercerCuatrimestre"),
+            ]
+        )
+    if key in PRODUCTION_MONTH_FIELDS.values():
+        db_column = key[0].upper() + key[1:]
+        return detail.get(db_column)
+    return detail.get(key[0].upper() + key[1:])
+
+
+def _match_cierre_fields(cierre: Dict[str, Any], parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
+    normalized_question = _normalize(parsed.get("question") or " ".join(parsed.get("fields") or []))
+    tokens = [
+        token
+        for token in re.split(r"\s+", normalized_question)
+        if token
+        and len(token) >= 3
+        and token not in {"cierre", "produccion", "periodosmensuales", "proyecto", "obra", "del", "de", "la", "el", "cual", "que", "dice", "dato", "desde"}
+    ]
+    values: List[Dict[str, Any]] = []
+
+    for item in cierre.get("ValoresNormalizados") or []:
+        label = str(item.get("Campo") or "").strip()
+        value = item.get("Valor")
+        if value in (None, ""):
+            continue
+        if label.startswith("__"):
+            continue
+        label_norm = _normalize(label)
+        score = sum(1 for token in tokens if token in label_norm)
+        if score > 0 or not tokens:
+            values.append({"label": label, "value": value, "score": score})
+
+    if not values:
+        for key, value in (cierre.get("Valores") or {}).items():
+            if value in (None, ""):
+                continue
+            if str(key).startswith("__"):
+                continue
+            label_norm = _normalize(str(key))
+            score = sum(1 for token in tokens if token in label_norm)
+            if score > 0 or not tokens:
+                values.append({"label": str(key), "value": value, "score": score})
+
+    deduped = []
+    seen = set()
+    values.sort(key=lambda item: (-item["score"], item["label"]))
+    for item in values:
+        marker = (item["label"], str(item["value"]))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append({"label": item["label"], "value": item["value"]})
+    return deduped[:6]
+
+
+def _summarize_cierre(cierre: Dict[str, Any]) -> str | None:
+    values = _match_cierre_fields(cierre, {"fields": []})
+    if not values:
+        return None
+    titulo = cierre.get("Nombre") or cierre.get("Numero") or "la referencia solicitada"
+    periodo = cierre.get("Periodo")
+    period_copy = f" ({periodo})" if periodo else ""
+    resumen = "; ".join(f"{item['label']} = {_format_value(item['value'])}" for item in values[:5])
+    return f"Cierre de {titulo}{period_copy}: {resumen}."
 
 
 def _enrich_result_with_match(result: Dict[str, Any], match: Dict[str, Any], *, module: str) -> Dict[str, Any]:
@@ -573,6 +1381,21 @@ def _format_monthly_breakdown(fields: List[Dict[str, Any]], *, name: str, code: 
             monthly_chunks.append(f"{MONTH_LABELS[month_number]} = {_format_value(value)}")
 
     if not monthly_chunks:
+        periodos = next((field.get("value") for field in fields if field.get("key") == "periodosMensuales"), None) or []
+        normalized_periodos = []
+        for periodo in periodos:
+            amount = periodo.get("Importe")
+            if amount is None:
+                continue
+            month_value = periodo.get("Mes")
+            year_value = periodo.get("Anio")
+            month_label = MONTH_LABELS.get(int(month_value or 0), f"mes {month_value}")
+            year_copy = f" {year_value}" if year_value else ""
+            normalized_periodos.append(f"{month_label}{year_copy} = {_format_value(amount)}")
+        if normalized_periodos:
+            monthly_chunks = normalized_periodos
+
+    if not monthly_chunks:
         return None
 
     return f"Obra {code or ''} {name}{period_text}: " + "; ".join(monthly_chunks) + "."
@@ -585,14 +1408,10 @@ def _build_no_data_message(match: Dict[str, Any], *, module: str, parsed: Dict[s
     period_text = _build_period_text(parsed)
 
     if module == "produccion" and parsed.get("per_month"):
-        return (
-            f"{prefix} {code} {name}{period_text}: no hay produccion mensual cargada en AppRegenera para ese periodo."
-        )
+        return f"{prefix} {code} {name}{period_text}: no hay produccion mensual cargada en AppRegenera para ese periodo."
 
     if parsed.get("month") and module == "produccion":
-        return (
-            f"{prefix} {code} {name}{period_text}: no hay dato cargado para ese mes en AppRegenera."
-        )
+        return f"{prefix} {code} {name}{period_text}: no hay dato cargado para ese mes en AppRegenera."
 
     requested_labels = [FIELD_LABELS.get(field, field) for field in parsed.get("fields") or []]
     labels_text = ", ".join(requested_labels[:4]) if requested_labels else "el dato solicitado"
@@ -610,15 +1429,79 @@ def _build_period_text(parsed: Dict[str, Any]) -> str:
     return f" ({', '.join(parts)})" if parts else ""
 
 
+def _aggregate_label(metric: str, year: int | None) -> str:
+    if metric.startswith("cierre:"):
+        return metric.split(":", 1)[1]
+    if metric == "importecontratado":
+        return f"importe contratado {year}" if year else "importe contratado"
+    if metric == "importecontratadoprevio":
+        return "importe contratado previo"
+    if metric == "pipeline":
+        return f"pipeline {year}" if year else "pipeline"
+    if metric == "backlog":
+        return f"backlog {year}" if year else "backlog"
+    if metric == "produccion":
+        return f"produccion {year}" if year else "produccion"
+    if metric == "producciontotal":
+        return "produccion total"
+    if metric == "cartera2026":
+        return "cartera 2026"
+    if metric == "pendiente2026":
+        return "pendiente 2026"
+    if metric == "diferencia":
+        return "diferencia"
+    if metric == "rentabilidadprevista2026":
+        return "rentabilidad prevista 2026"
+    if metric == "produccionorigen2025":
+        return "produccion origen 2025"
+    if metric == "produccionorigenanosanteriores":
+        return "produccion origen anos anteriores"
+    if metric == "ventamaster2025":
+        return "venta master 2025"
+    if metric == "porcentajemateriales":
+        return "porcentaje de materiales"
+    if metric == "porcentajemanoobra":
+        return "porcentaje de mano de obra"
+    if metric == "produccionprimercuatrimestre":
+        return "produccion primer cuatrimestre"
+    if metric == "produccionsegundocuatrimestre":
+        return "produccion segundo cuatrimestre"
+    if metric == "produccionprimersegundocuatrimestre":
+        return "produccion acumulada primer y segundo cuatrimestre"
+    if metric == "produccionestimadapendiente":
+        return "produccion estimada pendiente"
+    if metric == "produccionestimadatercercuatrimestre":
+        return "produccion tercer cuatrimestre"
+    return metric
+
+
+def _contains_cierre_hint(text: str) -> bool:
+    return any(label in text for label in CLOSURE_FIELD_HINTS)
+
+
+def _detect_reference_module(reference: str | None) -> str | None:
+    if not reference:
+        return None
+    normalized = _normalize(reference).replace(" ", "-")
+    if normalized.startswith("est-"):
+        return "estudios"
+    if re.fullmatch(r"\d{4,8}", normalized):
+        return "produccion"
+    return None
+
+
+def _alias_in_text(text: str, alias: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text) is not None
+
+
 def _format_value(value: Any) -> str:
     if value is None:
         return "sin dato"
     if isinstance(value, bool):
         return "si" if value else "no"
-    if isinstance(value, float):
-        return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    if isinstance(value, int):
-        return str(value)
+    numeric = parse_decimal(value)
+    if numeric is not None and not isinstance(value, bool):
+        return f"{numeric:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", value):
         year, month, day = value[:10].split("-")
         return f"{day}/{month}/{year}"

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>REGENERA</title>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <link rel="stylesheet" href="styles.css?v=16">
+    <link rel="stylesheet" href="styles.css?v=18">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -266,26 +266,32 @@
                 <button class="admin-range-btn active" type="button" data-days="7" onclick="setAdminRange(7, this)">7 días</button>
                 <button class="admin-range-btn" type="button" data-days="30" onclick="setAdminRange(30, this)">30 días</button>
             </div>
-            <div class="admin-metrics-grid">
-                <div class="metric-card"><span>Total interacciones</span><strong id="metric-total-interactions">0</strong></div>
-                <div class="metric-card"><span>Prompt tokens</span><strong id="metric-prompt-tokens">0</strong></div>
-                <div class="metric-card"><span>Completion tokens</span><strong id="metric-completion-tokens">0</strong></div>
-                <div class="metric-card"><span>Tokens acumulados</span><strong id="metric-total-tokens">0</strong></div>
-                <div class="metric-card"><span>Coste estimado (USD)</span><strong id="metric-estimated-cost">0</strong></div>
-                <div class="metric-card"><span>Latencia media (ms)</span><strong id="metric-avg-latency">0</strong></div>
-                <div class="metric-card"><span>Interacciones con error</span><strong id="metric-total-errors">0</strong></div>
-                <div class="metric-card"><span>Pendientes</span><strong id="metric-total-pending">0</strong></div>
-                <div class="metric-card"><span>Validadas</span><strong id="metric-total-validated">0</strong></div>
-                <div class="metric-card"><span>Tasa validación</span><strong id="metric-validation-rate">0%</strong></div>
+            <div class="admin-view-tabs">
+                <button id="admin-tab-overview" class="admin-view-tab active" type="button" onclick="setAdminView('overview', this)">Resumen y modelos</button>
+                <button id="admin-tab-pending" class="admin-view-tab" type="button" onclick="setAdminView('pending', this)">Interacciones pendientes</button>
             </div>
-            <div class="admin-section">
-                <div class="admin-section-header">
-                    <h4>Comparativa de modelos</h4>
-                    <button class="admin-refresh-btn" onclick="openAdmin503Modal()">Errores 503</button>
+            <div id="admin-view-overview" class="admin-view-section">
+                <div class="admin-metrics-grid">
+                    <div class="metric-card"><span>Total interacciones</span><strong id="metric-total-interactions">0</strong></div>
+                    <div class="metric-card"><span>Prompt tokens</span><strong id="metric-prompt-tokens">0</strong></div>
+                    <div class="metric-card"><span>Completion tokens</span><strong id="metric-completion-tokens">0</strong></div>
+                    <div class="metric-card"><span>Tokens acumulados</span><strong id="metric-total-tokens">0</strong></div>
+                    <div class="metric-card"><span>Coste estimado (USD)</span><strong id="metric-estimated-cost">0</strong></div>
+                    <div class="metric-card"><span>Latencia media (ms)</span><strong id="metric-avg-latency">0</strong></div>
+                    <div class="metric-card"><span>Interacciones con error</span><strong id="metric-total-errors">0</strong></div>
+                    <div class="metric-card"><span>Pendientes</span><strong id="metric-total-pending">0</strong></div>
+                    <div class="metric-card"><span>Validadas</span><strong id="metric-total-validated">0</strong></div>
+                    <div class="metric-card"><span>Tasa validación</span><strong id="metric-validation-rate">0%</strong></div>
                 </div>
-                <div id="admin-model-comparison" class="admin-model-comparison"></div>
+                <div class="admin-section">
+                    <div class="admin-section-header">
+                        <h4>Comparativa de modelos</h4>
+                        <button class="admin-refresh-btn" onclick="openAdmin503Modal()">Errores 503</button>
+                    </div>
+                    <div id="admin-model-comparison" class="admin-model-comparison"></div>
+                </div>
             </div>
-            <div class="admin-section">
+            <div id="admin-view-pending" class="admin-view-section hidden">
                 <div class="admin-section-header">
                     <h4>Interacciones pendientes</h4>
                     <button class="admin-refresh-btn" onclick="loadAdminPanel()">Actualizar</button>
@@ -351,7 +357,7 @@
     </div>
 
     <script src="msal-browser.min.js?v=20260522h"></script>
-    <script src="config.js?v=20260525a"></script>
-    <script src="app.js?v=16"></script>
+    <script src="config.js?v=20260525b"></script>
+    <script src="app.js?v=21"></script>
 </body>
 </html>
