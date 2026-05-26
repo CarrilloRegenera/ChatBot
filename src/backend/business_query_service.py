@@ -700,6 +700,7 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
         month = history_context.get("month")
     reference = _resolve_reference(question, normalized, history)
     per_month = _is_per_month_request(normalized)
+    per_year = _is_per_year_request(normalized)
     fields = _detect_fields(
         normalized,
         module=module,
@@ -707,6 +708,7 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
         cuatrimestre=cuatrimestre,
         month=month,
         per_month=per_month,
+        per_year=per_year,
     )
     aggregate = _detect_aggregate(question, normalized, module=module, fields=fields, year=year, reference=reference)
     expected_client = _extract_expected_client(question, normalized)
@@ -718,6 +720,7 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
         "cuatrimestre": cuatrimestre,
         "month": month,
         "per_month": per_month,
+        "per_year": per_year,
         "aggregate": aggregate,
         "expected_client": expected_client,
     }
@@ -806,6 +809,10 @@ def _is_per_month_request(text: str) -> bool:
     return any(token in text for token in ("cada mes", "por mes", "mes a mes", "en cada mes", "todos los meses"))
 
 
+def _is_per_year_request(text: str) -> bool:
+    return any(token in text for token in ("cada ano", "por ano", "anual", "en cada ano", "todos los anos"))
+
+
 def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str], year: int | None, reference: str | None) -> Dict[str, Any] | None:
     top_match = re.search(r"\btop\s+(\d+)\b", text)
     top_n = int(top_match.group(1)) if top_match else 1
@@ -815,8 +822,6 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
     asks_plural = any(token in text for token in ("proyectos", "obras", "estudios", "cierres"))
 
     if has_specific_reference and not is_top:
-        return None
-    if is_sum and not asks_plural and not is_top and not text.startswith("top "):
         return None
 
     metric = _detect_aggregate_metric(text, fields, module=module, year=year)
@@ -950,25 +955,32 @@ def _detect_fields(
     cuatrimestre: int | None,
     month: int | None,
     per_month: bool,
+    per_year: bool,
 ) -> List[str]:
     fields: List[str] = []
     text_without_type_client = text.replace("tipo de cliente", " ").replace("tipo cliente", " ")
 
     if "pipeline" in text or "plan " in text:
-        if year in {2026, 2027, 2028, 2029}:
+        if per_year:
+            fields.extend(["plan2026", "plan2027", "plan2028", "plan2029"])
+        elif year in {2026, 2027, 2028, 2029}:
             fields.append(f"plan{year}")
         else:
             fields.append("plan2026")
 
     if "backlog" in text:
-        if year in {2026, 2027, 2028, 2029}:
+        if per_year:
+            fields.extend(["produccion2026", "produccion2027", "produccion2028", "produccion2029"])
+        elif year in {2026, 2027, 2028, 2029}:
             fields.append(f"produccion{year}")
         else:
             fields.append("produccion")
 
     if "importe contratado" in text or "importe adjudicado" in text:
         if module == "estudios":
-            if year in {2026, 2027, 2028, 2029} and not cuatrimestre and not month:
+            if per_year:
+                fields.extend(["importeContratado2026", "importeContratado2027", "importeContratado2028", "importeContratado2029"])
+            elif year in {2026, 2027, 2028, 2029} and not cuatrimestre and not month:
                 fields.append(f"importeContratado{year}")
             elif any(token in text for token in ("previo", "anteriores", "anterior")):
                 fields.append("importeContratadoPrevio")
@@ -1020,6 +1032,10 @@ def _detect_fields(
             if _alias_in_text(haystack, alias) and canonical not in fields:
                 fields.append(canonical)
                 break
+
+    if module == "estudios" and per_year:
+        generic_yearly_keys = {"importeContratado", "produccion", "produccionPrevio"}
+        fields = [field for field in fields if field not in generic_yearly_keys]
 
     if not fields and re.search(r"\bcual es la obra\b|\bque obra\b|\bnombre de la obra\b|\bnombre obra\b", text):
         fields.append("obra" if module == "estudios" else "nombreObra")
@@ -1189,7 +1205,8 @@ def _extract_estudios_value(detail: Dict[str, Any], key: str, parsed: Dict[str, 
     if key == "importeContratadoPrevio":
         return detail.get("ImporteContratadoPrevio")
     if key.startswith("importeContratado20"):
-        return detail.get(key[0].upper() + key[1:])
+        value = detail.get(key[0].upper() + key[1:])
+        return 0.0 if value is None else value
     if key == "produccion":
         return first_non_null([detail.get("Produccion"), detail.get("Produccion2026")])
     if key == "produccionPrevio":
@@ -1197,10 +1214,13 @@ def _extract_estudios_value(detail: Dict[str, Any], key: str, parsed: Dict[str, 
     if key.startswith("produccion20"):
         column = key[0].upper() + key[1:]
         if key == "produccion2026":
-            return first_non_null([detail.get("Produccion2026"), detail.get("Produccion")])
-        return detail.get(column)
+            value = first_non_null([detail.get("Produccion2026"), detail.get("Produccion")])
+            return 0.0 if value is None else value
+        value = detail.get(column)
+        return 0.0 if value is None else value
     if key.startswith("plan20"):
-        return detail.get(key[0].upper() + key[1:])
+        value = detail.get(key[0].upper() + key[1:])
+        return 0.0 if value is None else value
     return detail.get(key[0].upper() + key[1:])
 
 
@@ -1485,8 +1505,6 @@ def _detect_reference_module(reference: str | None) -> str | None:
     normalized = _normalize(reference).replace(" ", "-")
     if normalized.startswith("est-"):
         return "estudios"
-    if re.fullmatch(r"\d{4,8}", normalized):
-        return "produccion"
     return None
 
 
