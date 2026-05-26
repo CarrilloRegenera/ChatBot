@@ -1301,6 +1301,10 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     documents, metadatas, ids = [], [], []
 
     pdf = fitz.open(str(filepath))
+    # Heading ITC activo: persiste entre páginas para que las tablas
+    # en páginas posteriores hereden la ITC de su sección.
+    active_itc_heading = ""
+    active_itc_section = ""
     try:
         for page_index, page in enumerate(pdf):
             raw_html = page.get_text("html")
@@ -1337,6 +1341,15 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 continue
             printed_page = _extract_printed_page(text)
             page_exact_refs = ", ".join(_extract_exact_refs(f"{source_name} {text}"))
+            # Detectar headings ITC en la página (ej: "ITC-BT-25. INSTALACIONES...")
+            # y actualizar el contexto activo que se propagará a tablas.
+            _itc_heading_match = re.search(
+                r"(ITC[-\s]*BT[-\s]*\d{1,2})\.\s*([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s,]{5,})",
+                text,
+            )
+            if _itc_heading_match:
+                active_itc_heading = _itc_heading_match.group(1).replace(" ", "-").upper()
+                active_itc_section = _itc_heading_match.group(2).strip()[:80]
             for chunk_index, chunk in enumerate(_split_text(text), start=1):
                 if _is_noise_chunk(chunk):
                     continue
@@ -1390,7 +1403,9 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 ids.append(f"{source_name}-{page_index + 1}-{chunk_index}")
             # Contexto de página para enriquecer filas de tabla:
             # ITC refs y sección dominante (primer bloque con sección no vacía).
+            # Si la página no tiene heading ITC propio, hereda el activo.
             page_itc_refs = _extract_itc_refs(f"{source_name} {text}")
+            effective_itc = page_itc_refs or active_itc_heading
             page_section = ""
             for blk in page_blocks:
                 if blk["section"]:
@@ -1398,21 +1413,22 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                         blk["section"][:SECTION_LABEL_MAX_LENGTH]
                     )
                     break
+            effective_section = page_section or active_itc_section
             table_rows = _extract_table_row_chunks(page, text)
             for row in table_rows:
                 raw_row_doc = str(row["document"])
                 row_index = int(row["row_index"])
                 table_index = int(row["table_index"])
                 table_title = str(row["table_title"])
-                # Enriquecer texto de fila con contexto de página para
-                # que el embedding capture la ITC y sección a la que pertenece.
+                # Enriquecer texto de fila con contexto de página/ITC activa
+                # para que el embedding capture la ITC y sección a la que pertenece.
                 row_prefix = ""
-                if page_itc_refs:
-                    row_prefix = f"[{page_itc_refs}] "
-                elif page_section:
-                    row_prefix = f"[{page_section}] "
-                if page_section and page_section not in raw_row_doc:
-                    row_doc = f"{row_prefix}{page_section}. {raw_row_doc}"
+                if effective_itc:
+                    row_prefix = f"[{effective_itc}] "
+                elif effective_section:
+                    row_prefix = f"[{effective_section}] "
+                if effective_section and effective_section not in raw_row_doc:
+                    row_doc = f"{row_prefix}{effective_section}. {raw_row_doc}"
                 elif row_prefix:
                     row_doc = f"{row_prefix}{raw_row_doc}"
                 else:

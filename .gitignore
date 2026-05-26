@@ -16,6 +16,7 @@ __pycache__/
 # Local environment config
 src/backend/.env
 src/backend/LanzarChatbotDocker.bat
+src/backend/LanzarChatbotNube.bat
 src/frontend/config.js
 
 # RAG local artifacts
