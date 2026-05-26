@@ -425,6 +425,7 @@ def send_message(data: MessageRequest, request: Request):
                 "from_memory": False,
                 "sources": business_result.get("sources", []),
                 "route": business_route,
+                "trace": business_result.get("trace", {}),
             }
 
         context = ""

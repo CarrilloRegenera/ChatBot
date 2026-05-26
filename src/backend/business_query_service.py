@@ -1,3 +1,4 @@
+import logging
 import re
 import unicodedata
 from typing import Any, Dict, List
@@ -17,6 +18,9 @@ from appregenera_sql_service import (
     search_produccion as sql_search_produccion,
 )
 from config import APPREGENERA_DEV_BYPASS_KEY
+
+
+logger = logging.getLogger(__name__)
 
 
 MONTH_ALIASES = {
@@ -158,6 +162,10 @@ FIELD_LABELS.update(
         "produccionEstimadaDiciembre": "produccion estimada diciembre",
         "periodosMensuales": "periodos mensuales",
         "produccionTotal": "produccion total",
+        "licitacionProduccion2026": "produccion 2026",
+        "licitacionProduccion2027": "produccion 2027",
+        "licitacionProduccion2028": "produccion 2028",
+        "licitacionProduccion2029": "produccion 2029",
         "cierre": "cierre",
     }
 )
@@ -241,6 +249,114 @@ def _normalize(text: str) -> str:
     return normalized
 
 
+def _business_trace(
+    *,
+    path: str,
+    module: str,
+    route: str,
+    parsed: Dict[str, Any] | None,
+    outcome: str,
+) -> Dict[str, Any]:
+    parsed = parsed or {}
+    aggregate = parsed.get("aggregate") or {}
+    return {
+        "path": path,
+        "module": module,
+        "route": route,
+        "outcome": outcome,
+        "intent": parsed.get("intent"),
+        "reference": parsed.get("reference"),
+        "metric": parsed.get("metric") or aggregate.get("metric"),
+        "scope": parsed.get("scope") or aggregate.get("scope"),
+        "filter_text": parsed.get("filter_text") or aggregate.get("filter_text"),
+        "group_by": parsed.get("group_by"),
+        "fields": parsed.get("fields") or [],
+        "year": parsed.get("year"),
+        "cuatrimestre": parsed.get("cuatrimestre"),
+        "month": parsed.get("month"),
+        "per_month": bool(parsed.get("per_month")),
+        "per_year": bool(parsed.get("per_year")),
+        "aggregate": {
+            "kind": aggregate.get("kind"),
+            "metric": aggregate.get("metric"),
+            "scope": aggregate.get("scope"),
+            "filter_text": aggregate.get("filter_text"),
+            "top_n": aggregate.get("top_n"),
+            "periodo": aggregate.get("periodo"),
+            "area": aggregate.get("area"),
+        } if aggregate else None,
+    }
+
+
+def _with_business_trace(result: Dict[str, Any], trace: Dict[str, Any]) -> Dict[str, Any]:
+    result["trace"] = trace
+    logger.info(
+        "[BUSINESS] path=%s module=%s route=%s outcome=%s intent=%s ref=%s metric=%s fields=%s year=%s month=%s scope=%s group_by=%s filter=%s",
+        trace.get("path"),
+        trace.get("module"),
+        trace.get("route"),
+        trace.get("outcome"),
+        trace.get("intent") or "-",
+        trace.get("reference") or "-",
+        trace.get("metric") or "-",
+        ",".join(trace.get("fields") or []) or "-",
+        trace.get("year") or "-",
+        trace.get("month") or "-",
+        trace.get("scope") or "-",
+        trace.get("group_by") or "-",
+        trace.get("filter_text") or "-",
+    )
+    return result
+
+
+def _infer_metric_from_fields(fields: List[str]) -> str | None:
+    if any(field.startswith("importeContratado") for field in fields):
+        return "importecontratado"
+    if any(field.startswith("plan20") for field in fields):
+        return "pipeline"
+    if any(field.startswith("produccion") or field.startswith("licitacionProduccion") for field in fields):
+        return "produccion"
+    if any(field.startswith("cartera") for field in fields):
+        return "cartera"
+    if any(field.startswith("pendiente") for field in fields):
+        return "pendiente"
+    return fields[0].lower() if fields else None
+
+
+def _extract_business_intent(question: str, *, module: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    parsed = _parse_question(question, module=module, history=history)
+    aggregate = parsed.get("aggregate") or {}
+    fields = parsed.get("fields") or []
+
+    if aggregate:
+        intent = "ranking" if aggregate.get("kind") == "top" else "aggregate"
+        metric = aggregate.get("metric")
+    elif parsed.get("reference"):
+        intent = "detail"
+        metric = _infer_metric_from_fields(fields)
+    else:
+        intent = "unknown"
+        metric = _infer_metric_from_fields(fields)
+
+    group_by = None
+    if parsed.get("per_year"):
+        group_by = "year"
+    elif parsed.get("per_month"):
+        group_by = "month"
+
+    parsed.update(
+        {
+            "intent": intent,
+            "module": module,
+            "metric": metric,
+            "scope": aggregate.get("scope"),
+            "filter_text": aggregate.get("filter_text"),
+            "group_by": group_by,
+        }
+    )
+    return parsed
+
+
 def detect_business_route(question: str) -> str | None:
     text = _normalize(question)
     explicit_scope = _detect_explicit_scope(text)
@@ -278,7 +394,8 @@ def answer_business_question(
     history: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     if not user_token and not APPREGENERA_DEV_BYPASS_KEY:
-        return {
+        route = preferred_route or detect_business_route(question) or "business_licitaciones"
+        return _with_business_trace({
             "response": (
                 "Para consultar datos de Licitaciones o Produccion necesitas iniciar sesion corporativa con Microsoft. "
                 "El modo documental puede seguir funcionando sin esa sesion."
@@ -286,7 +403,7 @@ def answer_business_question(
             "route": "business_auth_required",
             "confidence": 1.0,
             "sources": [],
-        }
+        }, _business_trace(path="auth", module="", route=route, parsed=None, outcome="auth_required"))
 
     if appregenera_sql_available():
         sql_result = _answer_business_question_sql(
@@ -318,26 +435,41 @@ def _answer_business_question_sql(
     if _is_source_info_request(normalized):
         source_module = _infer_source_module_from_history(history, fallback=preferred_module)
         route = "business_licitaciones" if source_module == "estudios" else "business_produccion"
-        parsed = _parse_question(question, module=source_module, history=history or [])
-        return _build_source_info_response(parsed, module=source_module, route=route)
+        parsed = _extract_business_intent(question, module=source_module, history=history or [])
+        parsed["intent"] = "source_info"
+        return _with_business_trace(
+            _build_source_info_response(parsed, module=source_module, route=route),
+            _business_trace(path="sql", module=source_module, route=route, parsed=parsed, outcome="source_info"),
+        )
     modules_to_try = _build_module_candidates(preferred_module, explicit_scope, reference_hint)
 
     aggregate_fallback: Dict[str, Any] | None = None
     for index, module in enumerate(modules_to_try):
         route = "business_licitaciones" if module == "estudios" else "business_produccion"
-        parsed = _parse_question(question, module=module, history=history or [])
+        parsed = _extract_business_intent(question, module=module, history=history or [])
 
         if parsed.get("aggregate"):
             aggregate_result = _answer_aggregate_sql(parsed, module=module, route=route)
             if aggregate_result:
+                traced_result = _with_business_trace(
+                    aggregate_result,
+                    _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="aggregate"),
+                )
                 if (
                     explicit_scope is None
                     and index < len(modules_to_try) - 1
-                    and aggregate_result.get("is_zero_value")
+                    and traced_result.get("is_zero_value")
                 ):
-                    aggregate_fallback = aggregate_result
+                    aggregate_fallback = traced_result
                     continue
-                return aggregate_result
+                return traced_result
+
+        yearly_result = _answer_yearly_aggregate_sql(parsed, module=module, route=route)
+        if yearly_result:
+            return _with_business_trace(
+                yearly_result,
+                _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="yearly_aggregate"),
+            )
 
         if module == "estudios":
             detail_result = _answer_estudios_detail_sql(parsed, route=route)
@@ -345,9 +477,47 @@ def _answer_business_question_sql(
             detail_result = _answer_produccion_detail_sql(parsed, route=route, normalized_question=normalized)
 
         if detail_result:
-            return detail_result
+            return _with_business_trace(
+                detail_result,
+                _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="detail"),
+            )
 
     return aggregate_fallback
+
+
+def _answer_yearly_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) -> Dict[str, Any] | None:
+    if module != "estudios" or parsed.get("reference") or parsed.get("group_by") != "year":
+        return None
+
+    metric = parsed.get("metric")
+    if metric not in {"pipeline", "importecontratado", "produccion"}:
+        return None
+
+    values: List[str] = []
+    is_zero_value = True
+    for year in (2026, 2027, 2028, 2029):
+        rows = sql_query_licitaciones_aggregate(
+            select_field=metric,
+            agg="sum",
+            top=1,
+            year=year,
+            scope=parsed.get("scope"),
+            free_text=parsed.get("filter_text"),
+        )
+        value = rows[0].get("Valor") if rows else 0.0
+        if (parse_decimal(value) or 0.0) != 0.0:
+            is_zero_value = False
+        values.append(f"{year} = {_format_value(value)}")
+
+    filter_copy = f" para {parsed.get('filter_text')}" if parsed.get("filter_text") else ""
+    scope_copy = f" en {parsed.get('scope')}" if parsed.get("scope") else ""
+    return {
+        "response": f"{_aggregate_label(metric, None).capitalize()} por ano{scope_copy}{filter_copy}: " + "; ".join(values) + ".",
+        "route": route,
+        "confidence": 1.0,
+        "sources": [{"source": "AppRegenera SQL", "module": module}],
+        "is_zero_value": is_zero_value,
+    }
 
 
 def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) -> Dict[str, Any] | None:
@@ -585,7 +755,7 @@ def _answer_business_question_http(
 
         for module in modules_to_try:
             route = "business_licitaciones" if module == "estudios" else "business_produccion"
-            parsed = _parse_question(question, module=module, history=history or [])
+            parsed = _extract_business_intent(question, module=module, history=history or [])
             if not parsed["reference"]:
                 continue
 
@@ -635,7 +805,7 @@ def _answer_business_question_http(
                     continue
                 response_text = first_no_data_message
 
-            return {
+            return _with_business_trace({
                 "response": response_text,
                 "route": route,
                 "confidence": 1.0,
@@ -647,7 +817,7 @@ def _answer_business_question_http(
                         "code": match["primaryCode"],
                     }
                 ],
-            }
+            }, _business_trace(path="http", module=module, route=route, parsed=parsed, outcome="detail"))
 
         fallback_message = (
             first_ambiguous_message
@@ -655,23 +825,29 @@ def _answer_business_question_http(
             or first_not_found_message
             or "No he podido encontrar un dato de negocio que encaje con la pregunta."
         )
-        return {
+        fallback_route = preferred_route or detect_business_route(question) or "business_licitaciones"
+        fallback_module = "estudios" if fallback_route == "business_licitaciones" else "produccion"
+        fallback_parsed = _extract_business_intent(question, module=fallback_module, history=history or [])
+        return _with_business_trace({
             "response": fallback_message,
-            "route": preferred_route or detect_business_route(question) or "business_licitaciones",
+            "route": fallback_route,
             "confidence": 0.95,
             "sources": [],
-        }
+        }, _business_trace(path="http", module=fallback_module, route=fallback_route, parsed=fallback_parsed, outcome="fallback"))
     except AppRegeneraClientError as exc:
         if exc.status_code == 403:
             message = "No tienes permisos para consultar ese dato en AppRegenera."
         else:
             message = f"No he podido consultar AppRegenera: {exc}"
-        return {
+        error_route = preferred_route or detect_business_route(question) or "business_licitaciones"
+        error_module = "estudios" if error_route == "business_licitaciones" else "produccion"
+        error_parsed = _extract_business_intent(question, module=error_module, history=history or [])
+        return _with_business_trace({
             "response": message,
-            "route": preferred_route or detect_business_route(question) or "business_licitaciones",
+            "route": error_route,
             "confidence": 0.0,
             "sources": [],
-        }
+        }, _business_trace(path="http", module=error_module, route=error_route, parsed=error_parsed, outcome="error"))
 
 
 def _build_module_candidates(preferred_module: str, explicit_scope: str | None, reference_hint: str | None) -> List[str]:
@@ -833,7 +1009,7 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
     scope = None
     if "pipeline" in text or any(field.startswith("plan20") for field in fields):
         scope = "pipeline"
-    elif "backlog" in text:
+    elif "backlog" in text or any(token in text for token in ("adjudicada", "adjudicadas", "adjudicado", "adjudicados")):
         scope = "backlog"
 
     return {
@@ -888,7 +1064,7 @@ def _extract_filter_text(original_question: str, normalized: str) -> str | None:
     cleaned_candidates: List[str] = []
     for candidate in candidates:
         cleaned = candidate
-        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|del|de|la|las|los)\b", " ", cleaned)
+        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|adjudicada|adjudicadas|adjudicado|adjudicados|ano|anual|cada|total|del|de|la|las|los)\b", " ", cleaned)
         cleaned = re.sub(r"\b20\d{2}\b", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
         if cleaned and len(cleaned) >= 2:
@@ -1000,6 +1176,13 @@ def _detect_fields(
         else:
             if "cierre" in text:
                 fields.append("cierre")
+            elif per_year:
+                fields.extend([
+                    "licitacionProduccion2026",
+                    "licitacionProduccion2027",
+                    "licitacionProduccion2028",
+                    "licitacionProduccion2029",
+                ])
             elif "total" in text:
                 fields.append("produccionTotal")
             elif per_month:
@@ -1277,6 +1460,9 @@ def _extract_produccion_value(detail: Dict[str, Any], key: str) -> Any:
     if key in PRODUCTION_MONTH_FIELDS.values():
         db_column = key[0].upper() + key[1:]
         return detail.get(db_column)
+    if key.startswith("licitacionProduccion20"):
+        value = detail.get(key[0].upper() + key[1:])
+        return 0.0 if value is None else value
     return detail.get(key[0].upper() + key[1:])
 
 
