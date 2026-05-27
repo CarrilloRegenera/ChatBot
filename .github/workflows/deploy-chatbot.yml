@@ -1,0 +1,305 @@
+name: Deploy Chatbot
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Rama a desplegar
+        required: true
+        default: sandbox
+      action:
+        description: Tipo de despliegue
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - backend
+          - frontend
+
+concurrency:
+  group: chatbot-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_REPO: chatbot-api
+  WEBSITE_PORT: "8000"
+  STATIC_WEB_APP_HOST: https://chatbot.appregenera.com
+  ALLOWED_ORIGINS: https://chatbot.appregenera.com,http://127.0.0.1:8000,http://localhost:8000
+  OPENAI_MODEL: gpt-5.4-nano
+  OPENAI_BASELINE_MODEL: gpt-5.4-nano
+  LLM_SECONDARY_MODEL: gpt-4.1-mini
+  LLM_FALLBACK_MODEL: gpt-4.1-mini
+  OPENAI_TIMEOUT_SECS: "45"
+  OPENAI_MAX_RETRIES: "1"
+  LOG_LEVEL: INFO
+  RAG_BACKEND: azure_search
+  AZURE_SEARCH_INDEX_NAME: idx-chatbot-rag
+  AZURE_SEARCH_VECTOR_FIELD: content_vector
+  BLOB_CONTAINER_NAME: documentos-rag
+  BLOB_PREFIX: ""
+  BLOB_PREFIX_ALTA_TENSION: alta_tension/
+  BLOB_PREFIX_BAJA_TENSION: baja_tension/
+  BLOB_PREFIX_GUIAS_TECNICAS: guias_tecnicas/
+  BLOB_PREFIX_RITE: rite/
+  TOP_K_RESULTS: "3"
+  ENABLE_RERANK: "true"
+  RERANK_MODEL: paraphrase-multilingual-MiniLM-L12-v2
+  RERANK_MODEL_REVISION: ""
+  RERANK_WEIGHT: "9.0"
+  MAX_CHUNKS_PER_SOURCE: "6"
+  MIN_QUERY_LENGTH: "4"
+  MEMORY_COLLECTION_NAME: reglamentos_memoria_validada
+  MEMORY_MAX_RESULTS: "3"
+  MEMORY_MAX_DISTANCE: "0.6"
+  CONFIDENCE_FALLBACK_THRESHOLD: "0.65"
+  FALLBACK_MIN_CONFIDENCE_GAP: "0.07"
+  FALLBACK_MAX_BASE_CONFIDENCE: "0.72"
+  FALLBACK_MIN_RETRIEVAL_QUALITY: mixed
+  CONVERSATION_LOCK_TIMEOUT_SECS: "60"
+  ENTRA_ENABLED: "true"
+  ENTRA_TENANT_ID: 6562b8d1-5dc3-4354-bd8f-25993fa24154
+  ENTRA_CLIENT_ID: ebbcc0d0-1762-4d34-9229-baee8d9a6ee6
+  ENTRA_API_SCOPE: api://ea8827b5-a433-4a75-bbe4-1770aeb16631/access_as_user
+  ENTRA_ADMIN_EMAILS: it@regeneraenergy.es,jcanete@regeneraenergy.es
+  APPREGENERA_API_BASE_URL: https://api-appregenera-pro-amgxcba0awffdjcd.westeurope-01.azurewebsites.net
+  APPREGENERA_ALLOWED_MODULES: estudios,produccion
+  SYNC_DOCUMENTS_ON_STARTUP: "false"
+  RUN_SCHEMA_MIGRATIONS: "0"
+
+jobs:
+  deploy:
+    name: Deploy Chatbot PRO
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Setup Node.js
+        if: ${{ inputs.action == 'full' || inputs.action == 'frontend' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Resolve deployment metadata
+        shell: pwsh
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RESOURCE_GROUP)) { throw "Falta repo/environment variable AZURE_RESOURCE_GROUP" }
+          if ([string]::IsNullOrWhiteSpace($env:WEBAPP_NAME)) { throw "Falta repo/environment variable AZURE_WEBAPP_NAME" }
+
+          $hostName = az webapp show --resource-group $env:RESOURCE_GROUP --name $env:WEBAPP_NAME --query defaultHostName -o tsv
+          if (-not $hostName) { throw "No se pudo obtener el defaultHostName del App Service" }
+
+          $backendUrl = "https://$hostName"
+          $imageTag = "${{ github.run_number }}-${{ github.sha }}".Substring(0, [Math]::Min(20, "${{ github.run_number }}-${{ github.sha }}".Length))
+
+          "BACKEND_URL=$backendUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "IMAGE_TAG=$imageTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build and push backend image in ACR
+        if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
+        shell: pwsh
+        env:
+          ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HUGGINGFACE_HUB_TOKEN: ${{ secrets.HUGGINGFACE_HUB_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ACR_NAME)) { throw "Falta repo/environment variable AZURE_ACR_NAME" }
+
+          az acr build `
+            --registry $env:ACR_NAME `
+            --image "$env:IMAGE_REPO`:$env:IMAGE_TAG" `
+            --image "$env:IMAGE_REPO`:latest" `
+            --build-arg "HF_TOKEN=$env:HF_TOKEN" `
+            --build-arg "HUGGINGFACE_HUB_TOKEN=$env:HUGGINGFACE_HUB_TOKEN" `
+            --file src/backend/Dockerfile `
+            src
+
+      - name: Configure backend container
+        if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
+        shell: pwsh
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+          ACR_LOGIN_SERVER: ${{ vars.AZURE_ACR_LOGIN_SERVER }}
+          ACR_USERNAME: ${{ secrets.AZURE_ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.AZURE_ACR_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ACR_LOGIN_SERVER)) { throw "Falta repo/environment variable AZURE_ACR_LOGIN_SERVER" }
+
+          az webapp config container set `
+            --name $env:WEBAPP_NAME `
+            --resource-group $env:RESOURCE_GROUP `
+            --container-image-name "$env:ACR_LOGIN_SERVER/$env:IMAGE_REPO`:$env:IMAGE_TAG" `
+            --container-registry-url "https://$env:ACR_LOGIN_SERVER" `
+            --container-registry-user $env:ACR_USERNAME `
+            --container-registry-password $env:ACR_PASSWORD `
+            --enable-app-service-storage false
+
+      - name: Apply backend app settings
+        if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
+        shell: pwsh
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+          SQL_CONNECTION_STRING: ${{ secrets.SQL_CONNECTION_STRING }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HUGGINGFACE_HUB_TOKEN: ${{ secrets.HUGGINGFACE_HUB_TOKEN }}
+          ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+          AZURE_SEARCH_ENDPOINT: ${{ vars.AZURE_SEARCH_ENDPOINT }}
+          AZURE_SEARCH_KEY: ${{ secrets.AZURE_SEARCH_KEY }}
+          BLOB_STORAGE_CONNECTION_STRING: ${{ secrets.BLOB_STORAGE_CONNECTION_STRING }}
+          APPREGENERA_SQL_CONNECTION_STRING: ${{ secrets.APPREGENERA_SQL_CONNECTION_STRING }}
+          APPREGENERA_DEV_BYPASS_KEY: ${{ secrets.APPREGENERA_DEV_BYPASS_KEY }}
+        run: |
+          $settings = @(
+            "WEBSITES_ENABLE_APP_SERVICE_STORAGE=false",
+            "WEBSITES_PORT=$env:WEBSITE_PORT",
+            "SQL_CONNECTION_STRING=$env:SQL_CONNECTION_STRING",
+            "OPENAI_API_KEY=$env:OPENAI_API_KEY",
+            "HF_TOKEN=$env:HF_TOKEN",
+            "HUGGINGFACE_HUB_TOKEN=$env:HUGGINGFACE_HUB_TOKEN",
+            "OPENAI_MODEL=$env:OPENAI_MODEL",
+            "OPENAI_BASELINE_MODEL=$env:OPENAI_BASELINE_MODEL",
+            "LLM_SECONDARY_MODEL=$env:LLM_SECONDARY_MODEL",
+            "LLM_FALLBACK_MODEL=$env:LLM_FALLBACK_MODEL",
+            "OPENAI_TIMEOUT_SECS=$env:OPENAI_TIMEOUT_SECS",
+            "OPENAI_MAX_RETRIES=$env:OPENAI_MAX_RETRIES",
+            "ALLOWED_ORIGINS=$env:ALLOWED_ORIGINS",
+            "SYNC_DOCUMENTS_ON_STARTUP=$env:SYNC_DOCUMENTS_ON_STARTUP",
+            "RUN_SCHEMA_MIGRATIONS=$env:RUN_SCHEMA_MIGRATIONS",
+            "LOG_LEVEL=$env:LOG_LEVEL",
+            "ADMIN_API_KEY=$env:ADMIN_API_KEY",
+            "RAG_BACKEND=$env:RAG_BACKEND",
+            "AZURE_SEARCH_ENDPOINT=$env:AZURE_SEARCH_ENDPOINT",
+            "AZURE_SEARCH_KEY=$env:AZURE_SEARCH_KEY",
+            "AZURE_SEARCH_INDEX_NAME=$env:AZURE_SEARCH_INDEX_NAME",
+            "AZURE_SEARCH_VECTOR_FIELD=$env:AZURE_SEARCH_VECTOR_FIELD",
+            "BLOB_STORAGE_CONNECTION_STRING=$env:BLOB_STORAGE_CONNECTION_STRING",
+            "BLOB_CONTAINER_NAME=$env:BLOB_CONTAINER_NAME",
+            "BLOB_PREFIX=$env:BLOB_PREFIX",
+            "BLOB_PREFIX_ALTA_TENSION=$env:BLOB_PREFIX_ALTA_TENSION",
+            "BLOB_PREFIX_BAJA_TENSION=$env:BLOB_PREFIX_BAJA_TENSION",
+            "BLOB_PREFIX_GUIAS_TECNICAS=$env:BLOB_PREFIX_GUIAS_TECNICAS",
+            "BLOB_PREFIX_RITE=$env:BLOB_PREFIX_RITE",
+            "TOP_K_RESULTS=$env:TOP_K_RESULTS",
+            "ENABLE_RERANK=$env:ENABLE_RERANK",
+            "RERANK_MODEL=$env:RERANK_MODEL",
+            "RERANK_MODEL_REVISION=$env:RERANK_MODEL_REVISION",
+            "RERANK_WEIGHT=$env:RERANK_WEIGHT",
+            "MAX_CHUNKS_PER_SOURCE=$env:MAX_CHUNKS_PER_SOURCE",
+            "MIN_QUERY_LENGTH=$env:MIN_QUERY_LENGTH",
+            "MEMORY_COLLECTION_NAME=$env:MEMORY_COLLECTION_NAME",
+            "MEMORY_MAX_RESULTS=$env:MEMORY_MAX_RESULTS",
+            "MEMORY_MAX_DISTANCE=$env:MEMORY_MAX_DISTANCE",
+            "CONFIDENCE_FALLBACK_THRESHOLD=$env:CONFIDENCE_FALLBACK_THRESHOLD",
+            "FALLBACK_MIN_CONFIDENCE_GAP=$env:FALLBACK_MIN_CONFIDENCE_GAP",
+            "FALLBACK_MAX_BASE_CONFIDENCE=$env:FALLBACK_MAX_BASE_CONFIDENCE",
+            "FALLBACK_MIN_RETRIEVAL_QUALITY=$env:FALLBACK_MIN_RETRIEVAL_QUALITY",
+            "CONVERSATION_LOCK_TIMEOUT_SECS=$env:CONVERSATION_LOCK_TIMEOUT_SECS",
+            "ENTRA_ENABLED=$env:ENTRA_ENABLED",
+            "ENTRA_TENANT_ID=$env:ENTRA_TENANT_ID",
+            "ENTRA_CLIENT_ID=$env:ENTRA_CLIENT_ID",
+            "ENTRA_API_SCOPE=$env:ENTRA_API_SCOPE",
+            "ENTRA_ADMIN_EMAILS=$env:ENTRA_ADMIN_EMAILS",
+            "APPREGENERA_API_BASE_URL=$env:APPREGENERA_API_BASE_URL",
+            "APPREGENERA_SQL_CONNECTION_STRING=$env:APPREGENERA_SQL_CONNECTION_STRING",
+            "APPREGENERA_ALLOWED_MODULES=$env:APPREGENERA_ALLOWED_MODULES",
+            "APPREGENERA_DEV_BYPASS_KEY=$env:APPREGENERA_DEV_BYPASS_KEY"
+          )
+
+          $args = @(
+            "webapp", "config", "appsettings", "set",
+            "--name", $env:WEBAPP_NAME,
+            "--resource-group", $env:RESOURCE_GROUP,
+            "--settings"
+          ) + $settings
+
+          az @args
+
+      - name: Restart backend
+        if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
+        shell: pwsh
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          az webapp restart --name $env:WEBAPP_NAME --resource-group $env:RESOURCE_GROUP
+
+      - name: Wait for backend health
+        if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
+        shell: pwsh
+        run: |
+          $maxAttempts = 40
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+              $response = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/health" -TimeoutSec 20
+              if ($response.status -eq "ok") {
+                Write-Host "Health check correcto en $env:BACKEND_URL/health"
+                exit 0
+              }
+            } catch {
+              Write-Host "Backend aun arrancando (intento $attempt/$maxAttempts)"
+            }
+            Start-Sleep -Seconds 10
+          }
+          throw "El backend no respondió correctamente en /health"
+
+      - name: Generate frontend config.js
+        if: ${{ inputs.action == 'full' || inputs.action == 'frontend' }}
+        shell: pwsh
+        run: |
+          $content = @"
+window.CHATBOT_CONFIG = {
+  API_BASE_URL: "$env:BACKEND_URL",
+  ENTRA_ENABLED: true,
+  ENTRA_TENANT_ID: "$env:ENTRA_TENANT_ID",
+  ENTRA_CLIENT_ID: "$env:ENTRA_CLIENT_ID",
+  ENTRA_API_SCOPE: "$env:ENTRA_API_SCOPE"
+};
+"@
+          Set-Content -LiteralPath "src/frontend/config.js" -Value $content -Encoding UTF8
+
+      - name: Deploy frontend to Static Web Apps
+        if: ${{ inputs.action == 'full' || inputs.action == 'frontend' }}
+        shell: pwsh
+        env:
+          SWA_DEPLOYMENT_TOKEN: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
+        run: |
+          npx -y @azure/static-web-apps-cli deploy src/frontend --deployment-token $env:SWA_DEPLOYMENT_TOKEN --env production
+
+      - name: Validate published frontend config
+        if: ${{ inputs.action == 'full' || inputs.action == 'frontend' }}
+        shell: pwsh
+        run: |
+          $configResponse = Invoke-WebRequest -Uri "$env:STATIC_WEB_APP_HOST/config.js" -UseBasicParsing -TimeoutSec 30
+          if ($configResponse.Content -notmatch [Regex]::Escape($env:BACKEND_URL)) {
+            throw "El config.js publicado no contiene la URL real del backend"
+          }
+
+      - name: Deployment summary
+        shell: pwsh
+        run: |
+          @"
+          Deploy completado.
+          Branch: ${{ inputs.branch }}
+          Action: ${{ inputs.action }}
+          Backend: $env:BACKEND_URL
+          Frontend: $env:STATIC_WEB_APP_HOST
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
