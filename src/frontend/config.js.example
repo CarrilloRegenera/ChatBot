@@ -1,5 +1,5 @@
 window.CHATBOT_CONFIG = {
-  API_BASE_URL: "https://api-chatbot01-fnecg5cve3bzc5ds.westeurope-01.azurewebsites.net",
+  API_BASE_URL: "/api",
   ENTRA_ENABLED: true,
   ENTRA_TENANT_ID: "6562b8d1-5dc3-4354-bd8f-25993fa24154",
   ENTRA_CLIENT_ID: "ebbcc0d0-1762-4d34-9229-baee8d9a6ee6",

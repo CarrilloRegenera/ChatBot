@@ -37,6 +37,8 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(chat_router)
+app.include_router(auth_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.is_dir():
@@ -94,6 +96,16 @@ def health():
         "database": "ready",
         "runtime_ready": bool(getattr(app.state, "runtime_ready", False)),
     }
+
+
+@app.get("/api")
+def api_root():
+    return root()
+
+
+@app.get("/api/health")
+def api_health():
+    return health()
 
 
 @app.options("/{full_path:path}")

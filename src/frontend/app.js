@@ -1,6 +1,5 @@
 function resolveApiBaseUrl() {
     const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
-    const productionApiUrl = "https://api-chatbot01-fnecg5cve3bzc5ds.westeurope-01.azurewebsites.net";
     const currentHost = window.location.hostname;
     const runningLocally = window.location.port === "8000" || localHosts.has(currentHost);
 
@@ -18,6 +17,9 @@ function resolveApiBaseUrl() {
     ).trim();
 
     if (configuredUrl) {
+        if (configuredUrl.startsWith("/")) {
+            return configuredUrl.replace(/\/+$/, "");
+        }
         try {
             const configuredHost = new URL(configuredUrl).hostname;
             const configuredIsLocal = localHosts.has(configuredHost);
@@ -31,7 +33,7 @@ function resolveApiBaseUrl() {
         }
     }
     if (currentHost === "chatbot.appregenera.com") {
-        return productionApiUrl;
+        return "/api";
     }
 
     return window.location.origin;
