@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Header, HTTPException
 
 from config import ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
@@ -8,6 +10,7 @@ from security import hash_password, is_hashed_password, verify_password
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _entra_role(email: str, existing_role: str | None = None) -> str:
@@ -44,12 +47,10 @@ def login(data: LoginRequest):
     if not login_identifier:
         raise HTTPException(status_code=400, detail="El usuario es obligatorio")
 
+    logger.info("Intento de login local para %s", login_identifier.lower())
     with db_conn() as conn:
         cursor = conn.cursor()
 
-        # Login using either username (Nombre) or email. Use a trimmed,
-        # case-insensitive comparison so historical imports and manual users
-        # remain accessible after deployment.
         cursor.execute(
             """
             SELECT TOP 1 Id, Nombre, Rol, Password, Email, AuthProvider
@@ -73,7 +74,7 @@ def login(data: LoginRequest):
             )
 
     if not user:
-        raise HTTPException(status_code=401, detail="Usuario y contraseña no coinciden")
+        raise HTTPException(status_code=401, detail="Usuario y contrasena no coinciden")
 
     return {
         "mensaje": "Login correcto",
@@ -94,11 +95,13 @@ def login_entra(authorization: str | None = Header(default=None)):
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Authorization Bearer requerida")
 
+    logger.info("Procesando login Entra")
     token = authorization.split(" ", 1)[1].strip()
     try:
         claims = validate_entra_token(token)
     except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Token Entra no válido: {exc}") from exc
+        logger.warning("Fallo validando token Entra: %s", exc)
+        raise HTTPException(status_code=401, detail=f"Token Entra no valido: {exc}") from exc
 
     email = (
         claims.get("preferred_username")
@@ -110,6 +113,7 @@ def login_entra(authorization: str | None = Header(default=None)):
     if not email:
         raise HTTPException(status_code=400, detail="El token de Entra no contiene email")
 
+    logger.info("Login Entra validado para %s", email.lower())
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT Id, Nombre, Rol FROM Usuarios WHERE Email = ?", email)

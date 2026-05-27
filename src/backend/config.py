@@ -115,6 +115,8 @@ GRAPH_EMAIL_CLIENT_ID = _env_first("GraphEmail__ClientId", "GRAPH_EMAIL_CLIENT_I
 GRAPH_EMAIL_CLIENT_SECRET = _env_first("GraphEmail__ClientSecret", "GRAPH_EMAIL_CLIENT_SECRET").strip()
 GRAPH_EMAIL_FROM_USER = _env_first("GraphEmail__FromUser", "GRAPH_EMAIL_FROM_USER").strip()
 GRAPH_EMAIL_SAVE_TO_SENT_ITEMS = _env_first("GraphEmail__SaveToSentItems", "GRAPH_EMAIL_SAVE_TO_SENT_ITEMS", default="true").strip().lower() in {"1", "true", "yes", "on"}
+ENTRA_JWKS_TIMEOUT_SECS = float(_env_first("ENTRA_JWKS_TIMEOUT_SECS", default="8"))
+ENTRA_JWKS_CACHE_TTL_SECS = int(_env_first("ENTRA_JWKS_CACHE_TTL_SECS", default="21600"))
 GITHUB_SERVER_URL = _env_first("GITHUB_SERVER_URL", default="https://github.com").strip().rstrip("/")
 GITHUB_REPOSITORY_OWNER = _env_first("GITHUB_REPOSITORY_OWNER", default="CarrilloRegenera").strip()
 GITHUB_REPOSITORY_NAME = _env_first("GITHUB_REPOSITORY_NAME", default="ChatBot").strip()

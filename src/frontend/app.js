@@ -75,6 +75,24 @@ let msalClientPromise = null;
 let entraRedirectHandled = false;
 const ENTRA_SKIP_AUTOLOGIN_ONCE_KEY = "chatbot_entra_skip_autologin_once";
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, {
+            ...options,
+            signal: controller.signal,
+        });
+    } catch (err) {
+        if (err?.name === "AbortError") {
+            throw new Error("La solicitud ha tardado demasiado. Intentalo de nuevo en unos segundos.");
+        }
+        throw err;
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
 async function getMsalClient() {
     if (!ENTRA_CONFIG.enabled) {
         throw new Error("Entra ID no está habilitado");
@@ -109,12 +127,12 @@ async function getMsalClient() {
 async function finalizeEntraSession(token) {
     const loadingLabel = document.getElementById("loading-overlay-message");
     if (loadingLabel) loadingLabel.textContent = "Completando acceso con Microsoft...";
-    const res = await fetch(`${API}/login/entra`, {
+    const res = await fetchWithTimeout(`${API}/login/entra`, {
         method: "POST",
         headers: {
             "Authorization": `Bearer ${token}`,
         },
-    });
+    }, 25000);
 
     const data = await res.json();
     if (!res.ok) {
@@ -534,11 +552,11 @@ async function login() {
 
     try {
         setLoadingState(true, "Iniciando sesion...");
-        const res = await fetch(`${API}/login`, {
+        const res = await fetchWithTimeout(`${API}/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ nombre, password }),
-        });
+        }, 20000);
 
         const data = await res.json();
 
