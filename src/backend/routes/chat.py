@@ -19,15 +19,6 @@ from deployment_service import (
     update_notification_settings,
 )
 from entra_auth import validate_entra_token
-from memory_service import (
-    get_admin_metrics,
-    get_admin_503_metrics,
-    list_pending_interactions,
-    record_interaction_pending,
-    reject_interaction,
-    search_validated_memory,
-    validate_interaction,
-)
 from models import (
     ConversationRequest,
     DeploymentNotificationSettingsRequest,
@@ -37,7 +28,6 @@ from models import (
     MessageRequest,
 )
 from query_router import classify_question
-from rag_service import search_documents_detailed, sync_documents
 
 
 router = APIRouter()
@@ -48,6 +38,18 @@ _lock_last_used: Dict[int, float] = {}
 _last_lock_cleanup: float = 0.0
 _LOCK_TTL = 1800
 _LOCK_CLEANUP_INTERVAL = 300
+
+
+def _memory_service():
+    import memory_service
+
+    return memory_service
+
+
+def _rag_service():
+    import rag_service
+
+    return rag_service
 
 
 def _normalize_chat_mode(value: str | None) -> str:
@@ -460,7 +462,7 @@ def send_message(data: MessageRequest, request: Request):
         llm_retries = 0
 
         try:
-            memory_hit = search_validated_memory(data.question)
+            memory_hit = _memory_service().search_validated_memory(data.question)
             if memory_hit:
                 response = memory_hit["answer"]
                 sources = memory_hit.get("sources", [])
@@ -480,7 +482,7 @@ def send_message(data: MessageRequest, request: Request):
                 )
             else:
                 stage_rag_start = time.time()
-                context, sources, retrieval_stats = search_documents_detailed(data.question)
+                context, sources, retrieval_stats = _rag_service().search_documents_detailed(data.question)
                 rag_ms = int((time.time() - stage_rag_start) * 1000)
 
                 history = _get_recent_history(data.conversation_id, limit=2)
@@ -510,7 +512,7 @@ def send_message(data: MessageRequest, request: Request):
                 elapsed_partial = int((time.time() - start) * 1000)
                 try:
                     stage_metrics_db_start = time.time()
-                    record_interaction_pending(
+                    _memory_service().record_interaction_pending(
                         conversation_id=data.conversation_id,
                         question=data.question,
                         answer=response,
@@ -600,31 +602,31 @@ def send_message(data: MessageRequest, request: Request):
 @router.post("/admin/sync")
 def admin_sync(request: Request):
     _assert_admin(request)
-    result = sync_documents()
+    result = _rag_service().sync_documents()
     return result
 
 
 @router.get("/knowledge/pending")
 def get_pending_knowledge(limit: int = 50):
-    return {"pending": list_pending_interactions(limit=limit)}
+    return {"pending": _memory_service().list_pending_interactions(limit=limit)}
 
 
 @router.get("/admin/metrics")
 def admin_metrics(request: Request, days: int = 30):
     _assert_admin(request)
-    return get_admin_metrics(days=days)
+    return _memory_service().get_admin_metrics(days=days)
 
 
 @router.get("/admin/metrics/errors-503")
 def admin_503_metrics(request: Request, hours: int = 24):
     _assert_admin(request)
-    return get_admin_503_metrics(hours=hours)
+    return _memory_service().get_admin_503_metrics(hours=hours)
 
 
 @router.get("/admin/knowledge/pending")
 def admin_pending(request: Request, limit: int = 50):
     _assert_admin(request)
-    return {"pending": list_pending_interactions(limit=limit)}
+    return {"pending": _memory_service().list_pending_interactions(limit=limit)}
 
 
 @router.get("/admin/deployments")
@@ -704,7 +706,7 @@ def admin_deployment_webhook(data: DeploymentWebhookRequest, request: Request):
 def approve_interaction(interaction_id: int, data: InteractionReviewRequest, request: Request):
     _assert_admin(request)
     try:
-        result = validate_interaction(interaction_id=interaction_id, reviewer=data.reviewer)
+        result = _memory_service().validate_interaction(interaction_id=interaction_id, reviewer=data.reviewer)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -713,7 +715,7 @@ def approve_interaction(interaction_id: int, data: InteractionReviewRequest, req
 @router.post("/knowledge/{interaction_id}/reject")
 def reject_interaction_endpoint(interaction_id: int, data: InteractionReviewRequest, request: Request):
     _assert_admin(request)
-    return reject_interaction(interaction_id=interaction_id, reviewer=data.reviewer)
+    return _memory_service().reject_interaction(interaction_id=interaction_id, reviewer=data.reviewer)
 
 
 @router.get("/conversations/{user_id}")
