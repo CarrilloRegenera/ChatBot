@@ -66,6 +66,7 @@ def startup_init():
         logging.getLogger(__name__).warning("No se pudo precalentar JWKS de Entra en startup", exc_info=True)
     if not SYNC_DOCUMENTS_ON_STARTUP:
         logging.getLogger(__name__).info("sync_documents desactivado en startup (SYNC_DOCUMENTS_ON_STARTUP=false)")
+        app.state.runtime_ready = True
         return
     try:
         from rag_service import sync_documents
