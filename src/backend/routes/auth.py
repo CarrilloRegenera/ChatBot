@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Header, HTTPException
 
-from config import ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
+from config import ADMIN_PANEL_ALLOWED_EMAILS, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
 from database import db_conn
 from entra_auth import validate_entra_token
 from models import LoginRequest, RegisterRequest
@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 
 def _entra_role(email: str, existing_role: str | None = None) -> str:
     normalized_email = (email or "").strip().lower()
-    if normalized_email and normalized_email in ENTRA_ADMIN_EMAILS:
+    if normalized_email and (
+        normalized_email in ENTRA_ADMIN_EMAILS
+        or normalized_email in ADMIN_PANEL_ALLOWED_EMAILS
+    ):
         return "Administrador"
     if existing_role:
         return existing_role

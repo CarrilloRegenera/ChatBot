@@ -127,12 +127,12 @@ async function getMsalClient() {
 async function finalizeEntraSession(token) {
     const loadingLabel = document.getElementById("loading-overlay-message");
     if (loadingLabel) loadingLabel.textContent = "Completando acceso con Microsoft...";
-    const res = await fetch(`${API}/login/entra`, {
+    const res = await fetchWithTimeout(`${API}/login/entra`, {
         method: "POST",
         headers: {
             "Authorization": `Bearer ${token}`,
         },
-    });
+    }, 15000);
 
     const data = await res.json();
     if (!res.ok) {
@@ -172,14 +172,35 @@ async function handleEntraRedirect() {
 
     const msalClient = await getMsalClient();
     const result = await msalClient.handleRedirectPromise();
-    if (!result) {
+    if (!result && !msalClient.getActiveAccount() && !msalClient.getAllAccounts().length) {
         return;
     }
 
     const loadingLabel = document.getElementById("loading-overlay-message");
     if (loadingLabel) loadingLabel.textContent = "Validando acceso con Microsoft...";
-    msalClient.setActiveAccount(result.account);
-    const entraToken = result.accessToken || result.idToken;
+    const account = result?.account || msalClient.getActiveAccount() || msalClient.getAllAccounts()[0];
+    if (!account) {
+        throw new Error("No se pudo recuperar la cuenta de Microsoft.");
+    }
+
+    msalClient.setActiveAccount(account);
+
+    let entraToken = result?.accessToken || "";
+    if (!entraToken) {
+        try {
+            const tokenResult = await msalClient.acquireTokenSilent({
+                account,
+                scopes: ENTRA_CONFIG.apiScope ? [ENTRA_CONFIG.apiScope] : ["openid", "profile", "email"],
+            });
+            entraToken = tokenResult?.accessToken || tokenResult?.idToken || "";
+        } catch (err) {
+            console.warn("No se pudo adquirir token silenciosamente tras el redirect de Entra:", err);
+        }
+    }
+
+    if (!entraToken && result?.idToken) {
+        entraToken = result.idToken;
+    }
     if (!entraToken) {
         throw new Error("No se ha recibido token de Entra");
     }
@@ -421,6 +442,10 @@ function isAdminPanelAllowed() {
     const email = String(currentUser.email || "").trim().toLowerCase();
     const userName = String(currentUser.nombre || "").trim().toLowerCase();
     const authProvider = String(currentUser.authProvider || currentUser.auth_provider || "").trim().toLowerCase();
+
+    if (authProvider === "entra" && ADMIN_PANEL_ALLOWED_EMAILS.has(email)) {
+        return true;
+    }
 
     if (authProvider === "local" && userName === "admin" && role === "administrador") {
         return true;
