@@ -85,7 +85,7 @@ env:
   APPREGENERA_API_BASE_URL: https://api-appregenera-pro-amgxcba0awffdjcd.westeurope-01.azurewebsites.net
   APPREGENERA_ALLOWED_MODULES: estudios,produccion
   SYNC_DOCUMENTS_ON_STARTUP: "false"
-  RUN_SCHEMA_MIGRATIONS: "1"
+  RUN_SCHEMA_MIGRATIONS: "0"
 
 jobs:
   deploy:
@@ -379,7 +379,7 @@ jobs:
               -ContentType "application/json" `
               -Headers @{ "x-deploy-webhook-secret" = $env:DEPLOY_WEBHOOK_SECRET } `
               -Body $payload `
-              -TimeoutSec 45 | Out-Null
+              -TimeoutSec 120 | Out-Null
           } catch {
             Write-Warning "No se pudo notificar el webhook del chatbot: $($_.Exception.Message)"
           }
