@@ -25,6 +25,9 @@ from config import (
     MAX_CHUNKS_PER_SOURCE,
     RECURSIVE_PDF_SCAN,
     RAG_BACKEND,
+    EMBEDDING_FP16,
+    EMBEDDING_QUERY_PREFIX,
+    EMBEDDING_PASSAGE_PREFIX,
     RERANK_MODEL,
     RERANK_MODEL_REVISION,
     RERANK_WEIGHT,
@@ -365,17 +368,30 @@ except Exception as exc:
     except Exception as net_exc:
         logger.warning("No se pudo cargar modelo multilingüe '%s': %s", RERANK_MODEL, str(net_exc))
 
+if _st_model is not None and EMBEDDING_FP16:
+    _st_model = _st_model.half()
+    logger.info("Modelo '%s' cargado en FP16 (~1.3 GB RAM)", RERANK_MODEL)
+
 rerank_model = _st_model if ENABLE_RERANK else None
 
 
 class _MultilingualEF:
     def name(self) -> str:
-        return "multilingual-minilm"
+        return RERANK_MODEL.split("/")[-1].lower()
 
     def _encode(self, input: List[str]) -> List[List[float]]:
         if _st_model is None:
             raise RuntimeError("Modelo de embeddings no disponible")
-        return _st_model.encode(input, convert_to_numpy=True).tolist()
+        texts = (
+            [EMBEDDING_PASSAGE_PREFIX + t for t in input]
+            if EMBEDDING_PASSAGE_PREFIX else input
+        )
+        return _st_model.encode(
+            texts,
+            convert_to_numpy=True,
+            batch_size=64,
+            show_progress_bar=len(input) > 100,
+        ).tolist()
 
     def __call__(self, input: List[str]) -> List[List[float]]:
         return self._encode(input)
@@ -387,7 +403,19 @@ class _MultilingualEF:
         return self._encode(input)
 
 
-_EF_VERSION = f"multilingual-minilm-v5-structured-refs-table-split-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
+def _encode_query(text: str) -> List[float]:
+    """Codifica una query aplicando el prefijo de instrucción si el modelo lo requiere (ej. e5)."""
+    if _st_model is None:
+        raise RuntimeError("Modelo de embeddings no disponible")
+    prefix = EMBEDDING_QUERY_PREFIX
+    return _st_model.encode(
+        prefix + text if prefix else text,
+        convert_to_numpy=True,
+    ).tolist()
+
+
+_model_tag = RERANK_MODEL.split("/")[-1].lower().replace("-", "")
+_EF_VERSION = f"{_model_tag}-v1-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
@@ -847,7 +875,19 @@ def _domain_phrase_queries(clean_question: str) -> List[str]:
     Implementar por departamento cuando se necesite forzar retrieval de
     fragmentos específicos (ej. "distancia mínima de 3 cm").
     """
-    return []
+    normalized = _normalize_text(clean_question)
+    phrases: List[str] = []
+    if "electrificacion basica" in normalized:
+        phrases.append("electrificacion basica")
+    if "electrificacion elevada" in normalized:
+        phrases.append("electrificacion elevada")
+    if "tension de contacto" in normalized:
+        phrases.append("tension de contacto")
+        if "admisible" in normalized or "maxima" in normalized or "limite" in normalized:
+            phrases.append("tension limite convencional")
+    if "puestas a tierra" in normalized and "tension" in normalized:
+        phrases.append("puesta a tierra")
+    return phrases
 
 def _extract_reference_terms(text: str) -> List[str]:
     return [match.group(0).strip().lower() for match in REFERENCE_PATTERN.finditer(text or "")]
@@ -1212,8 +1252,11 @@ def _expected_domains(question: str) -> List[str]:
         domains.append("rite")
     if any(term in normalized for term in ("rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico")):
         domains.append("baja_tension")
-    if any(term in normalized for term in ("bt-40", "guia bt 40", "guia-bt-40", "instalaciones generadoras", "generadoras de baja tension", "iluminacion", "alumbrado", "une 12464", "12464")):
+    if any(term in normalized for term in ("bt-40", "guia bt 40", "guia-bt-40", "instalaciones generadoras", "generadoras de baja tension", "une 12464", "12464")):
         domains.append("guias_tecnicas")
+    if any(term in normalized for term in ("electrificacion basica", "electrificacion elevada", "circuitos minimos", "itc-bt-25")):
+        if "baja_tension" not in domains:
+            domains.append("baja_tension")
     if any(term in normalized for term in ("fotovoltaica", "fotovoltaico", "paneles solares", "planta solar", "operacion y mantenimiento", "mantenimiento fv", "o&m")):
         domains.append("fotovoltaica_om")
     if any(term in normalized for term in ("grupo electrogeno", "grupos electrogenos", "generador diesel", "iso 8528", "8528")):
@@ -1633,7 +1676,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     candidate_count = _candidate_window(n_results, question_keywords, clean_question)
     if broad_query:
         candidate_count = min(candidate_count + 12, 80)
-    results = collection.query(query_texts=[clean_question], n_results=candidate_count)
+    results = collection.query(query_embeddings=[_encode_query(clean_question)], n_results=candidate_count)
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     ids = results.get("ids", [[]])[0]
@@ -1701,7 +1744,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         try:
             table_candidate_count = min(max(n_results * 3, 18), 50)
             table_results = table_collection.query(
-                query_texts=[clean_question],
+                query_embeddings=[_encode_query(clean_question)],
                 n_results=table_candidate_count,
             )
             for doc, meta, fid in zip(
@@ -1836,7 +1879,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             try:
                 forced_n = min(n_results + 6, 14)
                 domain_results = collection.query(
-                    query_texts=[clean_question],
+                    query_embeddings=[_encode_query(clean_question)],
                     n_results=forced_n,
                     where={"domain": domain},
                 )
@@ -1858,7 +1901,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         for table_kind, col in (("table_row", table_collection), ("table_row", collection), ("table", collection)):
             try:
                 table_query_args = {
-                    "query_texts": [clean_question],
+                    "query_embeddings": [_encode_query(clean_question)],
                     "n_results": min(n_results + 6, 16),
                 }
                 if col is collection:

@@ -30,6 +30,7 @@ from rag_service import (
     OCR_MIN_TEXT_CHARS_PER_PAGE,
     RERANK_MODEL,
     _embedding_fn,
+    _encode_query,
     _extract_text_blocks,
     _extract_topic_terms,
     _normalize_text,
@@ -298,7 +299,7 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         return "", [], {"selected_count": 0, "source_diversity": 0, "backend": "azure_search"}
 
     n_results = max(n_results, 6)
-    vector = _st_model.encode(question, convert_to_numpy=True).tolist()
+    vector = _encode_query(question)
     vector_query = VectorizedQuery(
         vector=vector,
         k_nearest_neighbors=max(n_results * 4, 20),
