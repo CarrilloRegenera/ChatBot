@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -91,3 +91,20 @@ def health():
         logging.getLogger(__name__).warning("Health check sin SQL disponible: %s", exc)
         return JSONResponse(status_code=503, content={"status": "degraded", "database": "unavailable"})
     return {"status": "ok", "database": "ready"}
+
+
+@app.options("/{full_path:path}")
+def options_preflight(full_path: str, request: Request):
+    origin = (request.headers.get("origin") or "").strip()
+    allowed_origin = origin if origin in ALLOWED_ORIGINS else (ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else "*")
+    requested_headers = (request.headers.get("access-control-request-headers") or "*").strip() or "*"
+    return Response(
+        status_code=204,
+        headers={
+            "Access-Control-Allow-Origin": allowed_origin,
+            "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+            "Access-Control-Allow-Headers": requested_headers,
+            "Access-Control-Max-Age": "86400",
+            "Vary": "Origin, Access-Control-Request-Headers",
+        },
+    )
