@@ -127,12 +127,12 @@ async function getMsalClient() {
 async function finalizeEntraSession(token) {
     const loadingLabel = document.getElementById("loading-overlay-message");
     if (loadingLabel) loadingLabel.textContent = "Completando acceso con Microsoft...";
-    const res = await fetchWithTimeout(`${API}/login/entra`, {
+    const res = await fetch(`${API}/login/entra`, {
         method: "POST",
         headers: {
             "Authorization": `Bearer ${token}`,
         },
-    }, 25000);
+    });
 
     const data = await res.json();
     if (!res.ok) {
