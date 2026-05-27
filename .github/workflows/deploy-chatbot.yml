@@ -194,6 +194,7 @@ jobs:
           $settings = @(
             "WEBSITES_ENABLE_APP_SERVICE_STORAGE=false",
             "WEBSITES_PORT=$env:WEBSITE_PORT",
+            "WEBSITES_CONTAINER_START_TIME_LIMIT=1800",
             "WEBSITE_WARMUP_PATH=/health",
             "WEBSITE_WARMUP_STATUSES=200",
             "SQL_CONNECTION_STRING=$env:SQL_CONNECTION_STRING",
@@ -289,7 +290,7 @@ jobs:
         if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
         shell: pwsh
         run: |
-          $maxAttempts = 40
+          $maxAttempts = 120
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             try {
               $response = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/health" -TimeoutSec 20

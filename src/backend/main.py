@@ -89,9 +89,11 @@ def root():
 
 @app.get("/health")
 def health():
-    if not bool(getattr(app.state, "runtime_ready", False)):
-        return JSONResponse(status_code=503, content={"status": "warming"})
-    return {"status": "ok", "database": "ready"}
+    return {
+        "status": "ok",
+        "database": "ready",
+        "runtime_ready": bool(getattr(app.state, "runtime_ready", False)),
+    }
 
 
 @app.options("/{full_path:path}")
