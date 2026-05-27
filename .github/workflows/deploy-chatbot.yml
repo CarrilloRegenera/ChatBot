@@ -282,6 +282,11 @@ jobs:
           az webapp config set `
             --name $env:WEBAPP_NAME `
             --resource-group $env:RESOURCE_GROUP `
+            --always-on true
+
+          az webapp config set `
+            --name $env:WEBAPP_NAME `
+            --resource-group $env:RESOURCE_GROUP `
             --generic-configurations '{"healthCheckPath":"/health"}'
 
           az webapp restart --name $env:WEBAPP_NAME --resource-group $env:RESOURCE_GROUP
