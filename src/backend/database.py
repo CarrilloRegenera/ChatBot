@@ -114,6 +114,18 @@ def get_connection() -> pyodbc.Connection:
     return pyodbc.connect(_CONNECTION_STRING)
 
 
+def ping_database() -> None:
+    """Verifica que la base de datos responde con una consulta trivial.
+
+    La usamos en startup y health para no declarar la API lista antes de que
+    SQL esté realmente disponible para el primer login.
+    """
+    with pyodbc.connect(_CONNECTION_STRING) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+
+
 @contextmanager
 def db_conn():
     """Context manager con transacción explícita y cierre garantizado.

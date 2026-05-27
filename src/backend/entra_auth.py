@@ -63,6 +63,12 @@ def _jwks_document() -> dict:
     return {"keys": keys}
 
 
+def warm_entra_jwks() -> None:
+    if not ENTRA_ENABLED:
+        return
+    _jwks_document()
+
+
 def _signing_key_from_token(token: str):
     try:
         token_header = jwt.get_unverified_header(token)

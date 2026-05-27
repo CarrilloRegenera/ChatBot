@@ -4,13 +4,15 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
 from routes.chat import router as chat_router
-from database import ensure_app_schema
+from database import ensure_app_schema, ping_database
 from config import ALLOWED_ORIGINS, CHATBOT_FRONTEND_URL, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
+from entra_auth import warm_entra_jwks
 from observability import RequestIdFilter, reset_request_id, set_request_id
 
 
@@ -55,6 +57,11 @@ async def request_id_middleware(request: Request, call_next):
 @app.on_event("startup")
 def startup_init():
     ensure_app_schema()
+    ping_database()
+    try:
+        warm_entra_jwks()
+    except Exception:
+        logging.getLogger(__name__).warning("No se pudo precalentar JWKS de Entra en startup", exc_info=True)
     if not SYNC_DOCUMENTS_ON_STARTUP:
         logging.getLogger(__name__).info("sync_documents desactivado en startup (SYNC_DOCUMENTS_ON_STARTUP=false)")
         return
@@ -78,4 +85,9 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    try:
+        ping_database()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Health check sin SQL disponible: %s", exc)
+        return JSONResponse(status_code=503, content={"status": "degraded", "database": "unavailable"})
+    return {"status": "ok", "database": "ready"}
