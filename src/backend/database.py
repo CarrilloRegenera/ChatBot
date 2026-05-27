@@ -16,9 +16,22 @@ ENV_PATH = BASE_DIR / ".env"
 load_dotenv(ENV_PATH)
 
 
-# pyodbc connection pool — comparte handles entre llamadas y evita el handshake
-# por petición. Hay que activarlo ANTES del primer pyodbc.connect().
-pyodbc.pooling = True
+def _normalize_connection_timeout(connection_string: str) -> str:
+    timeout = os.getenv("SQL_CONNECTION_TIMEOUT", "5").strip() or "5"
+    if re.search(r"Connection Timeout\s*=", connection_string, flags=re.IGNORECASE):
+        return re.sub(
+            r"Connection Timeout\s*=\s*[^;]+",
+            f"Connection Timeout={timeout}",
+            connection_string,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return connection_string.rstrip(";") + f";Connection Timeout={timeout};"
+
+
+# En Azure preferimos no reutilizar handles ODBC antiguos entre peticiones; con
+# Azure SQL eso puede derivar en sockets estancados y primeros accesos colgados.
+pyodbc.pooling = False
 
 
 def _available_sql_drivers() -> list[str]:
@@ -66,7 +79,7 @@ def _build_connection_string() -> str:
     """Connection string desde env (Azure-ready) sin dependencias locales hardcodeadas."""
     explicit = os.getenv("SQL_CONNECTION_STRING")
     if explicit:
-        return _normalize_sql_driver(explicit)
+        return _normalize_connection_timeout(_normalize_sql_driver(explicit))
     env_name = (os.getenv("ENVIRONMENT", "") or os.getenv("APP_ENV", "")).strip().lower()
     is_production = env_name in {"prod", "production"}
     allow_local_fallback = os.getenv("ALLOW_LOCAL_SQL_FALLBACK", "1").strip().lower() in {"1", "true", "yes", "on"}
@@ -102,7 +115,7 @@ def _build_connection_string() -> str:
         parts.append(f"PWD={password}")
     else:
         parts.append("Trusted_Connection=yes")
-    return _normalize_sql_driver(";".join(parts) + ";")
+    return _normalize_connection_timeout(_normalize_sql_driver(";".join(parts) + ";"))
 
 
 _CONNECTION_STRING = _build_connection_string()
