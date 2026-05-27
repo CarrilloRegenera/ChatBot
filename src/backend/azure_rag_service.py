@@ -30,7 +30,9 @@ from rag_service import (
     OCR_MIN_TEXT_CHARS_PER_PAGE,
     RERANK_MODEL,
     _embedding_fn,
+    _encode_passage,
     _encode_query,
+    _EF_VERSION,
     _extract_text_blocks,
     _extract_topic_terms,
     _normalize_text,
@@ -96,6 +98,10 @@ def _category_for_blob(blob_name: str, configured_category: str) -> str:
 
 def _file_hash(content: bytes) -> str:
     return hashlib.md5(content).hexdigest()
+
+
+def _indexed_hash(content_hash: str) -> str:
+    return f"{content_hash}:{_EF_VERSION}"
 
 
 def _document_id(source_path: str) -> str:
@@ -167,7 +173,7 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
                     "source_path": blob_name,
                     "blob_path": blob_name,
                     "content": chunk,
-                    AZURE_SEARCH_VECTOR_FIELD: _st_model.encode(chunk, convert_to_numpy=True).tolist(),
+                    AZURE_SEARCH_VECTOR_FIELD: _encode_passage(chunk),
                     "page_number": page_number,
                     "page": page_number,
                     "chunk_number": chunk_index,
@@ -260,8 +266,9 @@ def sync_documents_from_blob() -> Dict[str, int]:
         downloader = container.download_blob(blob.name)
         content = downloader.readall()
         current_hash = _file_hash(content)
+        current_indexed_hash = _indexed_hash(current_hash)
 
-        if indexed.get(blob.name) == current_hash:
+        if indexed.get(blob.name) == current_indexed_hash:
             continue
         if blob.name in indexed:
             updated += 1
@@ -271,7 +278,7 @@ def sync_documents_from_blob() -> Dict[str, int]:
             added += 1
             logger.info("Indexando en Azure AI Search: %s category=%s", blob.name, category)
 
-        docs = _iter_pdf_chunks(blob.name, content, current_hash, category)
+        docs = _iter_pdf_chunks(blob.name, content, current_indexed_hash, category)
         for start in range(0, len(docs), 500):
             batch = docs[start:start + 500]
             if batch:

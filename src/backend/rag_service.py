@@ -39,15 +39,20 @@ from config import (
 
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "900"))
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
-REBT_ITC_PAGE_RANGES = {
-    "itc-bt-07": (69, 83),
-    "itc-bt-18": (123, 130),
-    "itc-bt-20": (132, 141),
-    "itc-bt-25": (172, 174),
-    "itc-bt-26": (176, 176),
-    "itc-bt-40": (236, 239),
-    "itc-bt-52": (293, 293),
-}
+
+_DOMAINS_CONFIG_PATH = Path(__file__).parent / "domains.json"
+
+
+def _load_domain_config() -> dict:
+    try:
+        with open(_DOMAINS_CONFIG_PATH, encoding="utf-8") as _f:
+            return json.load(_f)
+    except Exception as _exc:
+        logging.getLogger(__name__).error("Failed to load domains.json: %s", _exc)
+        return {"domains": {}, "filename_overrides": {}}
+
+
+_DOMAIN_CFG = _load_domain_config()
 
 # OCR opcional para PDFs escaneados. Activar con RAG_OCR_ENABLED=1.
 # Requiere Tesseract instalado en el sistema y `pytesseract` + `Pillow` en pip.
@@ -95,18 +100,18 @@ CORE_TERM_PENALTY = 4
 
 # ---------------------------------------------------------------------------
 # Scoring por dominio específico (BT-40 / generadoras).
-# Para escalar a otros departamentos (PRL, RRHH, etc.), añadir entradas
-# similares con los términos y pesos correspondientes.
+# Valores configurables en domains.json → domains.guias_tecnicas.scoring
 # ---------------------------------------------------------------------------
-BT40_DOMAIN_BOOST = 30          # boost al dominio guias_tecnicas cuando query menciona BT-40
-BT40_DOC_TERM_BOOST = 25        # boost por término de contenido BT-40 en documento
-BT40_SECTION_BOOST = 20         # boost por sección relevante (clasificacion, objeto…)
-BT40_MISMATCH_PENALTY = 20      # penalización si dominio no es guias_tecnicas
-GENERATORS_DOMAIN_BOOST = 18    # boost cuando query menciona generadoras y dominio coincide
-GENERATORS_ITC_BOOST = 24       # boost por referencia explícita a ITC-BT-40
-GENERATORS_TERM_BOOST = 8       # boost por término de generadoras en documento
-GENERATORS_LEXICAL_DOMAIN = 10  # boost léxico por dominio coincidente
-GENERATORS_LEXICAL_TERM = 16    # boost léxico por término de generadoras
+_gt_scoring = _DOMAIN_CFG["domains"].get("guias_tecnicas", {}).get("scoring", {})
+BT40_DOMAIN_BOOST       = _gt_scoring.get("bt40_domain_boost", 30)
+BT40_DOC_TERM_BOOST     = _gt_scoring.get("bt40_doc_term_boost", 25)
+BT40_SECTION_BOOST      = _gt_scoring.get("bt40_section_boost", 20)
+BT40_MISMATCH_PENALTY   = _gt_scoring.get("bt40_mismatch_penalty", 20)
+GENERATORS_DOMAIN_BOOST = _gt_scoring.get("generators_domain_boost", 18)
+GENERATORS_ITC_BOOST    = _gt_scoring.get("generators_itc_boost", 24)
+GENERATORS_TERM_BOOST   = _gt_scoring.get("generators_term_boost", 8)
+GENERATORS_LEXICAL_DOMAIN = _gt_scoring.get("generators_lexical_domain", 10)
+GENERATORS_LEXICAL_TERM   = _gt_scoring.get("generators_lexical_term", 16)
 
 
 def _is_noise_chunk(text: str) -> bool:
@@ -257,48 +262,23 @@ PROCEDURE_PRIORITY_BOOST = 5
 TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
 LABELED_CONTEXT_PENALTY = 10
-# Mapeo exacto basename (o substring del nombre relativo) → dominio.
-# Tiene MÁXIMA prioridad sobre las heurísticas. Úsalo para pinear archivos
-# concretos cuya clasificación automática sea ambigua o errónea.
-# Las claves son substrings del nombre relativo del PDF (case-insensitive,
-# tras normalizar acentos). El primero que matchee gana.
-DOMAIN_FILENAME_OVERRIDES = {
-    # Ejemplos (descomentar y ajustar según tu corpus):
-    # "guia_bt_40.pdf": "guias_tecnicas",
-    # "itc-bt-25.pdf": "baja_tension",
+# Configuración de dominios cargada desde domains.json.
+# Para añadir un dominio nuevo edita ese fichero — no este código.
+DOMAIN_FILENAME_OVERRIDES: dict = _DOMAIN_CFG.get("filename_overrides", {})
+
+DOMAIN_SOURCE_TOKEN_HINTS: dict = {
+    name: set(cfg.get("source_tokens", []))
+    for name, cfg in _DOMAIN_CFG["domains"].items()
 }
 
-# Hints por tokens del filename. Se comparan como palabras enteras tras
-# tokenizar el filename (evita falsos positivos del antiguo "lat" en
-# "plataforma"). Cada valor es un conjunto de tokens normalizados sin acentos.
-DOMAIN_SOURCE_TOKEN_HINTS = {
-    "alta_tension": {"itc-lat", "lat", "a16436", "a16554", "alta_tension", "alta-tension"},
-    "rite": {"rite", "a35931", "a35984", "termicas", "instalaciones_termicas"},
-    "baja_tension": {"rebt", "itc-bt", "baja_tension", "baja-tension", "boe-326"},
-    "guias_tecnicas": {"guia", "guias", "guia_bt", "bt-40", "iluminacion", "une-12464", "12464"},
-    "fotovoltaica_om": {"fotovoltaica", "fotovoltaico", "fv", "om-fv", "o&m"},
-    "grupos_electrogenos": {"grupo_electrogeno", "grupos_electrogenos", "iso-8528", "8528", "electrogenos"},
+DOMAIN_SOURCE_PHRASE_HINTS: dict = {
+    name: tuple(cfg.get("source_phrases", []))
+    for name, cfg in _DOMAIN_CFG["domains"].items()
 }
 
-# Frases que se buscan como substring puro (cuando contienen espacios y
-# por tanto no caben como token). Reservado para hints multi-palabra.
-DOMAIN_SOURCE_PHRASE_HINTS = {
-    "alta_tension": ("alta tension",),
-    "rite": ("instalaciones termicas",),
-    "baja_tension": ("baja tension",),
-    "guias_tecnicas": (),
-    "fotovoltaica_om": ("operacion y mantenimiento",),
-    "grupos_electrogenos": ("grupo electrogeno", "grupos electrogenos", "generating sets"),
-}
-
-DOMAIN_FOLDER_PREFIXES = {
-    "alta_tension": ("alta_tension", "lineas_alta_tension"),
-    "rite": ("rite", "instalaciones_termicas", "termicas"),
-    "baja_tension": ("baja_tension", "rebt"),
-    "guias_tecnicas": ("guias_tecnicas", "guias", "iluminacion"),
-    "fotovoltaica_om": ("fotovoltaica_om", "fotovoltaica", "fv", "operacion_mantenimiento"),
-    "grupos_electrogenos": ("grupos_electrogenos", "grupos", "electrogenos"),
-    "pendiente_ocr": ("pendiente_ocr", "ocr"),
+DOMAIN_FOLDER_PREFIXES: dict = {
+    name: tuple(cfg.get("folder_prefixes", []))
+    for name, cfg in _DOMAIN_CFG["domains"].items()
 }
 
 
@@ -380,18 +360,7 @@ class _MultilingualEF:
         return RERANK_MODEL.split("/")[-1].lower()
 
     def _encode(self, input: List[str]) -> List[List[float]]:
-        if _st_model is None:
-            raise RuntimeError("Modelo de embeddings no disponible")
-        texts = (
-            [EMBEDDING_PASSAGE_PREFIX + t for t in input]
-            if EMBEDDING_PASSAGE_PREFIX else input
-        )
-        return _st_model.encode(
-            texts,
-            convert_to_numpy=True,
-            batch_size=64,
-            show_progress_bar=len(input) > 100,
-        ).tolist()
+        return _encode_passages(input)
 
     def __call__(self, input: List[str]) -> List[List[float]]:
         return self._encode(input)
@@ -400,22 +369,47 @@ class _MultilingualEF:
         return self._encode(input)
 
     def embed_query(self, input: List[str]) -> List[List[float]]:
-        return self._encode(input)
+        return [_encode_query(text) for text in input]
+
+
+def _apply_embedding_prefix(prefix: str, text: str) -> str:
+    if not prefix:
+        return text
+    separator = "" if prefix.endswith((" ", "\t", "\n")) else " "
+    return f"{prefix}{separator}{text}"
+
+
+def _encode_passages(texts: List[str]) -> List[List[float]]:
+    if _st_model is None:
+        raise RuntimeError("Modelo de embeddings no disponible")
+    prefixed_texts = [_apply_embedding_prefix(EMBEDDING_PASSAGE_PREFIX, text) for text in texts]
+    return _st_model.encode(
+        prefixed_texts,
+        convert_to_numpy=True,
+        batch_size=64,
+        show_progress_bar=len(texts) > 100,
+    ).tolist()
+
+
+def _encode_passage(text: str) -> List[float]:
+    return _encode_passages([text])[0]
 
 
 def _encode_query(text: str) -> List[float]:
     """Codifica una query aplicando el prefijo de instrucción si el modelo lo requiere (ej. e5)."""
     if _st_model is None:
         raise RuntimeError("Modelo de embeddings no disponible")
-    prefix = EMBEDDING_QUERY_PREFIX
     return _st_model.encode(
-        prefix + text if prefix else text,
+        _apply_embedding_prefix(EMBEDDING_QUERY_PREFIX, text),
         convert_to_numpy=True,
     ).tolist()
 
 
 _model_tag = RERANK_MODEL.split("/")[-1].lower().replace("-", "")
-_EF_VERSION = f"{_model_tag}-v1-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
+_prefix_tag = hashlib.md5(
+    f"{EMBEDDING_QUERY_PREFIX}|{EMBEDDING_PASSAGE_PREFIX}".encode("utf-8")
+).hexdigest()[:8]
+_EF_VERSION = f"{_model_tag}-v2-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
@@ -869,24 +863,21 @@ def _standalone_number_hits(numbers: List[str], text: str) -> int:
 
 
 def _domain_phrase_queries(clean_question: str) -> List[str]:
-    """Punto de extensión: frases exactas a buscar por dominio.
+    """Frases exactas a buscar por dominio, configuradas en domains.json.
 
-    Retorna frases que se buscan con $contains y reciben boost ×80 en scoring.
-    Implementar por departamento cuando se necesite forzar retrieval de
-    fragmentos específicos (ej. "distancia mínima de 3 cm").
+    Cada regla tiene if_contains (todas deben estar presentes) y emit (frases a añadir).
+    Reciben boost ×80 en scoring.
     """
     normalized = _normalize_text(clean_question)
     phrases: List[str] = []
-    if "electrificacion basica" in normalized:
-        phrases.append("electrificacion basica")
-    if "electrificacion elevada" in normalized:
-        phrases.append("electrificacion elevada")
-    if "tension de contacto" in normalized:
-        phrases.append("tension de contacto")
-        if "admisible" in normalized or "maxima" in normalized or "limite" in normalized:
-            phrases.append("tension limite convencional")
-    if "puestas a tierra" in normalized and "tension" in normalized:
-        phrases.append("puesta a tierra")
+    seen: set = set()
+    for cfg in _DOMAIN_CFG["domains"].values():
+        for rule in cfg.get("phrase_queries", []):
+            if all(t in normalized for t in rule["if_contains"]):
+                for phrase in rule["emit"]:
+                    if phrase not in seen:
+                        seen.add(phrase)
+                        phrases.append(phrase)
     return phrases
 
 def _extract_reference_terms(text: str) -> List[str]:
@@ -1083,18 +1074,6 @@ def _inferred_itc_refs(metadata: Dict[str, object], document: str = "") -> set[s
     refs.update(_split_metadata_refs(metadata.get("itc_refs", "")))
     refs.update(_split_metadata_refs(metadata.get("exact_refs", "")))
     refs.update(_split_metadata_refs(f"{metadata.get('source', '')} {metadata.get('section', '')} {document}"))
-    # Fallback legacy: inferir ITC por rango de páginas del BOE-326.
-    # Deprecado — tras reindexar, los chunks llevan itc_refs en metadata
-    # y prefijo [ITC-BT-XX] en el texto, haciendo innecesario este mapeo.
-    source = _normalize_text(str(metadata.get("source", "")))
-    if not refs and ("boe-326" in source or "reglamento_electrotecnico" in source):
-        try:
-            page = int(metadata.get("page", 0) or 0)
-        except Exception:
-            page = 0
-        for ref, (start, end) in REBT_ITC_PAGE_RANGES.items():
-            if start <= page <= end:
-                refs.add(ref)
     return refs
 
 
@@ -1182,6 +1161,13 @@ def _domain_from_folder(source_name: str) -> str:
         for domain_key, prefixes in DOMAIN_FOLDER_PREFIXES.items():
             if any(prefix in compact for prefix in prefixes):
                 return domain_key
+    # Auto-detect: si ningún prefijo configurado coincide, usa el nombre de la
+    # carpeta más profunda directamente como dominio. Así documents/prl/x.pdf
+    # queda como domain="prl" sin necesitar entrada en domains.json.
+    if parts:
+        last = re.sub(r"^\d+[_\-\s]*", "", parts[-1]).replace("-", "_").replace(" ", "_")
+        if last:
+            return last
     return ""
 
 
@@ -1243,24 +1229,14 @@ def _section_type(section: str) -> str:
 def _expected_domains(question: str) -> List[str]:
     normalized = _normalize_text(question or "")
     domains = []
-    if (
-        any(term in normalized for term in ("alta tension", "itc-lat", "lineas electricas de alta", "linea de at", "lineas de at", "instalacion at", "instalaciones at"))
-        or re.search(r"\blat\b", normalized)
-    ):
-        domains.append("alta_tension")
-    if any(term in normalized for term in ("rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion")):
-        domains.append("rite")
-    if any(term in normalized for term in ("rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico")):
-        domains.append("baja_tension")
-    if any(term in normalized for term in ("bt-40", "guia bt 40", "guia-bt-40", "instalaciones generadoras", "generadoras de baja tension", "une 12464", "12464")):
-        domains.append("guias_tecnicas")
-    if any(term in normalized for term in ("electrificacion basica", "electrificacion elevada", "circuitos minimos", "itc-bt-25")):
-        if "baja_tension" not in domains:
-            domains.append("baja_tension")
-    if any(term in normalized for term in ("fotovoltaica", "fotovoltaico", "paneles solares", "planta solar", "operacion y mantenimiento", "mantenimiento fv", "o&m")):
-        domains.append("fotovoltaica_om")
-    if any(term in normalized for term in ("grupo electrogeno", "grupos electrogenos", "generador diesel", "iso 8528", "8528")):
-        domains.append("grupos_electrogenos")
+    for name, cfg in _DOMAIN_CFG["domains"].items():
+        if not cfg.get("trigger_terms") and not cfg.get("trigger_regex"):
+            continue
+        matched = any(t in normalized for t in cfg.get("trigger_terms", []))
+        if not matched:
+            matched = any(re.search(p, normalized) for p in cfg.get("trigger_regex", []))
+        if matched and name not in domains:
+            domains.append(name)
     return domains
 
 
@@ -1709,30 +1685,6 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                             existing_ids.add(fid)
                 except Exception as exc:
                     logger.warning("ITC-forced retrieval failed for %s: %s", search_term, exc)
-            # Fallback legacy: búsqueda por rango de páginas (hasta reindexar)
-            page_range = REBT_ITC_PAGE_RANGES.get(ref)
-            if page_range:
-                for page_ref in range(page_range[0], page_range[1] + 1):
-                    try:
-                        itc_results = collection.get(
-                            where={"page": page_ref},
-                            include=["documents", "metadatas"],
-                            limit=16,
-                        )
-                        for doc, meta, fid in zip(
-                            itc_results.get("documents", []) or [],
-                            itc_results.get("metadatas", []) or [],
-                            itc_results.get("ids", []) or [],
-                        ):
-                            if "boe-326" not in _normalize_text(str(meta.get("source", ""))):
-                                continue
-                            if fid not in existing_ids:
-                                documents.append(doc)
-                                metadatas.append(meta)
-                                ids.append(fid)
-                                existing_ids.add(fid)
-                    except Exception as exc:
-                        logger.warning("ITC page-range fallback failed for %s page %s: %s", ref, page_ref, exc)
 
     table_collection_query = (
         query_profile["intent"] == "table_lookup"

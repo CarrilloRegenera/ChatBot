@@ -11,16 +11,14 @@ from config import (
     MEMORY_COLLECTION_NAME,
     MEMORY_MAX_DISTANCE,
     MEMORY_MAX_RESULTS,
-    RERANK_MODEL,
 )
 from database import db_conn
-from rag_service import _embedding_fn
+from rag_service import _EF_VERSION, _embedding_fn
 
 
 logger = logging.getLogger(__name__)
 
-_model_tag = RERANK_MODEL.split("/")[-1].lower().replace("-", "")
-_MEMORY_EF_VERSION = f"{_model_tag}-v1"
+_MEMORY_EF_VERSION = f"memory-{_EF_VERSION}"
 
 
 def _get_memory_collection(client: chromadb.PersistentClient, name: str, ef):

@@ -1,0 +1,118 @@
+{
+  "_comment": "Configuración de dominios RAG. Añadir nuevos dominios aquí sin tocar rag_service.py.",
+  "domains": {
+    "alta_tension": {
+      "trigger_terms": [
+        "alta tension", "itc-lat", "lineas electricas de alta",
+        "linea de at", "lineas de at", "instalacion at", "instalaciones at"
+      ],
+      "trigger_regex": ["\\blat\\b"],
+      "source_tokens": ["itc-lat", "lat", "a16436", "a16554", "alta_tension", "alta-tension"],
+      "source_phrases": ["alta tension"],
+      "folder_prefixes": ["alta_tension", "lineas_alta_tension"],
+      "phrase_queries": [],
+      "scoring": {}
+    },
+    "rite": {
+      "trigger_terms": [
+        "rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion"
+      ],
+      "trigger_regex": [],
+      "source_tokens": ["rite", "a35931", "a35984", "termicas", "instalaciones_termicas"],
+      "source_phrases": ["instalaciones termicas"],
+      "folder_prefixes": ["rite", "instalaciones_termicas", "termicas"],
+      "phrase_queries": [],
+      "scoring": {}
+    },
+    "baja_tension": {
+      "trigger_terms": [
+        "rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico",
+        "electrificacion basica", "electrificacion elevada", "circuitos minimos", "itc-bt-25"
+      ],
+      "trigger_regex": [],
+      "source_tokens": ["rebt", "itc-bt", "baja_tension", "baja-tension", "boe-326"],
+      "source_phrases": ["baja tension"],
+      "folder_prefixes": ["baja_tension", "rebt"],
+      "phrase_queries": [
+        {
+          "if_contains": ["electrificacion basica"],
+          "emit": ["electrificacion basica"]
+        },
+        {
+          "if_contains": ["electrificacion elevada"],
+          "emit": ["electrificacion elevada"]
+        },
+        {
+          "if_contains": ["tension de contacto"],
+          "emit": ["tension de contacto", "tension limite convencional"]
+        },
+        {
+          "if_contains": ["puestas a tierra", "tension"],
+          "emit": ["puesta a tierra"]
+        }
+      ],
+      "scoring": {}
+    },
+    "guias_tecnicas": {
+      "trigger_terms": [
+        "bt-40", "guia bt 40", "guia-bt-40",
+        "instalaciones generadoras", "generadoras de baja tension",
+        "une 12464", "12464"
+      ],
+      "trigger_regex": [],
+      "source_tokens": ["guia", "guias", "guia_bt", "bt-40", "iluminacion", "une-12464", "12464"],
+      "source_phrases": [],
+      "folder_prefixes": ["guias_tecnicas", "guias", "iluminacion"],
+      "phrase_queries": [],
+      "scoring": {
+        "bt40_domain_boost": 30,
+        "bt40_doc_term_boost": 25,
+        "bt40_section_boost": 20,
+        "bt40_mismatch_penalty": 20,
+        "generators_domain_boost": 18,
+        "generators_itc_boost": 24,
+        "generators_term_boost": 8,
+        "generators_lexical_domain": 10,
+        "generators_lexical_term": 16
+      }
+    },
+    "fotovoltaica_om": {
+      "trigger_terms": [
+        "fotovoltaica", "fotovoltaico", "paneles solares", "planta solar",
+        "operacion y mantenimiento", "mantenimiento fv", "o&m"
+      ],
+      "trigger_regex": [],
+      "source_tokens": ["fotovoltaica", "fotovoltaico", "fv", "om-fv", "o&m"],
+      "source_phrases": ["operacion y mantenimiento"],
+      "folder_prefixes": ["fotovoltaica_om", "fotovoltaica", "fv", "operacion_mantenimiento"],
+      "phrase_queries": [],
+      "scoring": {}
+    },
+    "grupos_electrogenos": {
+      "trigger_terms": [
+        "grupo electrogeno", "grupos electrogenos", "generador diesel", "iso 8528", "8528"
+      ],
+      "trigger_regex": [],
+      "source_tokens": [
+        "grupo_electrogeno", "grupos_electrogenos", "iso-8528", "8528", "electrogenos"
+      ],
+      "source_phrases": [
+        "grupo electrogeno", "grupos electrogenos", "generating sets"
+      ],
+      "folder_prefixes": ["grupos_electrogenos", "grupos", "electrogenos"],
+      "phrase_queries": [],
+      "scoring": {}
+    },
+    "pendiente_ocr": {
+      "trigger_terms": [],
+      "trigger_regex": [],
+      "source_tokens": [],
+      "source_phrases": [],
+      "folder_prefixes": ["pendiente_ocr", "ocr"],
+      "phrase_queries": [],
+      "scoring": {}
+    }
+  },
+  "filename_overrides": {
+  }
+}
