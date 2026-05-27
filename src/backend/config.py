@@ -10,6 +10,14 @@ ENV_PATH = BASE_DIR / ".env"
 load_dotenv(ENV_PATH)
 
 
+def _env_first(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None:
+            return value
+    return default
+
+
 def _is_local_runtime() -> bool:
     website_hostname = os.getenv("WEBSITE_HOSTNAME", "").strip()
     if website_hostname:
@@ -100,6 +108,22 @@ ADMIN_PANEL_ALLOWED_EMAILS = {
     ).split(",")
     if email.strip()
 }
+EMAIL_ENABLED = _env_first("Email__Enabled", "EMAIL__ENABLED", default="false").strip().lower() in {"1", "true", "yes", "on"}
+EMAIL_PROVIDER = _env_first("Email__Provider", "EMAIL__PROVIDER", default="Graph").strip()
+GRAPH_EMAIL_TENANT_ID = _env_first("GraphEmail__TenantId", "GRAPH_EMAIL_TENANT_ID").strip()
+GRAPH_EMAIL_CLIENT_ID = _env_first("GraphEmail__ClientId", "GRAPH_EMAIL_CLIENT_ID").strip()
+GRAPH_EMAIL_CLIENT_SECRET = _env_first("GraphEmail__ClientSecret", "GRAPH_EMAIL_CLIENT_SECRET").strip()
+GRAPH_EMAIL_FROM_USER = _env_first("GraphEmail__FromUser", "GRAPH_EMAIL_FROM_USER").strip()
+GRAPH_EMAIL_SAVE_TO_SENT_ITEMS = _env_first("GraphEmail__SaveToSentItems", "GRAPH_EMAIL_SAVE_TO_SENT_ITEMS", default="true").strip().lower() in {"1", "true", "yes", "on"}
+GITHUB_SERVER_URL = _env_first("GITHUB_SERVER_URL", default="https://github.com").strip().rstrip("/")
+GITHUB_REPOSITORY_OWNER = _env_first("GITHUB_REPOSITORY_OWNER", default="CarrilloRegenera").strip()
+GITHUB_REPOSITORY_NAME = _env_first("GITHUB_REPOSITORY_NAME", default="ChatBot").strip()
+GITHUB_DEPLOY_WORKFLOW = _env_first("GITHUB_DEPLOY_WORKFLOW", default="deploy-chatbot.yml").strip()
+GITHUB_DEPLOY_BRANCH = _env_first("GITHUB_DEPLOY_BRANCH", default="sandbox").strip()
+GITHUB_DEPLOY_TOKEN = _env_first("GITHUB_DEPLOY_TOKEN").strip()
+DEPLOY_WEBHOOK_SECRET = _env_first("DEPLOY_WEBHOOK_SECRET").strip()
+DEPLOYMENTS_HISTORY_LIMIT = int(_env_first("DEPLOYMENTS_HISTORY_LIMIT", default="40"))
+CHATBOT_FRONTEND_URL = _env_first("CHATBOT_FRONTEND_URL", default="https://chatbot.appregenera.com").strip().rstrip("/")
 APPREGENERA_API_BASE_URL = os.getenv("APPREGENERA_API_BASE_URL", _default_appregenera_api_base_url()).strip().rstrip("/")
 APPREGENERA_TIMEOUT_SECS = float(os.getenv("APPREGENERA_TIMEOUT_SECS", "20"))
 APPREGENERA_SQL_CONNECTION_STRING = os.getenv("APPREGENERA_SQL_CONNECTION_STRING", "").strip()

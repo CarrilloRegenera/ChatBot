@@ -3,12 +3,21 @@ import time
 from threading import Lock
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from business_query_service import answer_business_question, detect_business_route
-from config import ADMIN_API_KEY, ADMIN_PANEL_ALLOWED_EMAILS, CONVERSATION_LOCK_TIMEOUT_SECS, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
+from config import ADMIN_API_KEY, ADMIN_PANEL_ALLOWED_EMAILS, CONVERSATION_LOCK_TIMEOUT_SECS, DEPLOY_WEBHOOK_SECRET, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
 from database import db_conn
+from deployment_service import (
+    DeploymentConfigurationError,
+    download_run_logs,
+    get_notification_settings,
+    list_deployments,
+    register_webhook_run,
+    trigger_full_deploy,
+    update_notification_settings,
+)
 from entra_auth import validate_entra_token
 from memory_service import (
     get_admin_metrics,
@@ -21,6 +30,9 @@ from memory_service import (
 )
 from models import (
     ConversationRequest,
+    DeploymentNotificationSettingsRequest,
+    DeploymentTriggerRequest,
+    DeploymentWebhookRequest,
     InteractionReviewRequest,
     MessageRequest,
 )
@@ -183,6 +195,14 @@ def _assert_admin(request: Request) -> None:
     is_allowed_entra_email = bool(user_email and user_email in ADMIN_PANEL_ALLOWED_EMAILS)
     if role != "administrador" or not (is_local_admin or is_allowed_entra_email):
         raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
+
+
+def _assert_deploy_webhook(request: Request) -> None:
+    if not DEPLOY_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="Webhook de despliegue no configurado")
+    incoming_secret = (request.headers.get("x-deploy-webhook-secret") or "").strip()
+    if incoming_secret != DEPLOY_WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Webhook de despliegue denegado")
 
 
 def _load_user_by_id(user_id: int) -> tuple | None:
@@ -605,6 +625,79 @@ def admin_503_metrics(request: Request, hours: int = 24):
 def admin_pending(request: Request, limit: int = 50):
     _assert_admin(request)
     return {"pending": list_pending_interactions(limit=limit)}
+
+
+@router.get("/admin/deployments")
+def admin_list_deployments(request: Request, limit: int = 40):
+    _assert_admin(request)
+    return {
+        "deployments": list_deployments(limit=limit),
+        "settings": get_notification_settings(),
+    }
+
+
+@router.post("/admin/deployments/run")
+def admin_run_deployment(data: DeploymentTriggerRequest, request: Request):
+    _assert_admin(request)
+    request_user_id = _resolve_request_user_id(request)
+    user_row = _load_user_by_id(request_user_id)
+    requested_by_name = str(user_row[1] or "").strip() if user_row else ""
+    requested_by_email = str(user_row[2] or "").strip().lower() if user_row else ""
+    try:
+        return trigger_full_deploy(
+            requested_by_email=requested_by_email,
+            requested_by_name=requested_by_name,
+            branch=data.branch,
+        )
+    except DeploymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo lanzar el despliegue: {exc}") from exc
+
+
+@router.get("/admin/deployments/settings")
+def admin_get_deployment_settings(request: Request):
+    _assert_admin(request)
+    return get_notification_settings()
+
+
+@router.put("/admin/deployments/settings")
+def admin_update_deployment_settings(data: DeploymentNotificationSettingsRequest, request: Request):
+    _assert_admin(request)
+    request_user_id = _resolve_request_user_id(request)
+    user_row = _load_user_by_id(request_user_id)
+    updated_by = str(user_row[2] or user_row[1] or "admin") if user_row else "admin"
+    try:
+        return update_notification_settings(data.recipients, updated_by=updated_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/admin/deployments/{run_id}/logs")
+def admin_download_deployment_logs(run_id: int, request: Request):
+    _assert_admin(request)
+    try:
+        archive, filename = download_run_logs(run_id)
+    except DeploymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo descargar el log completo: {exc}") from exc
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/admin/deployments/webhook")
+def admin_deployment_webhook(data: DeploymentWebhookRequest, request: Request):
+    _assert_deploy_webhook(request)
+    try:
+        saved = register_webhook_run(data.model_dump())
+    except Exception as exc:
+        logger.exception("Error procesando webhook de despliegue")
+        raise HTTPException(status_code=500, detail=f"No se pudo registrar el despliegue: {exc}") from exc
+    return {"message": "Webhook de despliegue procesado", "run_id": saved["github_run_id"]}
 
 
 @router.post("/knowledge/{interaction_id}/validate")

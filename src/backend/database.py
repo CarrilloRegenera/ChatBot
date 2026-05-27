@@ -379,3 +379,111 @@ def ensure_app_schema() -> None:
                     INCLUDE (FechaCreacion);
             """
         )
+
+        cursor.execute(
+            """
+            IF OBJECT_ID('dbo.DeploymentNotificationSettings', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.DeploymentNotificationSettings (
+                    Id INT NOT NULL PRIMARY KEY,
+                    Recipients NVARCHAR(MAX) NOT NULL,
+                    UpdatedBy NVARCHAR(255) NULL,
+                    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+                );
+            END
+
+            IF OBJECT_ID('dbo.DeploymentRuns', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.DeploymentRuns (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    GitHubRunId BIGINT NOT NULL,
+                    RunNumber INT NULL,
+                    RunAttempt INT NULL,
+                    WorkflowName NVARCHAR(120) NULL,
+                    Branch NVARCHAR(120) NULL,
+                    RequestedAction NVARCHAR(40) NULL,
+                    TriggerSource NVARCHAR(40) NULL,
+                    TriggeredByEmail NVARCHAR(255) NULL,
+                    TriggeredByName NVARCHAR(255) NULL,
+                    Actor NVARCHAR(255) NULL,
+                    Status NVARCHAR(40) NULL,
+                    Conclusion NVARCHAR(40) NULL,
+                    HtmlUrl NVARCHAR(500) NULL,
+                    LogsUrl NVARCHAR(500) NULL,
+                    BackendUrl NVARCHAR(500) NULL,
+                    FrontendUrl NVARCHAR(500) NULL,
+                    StartedAt DATETIME2 NULL,
+                    CompletedAt DATETIME2 NULL,
+                    DurationSeconds INT NULL,
+                    LastNotifiedConclusion NVARCHAR(40) NULL,
+                    NotificationSentAt DATETIME2 NULL,
+                    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+                );
+            END
+
+            IF COL_LENGTH('dbo.DeploymentRuns', 'RunNumber') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD RunNumber INT NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'RunAttempt') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD RunAttempt INT NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'WorkflowName') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD WorkflowName NVARCHAR(120) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'Branch') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD Branch NVARCHAR(120) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'RequestedAction') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD RequestedAction NVARCHAR(40) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'TriggerSource') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD TriggerSource NVARCHAR(40) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'TriggeredByEmail') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD TriggeredByEmail NVARCHAR(255) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'TriggeredByName') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD TriggeredByName NVARCHAR(255) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'Actor') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD Actor NVARCHAR(255) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'Status') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD Status NVARCHAR(40) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'Conclusion') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD Conclusion NVARCHAR(40) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'HtmlUrl') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD HtmlUrl NVARCHAR(500) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'LogsUrl') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD LogsUrl NVARCHAR(500) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'BackendUrl') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD BackendUrl NVARCHAR(500) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'FrontendUrl') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD FrontendUrl NVARCHAR(500) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'StartedAt') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD StartedAt DATETIME2 NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'CompletedAt') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD CompletedAt DATETIME2 NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'DurationSeconds') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD DurationSeconds INT NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'LastNotifiedConclusion') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD LastNotifiedConclusion NVARCHAR(40) NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'NotificationSentAt') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD NotificationSentAt DATETIME2 NULL;
+            IF COL_LENGTH('dbo.DeploymentRuns', 'CreatedAt') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_DeploymentRuns_CreatedAt DEFAULT SYSUTCDATETIME();
+            IF COL_LENGTH('dbo.DeploymentRuns', 'UpdatedAt') IS NULL
+                ALTER TABLE dbo.DeploymentRuns ADD UpdatedAt DATETIME2 NOT NULL CONSTRAINT DF_DeploymentRuns_UpdatedAt DEFAULT SYSUTCDATETIME();
+
+            IF NOT EXISTS (
+                SELECT 1 FROM dbo.DeploymentNotificationSettings WHERE Id = 1
+            )
+            BEGIN
+                INSERT INTO dbo.DeploymentNotificationSettings (Id, Recipients, UpdatedBy)
+                VALUES (1, 'jcanete@regeneraenergy.es,acarrillo@regeneraenergy.es', 'system');
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_DeploymentRuns_GitHubRunId'
+                           AND object_id = OBJECT_ID('dbo.DeploymentRuns'))
+                CREATE UNIQUE INDEX UX_DeploymentRuns_GitHubRunId
+                    ON dbo.DeploymentRuns (GitHubRunId);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DeploymentRuns_UpdatedAt'
+                           AND object_id = OBJECT_ID('dbo.DeploymentRuns'))
+                CREATE INDEX IX_DeploymentRuns_UpdatedAt
+                    ON dbo.DeploymentRuns (UpdatedAt DESC)
+                    INCLUDE (Branch, Status, Conclusion, RequestedAction, HtmlUrl, LogsUrl);
+            """
+        )

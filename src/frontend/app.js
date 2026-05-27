@@ -271,7 +271,8 @@ let conversationsLoadPromise = null;
 const conversationMessagesCache = new Map();
 let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
-let adminActiveView = "overview";
+let adminActiveView = "deployments";
+let deploymentsLoading = false;
 let confirmModalResolver = null;
 let loadingStateDepth = 0;
 const PENDING_MESSAGE_KEY = "chatbot_pending_message";
@@ -1233,7 +1234,7 @@ function openAdminPanel() {
         return;
     }
     document.getElementById("admin-panel").classList.remove("hidden");
-    setAdminView("overview");
+    setAdminView("deployments");
     loadAdminPanel();
 }
 
@@ -1254,6 +1255,223 @@ function formatCurrency(value) {
         minimumFractionDigits: 4,
         maximumFractionDigits: 4,
     }).format(value || 0);
+}
+
+function formatDateTime(value) {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat("es-ES", {
+        dateStyle: "short",
+        timeStyle: "short",
+    }).format(date);
+}
+
+function renderDeploymentSettings(settings) {
+    const input = document.getElementById("deploy-notification-recipients");
+    const feedback = document.getElementById("deploy-settings-feedback");
+    if (input) {
+        input.value = (settings?.recipients || []).join(", ");
+    }
+    if (feedback) {
+        feedback.textContent = settings?.updated_at
+            ? `Ultima actualizacion: ${formatDateTime(settings.updated_at)}`
+            : "";
+        feedback.classList.remove("success", "error");
+    }
+}
+
+function deploymentStatusMeta(item) {
+    const conclusion = String(item?.conclusion || "").toLowerCase();
+    const status = String(item?.status || "").toLowerCase();
+    if (status === "completed" && conclusion === "success") {
+        return { icon: "✓", iconClass: "success", label: "Correcto" };
+    }
+    if (status === "completed" && conclusion) {
+        return { icon: "✕", iconClass: "failure", label: "Incorrecto" };
+    }
+    return { icon: "•", iconClass: "progress", label: status === "in_progress" ? "En curso" : "Pendiente" };
+}
+
+function renderDeploymentsHistory(items) {
+    const container = document.getElementById("deploy-history-list");
+    if (!container) return;
+    if (!items?.length) {
+        container.innerHTML = `<div class="deploy-history-empty">Todavia no hay despliegues registrados.</div>`;
+        return;
+    }
+
+    container.innerHTML = items.map((item) => {
+        const meta = deploymentStatusMeta(item);
+        const actor = item.triggered_by_email || item.actor || "desconocido";
+        const action = String(item.requested_action || "full").toUpperCase();
+        const duration = item.duration_seconds != null ? `${item.duration_seconds}s` : "-";
+        const completed = formatDateTime(item.completed_at || item.updated_at || item.started_at);
+        const runLink = item.html_url || "#";
+        const disabledClass = item.github_run_id ? "" : "disabled";
+        return `
+            <article class="deploy-history-item">
+                <div class="deploy-history-top">
+                    <div class="deploy-history-status">
+                        <span class="deploy-status-icon ${meta.iconClass}">${meta.icon}</span>
+                        <div>
+                            <div class="deploy-history-title">${meta.label} · Run #${item.run_number || item.github_run_id}</div>
+                            <div class="deploy-history-subtitle">${completed} · ${actor}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="deploy-history-badges">
+                    <span class="deploy-history-badge">Rama: ${item.branch || "-"}</span>
+                    <span class="deploy-history-badge">Accion: ${action}</span>
+                    <span class="deploy-history-badge">Duracion: ${duration}</span>
+                    <span class="deploy-history-badge">Origen: ${item.trigger_source || "github_manual"}</span>
+                </div>
+                <div class="deploy-history-links">
+                    <a class="deploy-history-link" href="${runLink}" target="_blank" rel="noopener">Ver en GitHub</a>
+                    <button class="deploy-history-link ${disabledClass}" type="button" onclick="downloadDeploymentLog(${item.github_run_id})">Descargar log completo</button>
+                </div>
+            </article>
+        `;
+    }).join("");
+}
+
+async function loadDeploymentsPanel() {
+    const container = document.getElementById("deploy-history-list");
+    if (container && !deploymentsLoading) {
+        container.innerHTML = `<div class="deploy-history-empty">Cargando historico de despliegues...</div>`;
+    }
+    deploymentsLoading = true;
+    try {
+        const res = await fetch(`${API}/admin/deployments?limit=40`, { headers: getAdminHeaders() });
+        if (!res.ok) {
+            throw new Error("No se pudieron cargar los despliegues");
+        }
+        const data = await res.json();
+        renderDeploymentSettings(data.settings || {});
+        renderDeploymentsHistory(data.deployments || []);
+    } catch (err) {
+        console.error("Error loading deployments panel:", err);
+        if (container) {
+            container.innerHTML = `<div class="deploy-history-empty">No se pudo cargar el historico de despliegues.</div>`;
+        }
+    } finally {
+        deploymentsLoading = false;
+    }
+}
+
+async function saveDeploymentSettings() {
+    const input = document.getElementById("deploy-notification-recipients");
+    const feedback = document.getElementById("deploy-settings-feedback");
+    const recipients = String(input?.value || "")
+        .split(/[;,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+    if (!recipients.length) {
+        if (feedback) {
+            feedback.textContent = "Debes indicar al menos un correo.";
+            feedback.classList.remove("success");
+            feedback.classList.add("error");
+        }
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API}/admin/deployments/settings`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...getAdminHeaders() },
+            body: JSON.stringify({ recipients }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data?.detail || "No se pudo guardar la configuracion");
+        }
+        renderDeploymentSettings(data);
+        if (feedback) {
+            feedback.textContent = "Destinatarios guardados correctamente.";
+            feedback.classList.remove("error");
+            feedback.classList.add("success");
+        }
+    } catch (err) {
+        console.error("Error saving deployment settings:", err);
+        if (feedback) {
+            feedback.textContent = err.message || "No se pudo guardar la configuracion.";
+            feedback.classList.remove("success");
+            feedback.classList.add("error");
+        }
+    }
+}
+
+async function triggerFullDeployment() {
+    if (!currentUser) return;
+    const confirmed = await openConfirmModal(
+        "Se va a lanzar el despliegue completo del chatbot en produccion. ¿Quieres continuar?",
+        {
+            title: "Confirmar despliegue",
+            acceptLabel: "Desplegar",
+        }
+    );
+    if (!confirmed) {
+        return;
+    }
+
+    const button = document.getElementById("deploy-run-btn");
+    if (button) {
+        button.disabled = true;
+        button.textContent = "Lanzando...";
+    }
+
+    try {
+        const res = await fetch(`${API}/admin/deployments/run`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...getAdminHeaders() },
+            body: JSON.stringify({ branch: "sandbox" }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data?.detail || "No se pudo lanzar el despliegue");
+        }
+        alert("Despliegue lanzado correctamente. En unos segundos aparecera en el historico.");
+        window.setTimeout(() => {
+            loadDeploymentsPanel();
+        }, 2500);
+    } catch (err) {
+        console.error("Error triggering deployment:", err);
+        alert(err.message || "No se pudo lanzar el despliegue.");
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = "Desplegar";
+        }
+    }
+}
+
+async function downloadDeploymentLog(runId) {
+    if (!runId) return;
+    try {
+        const res = await fetch(`${API}/admin/deployments/${runId}/logs`, {
+            headers: getAdminHeaders(),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data?.detail || "No se pudo descargar el log");
+        }
+        const blob = await res.blob();
+        const disposition = res.headers.get("content-disposition") || "";
+        const match = disposition.match(/filename=\"?([^"]+)\"?/i);
+        const fileName = match?.[1] || `deploy-chatbot-run-${runId}.zip`;
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (err) {
+        console.error("Error downloading deployment log:", err);
+        alert(err.message || "No se pudo descargar el log completo.");
+    }
 }
 
 function renderModelComparison(metrics) {
@@ -1467,17 +1685,25 @@ function setAdminRange(days, button) {
 }
 
 function setAdminView(view, button = null) {
-    adminActiveView = view === "pending" ? "pending" : "overview";
+    adminActiveView = view === "pending" ? "pending" : view === "overview" ? "overview" : "deployments";
+    const deploymentsSection = document.getElementById("admin-view-deployments");
     const overviewSection = document.getElementById("admin-view-overview");
     const pendingSection = document.getElementById("admin-view-pending");
+    const deploymentsTab = document.getElementById("admin-tab-deployments");
     const overviewTab = document.getElementById("admin-tab-overview");
     const pendingTab = document.getElementById("admin-tab-pending");
 
+    if (deploymentsSection) {
+        deploymentsSection.classList.toggle("hidden", adminActiveView !== "deployments");
+    }
     if (overviewSection) {
         overviewSection.classList.toggle("hidden", adminActiveView !== "overview");
     }
     if (pendingSection) {
         pendingSection.classList.toggle("hidden", adminActiveView !== "pending");
+    }
+    if (deploymentsTab) {
+        deploymentsTab.classList.toggle("active", adminActiveView === "deployments");
     }
     if (overviewTab) {
         overviewTab.classList.toggle("active", adminActiveView === "overview");
@@ -1492,6 +1718,7 @@ function setAdminView(view, button = null) {
 
 async function loadAdminPanel() {
     if (!currentUser) return;
+    loadDeploymentsPanel();
     try {
         const [metricsRes, pendingRes] = await Promise.all([
             fetch(`${API}/admin/metrics?days=${adminRangeDays}`, { headers: getAdminHeaders() }),
