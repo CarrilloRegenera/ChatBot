@@ -26,6 +26,7 @@ for handler in logging.getLogger().handlers:
 
 
 app = FastAPI(title="ChatBot API")
+app.state.runtime_ready = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,6 +57,7 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 def startup_init():
+    app.state.runtime_ready = False
     ensure_app_schema()
     ping_database()
     try:
@@ -70,6 +72,7 @@ def startup_init():
         sync_documents()
     except Exception:
         logging.getLogger(__name__).exception("Error durante sync_documents en startup; la API arranca de todos modos")
+    app.state.runtime_ready = True
 
 
 @app.get("/")
@@ -85,11 +88,8 @@ def root():
 
 @app.get("/health")
 def health():
-    try:
-        ping_database()
-    except Exception as exc:
-        logging.getLogger(__name__).warning("Health check sin SQL disponible: %s", exc)
-        return JSONResponse(status_code=503, content={"status": "degraded", "database": "unavailable"})
+    if not bool(getattr(app.state, "runtime_ready", False)):
+        return JSONResponse(status_code=503, content={"status": "warming"})
     return {"status": "ok", "database": "ready"}
 
 
