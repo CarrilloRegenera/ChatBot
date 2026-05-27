@@ -568,15 +568,10 @@ def sync_recent_deployments(limit: int | None = None) -> None:
         return
 
     for run in response.get("workflow_runs", []):
-        record = _upsert_run(_run_record_from_github(run))
-        try:
-            _maybe_notify(record)
-        except Exception:
-            logger.exception("No se pudo enviar la notificacion del despliegue %s", record["github_run_id"])
+        _upsert_run(_run_record_from_github(run))
 
 
 def list_deployments(limit: int | None = None) -> list[dict[str, Any]]:
-    sync_recent_deployments(limit=limit)
     max_rows = limit or DEPLOYMENTS_HISTORY_LIMIT
     with db_conn() as conn:
         cursor = conn.cursor()
