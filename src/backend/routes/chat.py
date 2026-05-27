@@ -193,12 +193,12 @@ def _assert_admin(request: Request) -> None:
     user_name = (request.headers.get("x-user-name") or "").strip().lower()
     user_email = (request.headers.get("x-user-email") or "").strip().lower()
     auth_provider = (request.headers.get("x-auth-provider") or "").strip().lower()
-    if ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Acceso admin denegado")
     is_local_admin = auth_provider == "local" and user_name == "admin"
     is_allowed_entra_email = bool(user_email and user_email in ADMIN_PANEL_ALLOWED_EMAILS)
     if role != "administrador" or not (is_local_admin or is_allowed_entra_email):
         raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
+    if admin_key and ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Acceso admin denegado")
 
 
 def _assert_deploy_webhook(request: Request) -> None:
