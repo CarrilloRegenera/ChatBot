@@ -256,14 +256,7 @@ def _resolve_request_user_id(request: Request) -> int:
 
     header_provider = (request.headers.get("x-auth-provider") or "").strip().lower()
     header_email = (request.headers.get("x-user-email") or "").strip().lower()
-    stored_provider = str(user_row[4] or "").strip().lower()
-    allow_local_admin_fallback = (
-        header_provider == "local"
-        and header_email
-        and header_email in ADMIN_PANEL_ALLOWED_EMAILS
-        and header_email == str(user_row[2] or "").strip().lower()
-    )
-    if header_provider and stored_provider not in {"", header_provider} and not allow_local_admin_fallback:
+    if header_provider and str(user_row[4] or "").strip().lower() not in {"", header_provider}:
         raise HTTPException(status_code=403, detail="La sesion no coincide con el proveedor del usuario")
     if header_email and str(user_row[2] or "").strip().lower() not in {"", header_email}:
         raise HTTPException(status_code=403, detail="La sesion no coincide con el email del usuario")
