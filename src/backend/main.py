@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
 from routes.chat import router as chat_router
 from database import ensure_app_schema
-from config import ALLOWED_ORIGINS, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
+from config import ALLOWED_ORIGINS, CHATBOT_FRONTEND_URL, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
 from observability import RequestIdFilter, reset_request_id, set_request_id
 
 
@@ -66,9 +67,13 @@ def startup_init():
 
 @app.get("/")
 def root():
-    if FRONTEND_DIR.is_dir():
+    if FRONTEND_DIR.is_dir() and not os.getenv("WEBSITE_HOSTNAME", "").strip():
         return RedirectResponse(url="/ui/")
-    return {"mensaje": "ChatBot API funcionando"}
+    return {
+        "mensaje": "ChatBot API funcionando",
+        "frontend_url": CHATBOT_FRONTEND_URL,
+        "health_url": "/health",
+    }
 
 
 @app.get("/health")

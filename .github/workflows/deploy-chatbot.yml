@@ -194,6 +194,8 @@ jobs:
           $settings = @(
             "WEBSITES_ENABLE_APP_SERVICE_STORAGE=false",
             "WEBSITES_PORT=$env:WEBSITE_PORT",
+            "WEBSITE_WARMUP_PATH=/health",
+            "WEBSITE_WARMUP_STATUSES=200",
             "SQL_CONNECTION_STRING=$env:SQL_CONNECTION_STRING",
             "OPENAI_API_KEY=$env:OPENAI_API_KEY",
             "HF_TOKEN=$env:HF_TOKEN",
@@ -276,6 +278,11 @@ jobs:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
         run: |
+          az webapp config set `
+            --name $env:WEBAPP_NAME `
+            --resource-group $env:RESOURCE_GROUP `
+            --generic-configurations '{"healthCheckPath":"/health"}'
+
           az webapp restart --name $env:WEBAPP_NAME --resource-group $env:RESOURCE_GROUP
 
       - name: Wait for backend health

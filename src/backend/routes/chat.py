@@ -3,7 +3,7 @@ import time
 from threading import Lock
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from business_query_service import answer_business_question, detect_business_route
@@ -14,7 +14,9 @@ from deployment_service import (
     download_run_logs,
     get_notification_settings,
     list_deployments,
+    notify_run_if_needed,
     register_webhook_run,
+    store_webhook_run,
     trigger_full_deploy,
     update_notification_settings,
 )
@@ -692,10 +694,11 @@ def admin_download_deployment_logs(run_id: int, request: Request):
 
 
 @router.post("/admin/deployments/webhook")
-def admin_deployment_webhook(data: DeploymentWebhookRequest, request: Request):
+def admin_deployment_webhook(data: DeploymentWebhookRequest, request: Request, background_tasks: BackgroundTasks):
     _assert_deploy_webhook(request)
     try:
-        saved = register_webhook_run(data.model_dump())
+        saved = store_webhook_run(data.model_dump())
+        background_tasks.add_task(notify_run_if_needed, int(saved["github_run_id"]))
     except Exception as exc:
         logger.exception("Error procesando webhook de despliegue")
         raise HTTPException(status_code=500, detail=f"No se pudo registrar el despliegue: {exc}") from exc

@@ -505,6 +505,55 @@ def register_webhook_run(payload: dict[str, Any]) -> dict[str, Any]:
     return saved
 
 
+def store_webhook_run(payload: dict[str, Any]) -> dict[str, Any]:
+    record = _run_record_from_payload(payload)
+    return _upsert_run(record)
+
+
+def notify_run_if_needed(run_id: int) -> None:
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT TOP 1
+                GitHubRunId, RunNumber, RunAttempt, WorkflowName, Branch, RequestedAction,
+                TriggerSource, TriggeredByEmail, TriggeredByName, Actor, Status, Conclusion,
+                HtmlUrl, LogsUrl, BackendUrl, FrontendUrl, StartedAt, CompletedAt, DurationSeconds,
+                LastNotifiedConclusion
+            FROM DeploymentRuns
+            WHERE GitHubRunId = ?
+            """,
+            run_id,
+        )
+        row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"No existe DeploymentRun para GitHubRunId={run_id}")
+
+    run = {
+        "github_run_id": int(row[0]),
+        "run_number": row[1],
+        "run_attempt": row[2],
+        "workflow_name": row[3],
+        "branch": row[4],
+        "requested_action": row[5] or "full",
+        "trigger_source": row[6] or "github_manual",
+        "triggered_by_email": row[7],
+        "triggered_by_name": row[8],
+        "actor": row[9],
+        "status": row[10] or "unknown",
+        "conclusion": row[11],
+        "html_url": row[12],
+        "logs_url": row[13],
+        "backend_url": row[14],
+        "frontend_url": row[15] or CHATBOT_FRONTEND_URL,
+        "started_at": _iso_datetime(row[16]),
+        "completed_at": _iso_datetime(row[17]),
+        "duration_seconds": row[18],
+        "last_notified_conclusion": row[19],
+    }
+    _maybe_notify(run)
+
+
 def sync_recent_deployments(limit: int | None = None) -> None:
     per_page = max(10, min(limit or DEPLOYMENTS_HISTORY_LIMIT, 100))
     try:
