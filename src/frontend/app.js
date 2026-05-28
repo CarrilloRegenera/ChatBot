@@ -129,12 +129,32 @@ async function getMsalClient() {
 async function finalizeEntraSession(token) {
     const loadingLabel = document.getElementById("loading-overlay-message");
     if (loadingLabel) loadingLabel.textContent = "Completando acceso con Microsoft...";
-    const res = await fetchWithTimeout(`${API}/login/entra`, {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${token}`,
-        },
-    }, 15000);
+    let res = null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            res = await fetchWithTimeout(`${API}/login/entra`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                },
+            }, 60000);
+            if (res.status < 500 || attempt === 2) {
+                break;
+            }
+            lastError = new Error("El backend aun esta arrancando.");
+        } catch (err) {
+            lastError = err;
+            if (attempt === 2) {
+                throw err;
+            }
+        }
+        if (loadingLabel) loadingLabel.textContent = "El servidor esta arrancando. Reintentando acceso...";
+        await new Promise((resolve) => window.setTimeout(resolve, 3000));
+    }
+    if (!res) {
+        throw lastError || new Error("No se pudo completar el login con Microsoft");
+    }
 
     const data = await res.json();
     if (!res.ok) {

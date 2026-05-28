@@ -1,5 +1,6 @@
 import logging
 import os
+from threading import Thread
 import uuid
 from pathlib import Path
 
@@ -9,7 +10,6 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
-from routes.chat import router as chat_router
 from database import ensure_app_schema, ping_database
 from config import ALLOWED_ORIGINS, CHATBOT_FRONTEND_URL, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
 from entra_auth import warm_entra_jwks
@@ -27,6 +27,8 @@ for handler in logging.getLogger().handlers:
 
 app = FastAPI(title="ChatBot API")
 app.state.runtime_ready = False
+app.state.startup_error = ""
+app.state.database_ready = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,9 +38,17 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
-app.include_router(chat_router)
 app.include_router(auth_router, prefix="/api")
-app.include_router(chat_router, prefix="/api")
+
+
+def _include_chat_router() -> None:
+    from routes.chat import router as chat_router
+
+    app.include_router(chat_router)
+    app.include_router(chat_router, prefix="/api")
+
+
+_include_chat_router()
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.is_dir():
@@ -60,21 +70,33 @@ async def request_id_middleware(request: Request, call_next):
 @app.on_event("startup")
 def startup_init():
     app.state.runtime_ready = False
-    ensure_app_schema()
-    ping_database()
+    app.state.startup_error = ""
+    Thread(target=_startup_background_init, daemon=True, name="startup-init").start()
+
+
+def _startup_background_init():
+    logger = logging.getLogger(__name__)
+    try:
+        ensure_app_schema()
+        ping_database()
+        app.state.database_ready = True
+    except Exception:
+        app.state.database_ready = False
+        app.state.startup_error = "database"
+        logger.exception("No se pudo validar la base de datos en startup; la API arranca de todos modos")
     try:
         warm_entra_jwks()
     except Exception:
-        logging.getLogger(__name__).warning("No se pudo precalentar JWKS de Entra en startup", exc_info=True)
+        logger.warning("No se pudo precalentar JWKS de Entra en startup", exc_info=True)
     if not SYNC_DOCUMENTS_ON_STARTUP:
-        logging.getLogger(__name__).info("sync_documents desactivado en startup (SYNC_DOCUMENTS_ON_STARTUP=false)")
+        logger.info("sync_documents desactivado en startup (SYNC_DOCUMENTS_ON_STARTUP=false)")
         app.state.runtime_ready = True
         return
     try:
         from rag_service import sync_documents
         sync_documents()
     except Exception:
-        logging.getLogger(__name__).exception("Error durante sync_documents en startup; la API arranca de todos modos")
+        logger.exception("Error durante sync_documents en startup; la API arranca de todos modos")
     app.state.runtime_ready = True
 
 
@@ -93,8 +115,9 @@ def root():
 def health():
     return {
         "status": "ok",
-        "database": "ready",
+        "database": "ready" if bool(getattr(app.state, "database_ready", False)) else "unknown",
         "runtime_ready": bool(getattr(app.state, "runtime_ready", False)),
+        "startup_error": getattr(app.state, "startup_error", ""),
     }
 
 
