@@ -108,6 +108,14 @@ ADMIN_PANEL_ALLOWED_EMAILS = {
     ).split(",")
     if email.strip()
 }
+ADMIN_PANEL_ALLOWED_NAMES = {
+    name.strip().lower()
+    for name in os.getenv(
+        "ADMIN_PANEL_ALLOWED_NAMES",
+        "Adrian Carrillo,Jorge Cañete,Jorge Canete",
+    ).split(",")
+    if name.strip()
+}
 EMAIL_ENABLED = _env_first("Email__Enabled", "EMAIL__ENABLED", default="false").strip().lower() in {"1", "true", "yes", "on"}
 EMAIL_PROVIDER = _env_first("Email__Provider", "EMAIL__PROVIDER", default="Graph").strip()
 GRAPH_EMAIL_TENANT_ID = _env_first("GraphEmail__TenantId", "GRAPH_EMAIL_TENANT_ID").strip()
@@ -146,6 +154,8 @@ BLOB_CONTAINER_NAME = os.getenv("BLOB_CONTAINER_NAME", "documentos-rag").strip()
 BLOB_PREFIX = os.getenv("BLOB_PREFIX", "").strip().strip("/")
 BLOB_PREFIX_ALTA_TENSION = os.getenv("BLOB_PREFIX_ALTA_TENSION", "").strip().strip("/")
 BLOB_PREFIX_BAJA_TENSION = os.getenv("BLOB_PREFIX_BAJA_TENSION", "").strip().strip("/")
+BLOB_PREFIX_FOTOVOLTAICA_OM = os.getenv("BLOB_PREFIX_FOTOVOLTAICA_OM", "").strip().strip("/")
+BLOB_PREFIX_GRUPOS_ELECTROGENOS = os.getenv("BLOB_PREFIX_GRUPOS_ELECTROGENOS", "").strip().strip("/")
 BLOB_PREFIX_GUIAS_TECNICAS = os.getenv("BLOB_PREFIX_GUIAS_TECNICAS", "").strip().strip("/")
 BLOB_PREFIX_RITE = os.getenv("BLOB_PREFIX_RITE", "").strip().strip("/")
 

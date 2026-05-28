@@ -10,7 +10,16 @@
       "source_tokens": ["itc-lat", "lat", "a16436", "a16554", "alta_tension", "alta-tension"],
       "source_phrases": ["alta tension"],
       "folder_prefixes": ["alta_tension", "lineas_alta_tension"],
-      "phrase_queries": [],
+      "phrase_queries": [
+        {
+          "if_contains": ["real decreto", "alta tension"],
+          "emit": ["Reglamento sobre condiciones técnicas y garantías de seguridad", "instrucciones técnicas complementarias ITC-LAT"]
+        },
+        {
+          "if_contains": ["lineas electricas", "alta tension"],
+          "emit": ["Reglamento sobre condiciones técnicas y garantías de seguridad", "instrucciones técnicas complementarias ITC-LAT"]
+        }
+      ],
       "scoring": {}
     },
     "rite": {
@@ -39,6 +48,10 @@
           "emit": ["electrificacion basica"]
         },
         {
+          "if_contains": ["electrificacion basica", "c1"],
+          "emit": ["C1 Iluminación", "Tabla 1. Características eléctricas de los circuitos"]
+        },
+        {
           "if_contains": ["electrificacion elevada"],
           "emit": ["electrificacion elevada"]
         },
@@ -63,7 +76,12 @@
       "source_tokens": ["guia", "guias", "guia_bt", "bt-40", "iluminacion", "une-12464", "12464"],
       "source_phrases": [],
       "folder_prefixes": ["guias_tecnicas", "guias", "iluminacion"],
-      "phrase_queries": [],
+      "phrase_queries": [
+        {
+          "if_contains": ["tecnologias", "generacion"],
+          "emit": ["El presente documento aplica a todas las instalaciones generadoras", "Generadores fotovoltaicos", "Turbinas"]
+        }
+      ],
       "scoring": {
         "bt40_domain_boost": 30,
         "bt40_doc_term_boost": 25,
@@ -79,13 +97,28 @@
     "fotovoltaica_om": {
       "trigger_terms": [
         "fotovoltaica", "fotovoltaico", "paneles solares", "planta solar",
-        "operacion y mantenimiento", "mantenimiento fv", "o&m"
+        "operacion y mantenimiento", "mantenimiento fv", "planta fv",
+        "modulos solares", "sistema de monitorizacion", "paneles fotovoltaicos", "o&m",
+        "cajas de campo", "ssm"
       ],
       "trigger_regex": [],
       "source_tokens": ["fotovoltaica", "fotovoltaico", "fv", "om-fv", "o&m"],
       "source_phrases": ["operacion y mantenimiento"],
       "folder_prefixes": ["fotovoltaica_om", "fotovoltaica", "fv", "operacion_mantenimiento"],
-      "phrase_queries": [],
+      "phrase_queries": [
+        {
+          "if_contains": ["limpiar", "panel"],
+          "emit": ["limpieza de los paneles se realizarán mensualmente", "La limpieza se realizará con agua"]
+        },
+        {
+          "if_contains": ["inversores", "mantenimiento"],
+          "emit": ["4.1.5. Inversores", "Lectura de los datos archivados"]
+        },
+        {
+          "if_contains": ["cajas de campo"],
+          "emit": ["cajas de campo", "riesgo eléctrico", "desconectadas y sin tensión"]
+        }
+      ],
       "scoring": {}
     },
     "grupos_electrogenos": {
@@ -100,7 +133,28 @@
         "grupo electrogeno", "grupos electrogenos", "generating sets"
       ],
       "folder_prefixes": ["grupos_electrogenos", "grupos", "electrogenos"],
-      "phrase_queries": [],
+      "phrase_queries": [
+        {
+          "if_contains": ["load pick-up", "readiness"],
+          "emit": ["3.19 load pick-up readiness time", "load pick-up readiness time"]
+        },
+        {
+          "if_contains": ["off-load", "run-on"],
+          "emit": ["3.20 off-load run-on time", "cooling run-on time"]
+        },
+        {
+          "if_contains": ["cooling", "run-on"],
+          "emit": ["3.20 off-load run-on time", "cooling run-on time"]
+        },
+        {
+          "if_contains": ["declared frequency"],
+          "emit": ["declared frequency rated frequency", "frequency at which the generating set is designed to operate"]
+        },
+        {
+          "if_contains": ["rated frequency"],
+          "emit": ["declared frequency rated frequency", "frequency at which the generating set is designed to operate"]
+        }
+      ],
       "scoring": {}
     },
     "pendiente_ocr": {

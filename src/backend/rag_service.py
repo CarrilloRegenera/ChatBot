@@ -1171,13 +1171,28 @@ def _domain_from_folder(source_name: str) -> str:
     return ""
 
 
+def _domain_from_configured_folder(source_name: str) -> str:
+    parts = [
+        _normalize_text(part)
+        for part in (source_name or "").replace("\\", "/").split("/")[:-1]
+        if part.strip()
+    ]
+    for part in parts:
+        compact = re.sub(r"^\d+[_\-\s]*", "", part).replace("-", "_").replace(" ", "_")
+        for domain_key, prefixes in DOMAIN_FOLDER_PREFIXES.items():
+            if any(prefix in compact for prefix in prefixes):
+                return domain_key
+    return ""
+
+
 def _source_domain_key(source_name: str, metadata: Dict[str, object] | None = None) -> str:
     """Resuelve dominio en cascada:
     1) metadata['domain'] (asignado en indexación).
     2) DOMAIN_FILENAME_OVERRIDES (pin manual por filename).
-    3) DOMAIN_FOLDER_PREFIXES (estructura de carpetas).
+    3) DOMAIN_FOLDER_PREFIXES (estructura de carpetas configurada).
     4) DOMAIN_SOURCE_TOKEN_HINTS / DOMAIN_SOURCE_PHRASE_HINTS (heurística por tokens).
-    5) 'general'.
+    5) Auto-dominio por carpeta no configurada.
+    6) 'general'.
     """
     if metadata:
         explicit_domain = str(metadata.get("domain", "") or "").strip()
@@ -1186,7 +1201,13 @@ def _source_domain_key(source_name: str, metadata: Dict[str, object] | None = No
     override = _domain_from_filename_override(source_name)
     if override:
         return override
-    return _domain_from_folder(source_name) or _domain_from_source(source_name)
+    configured_folder = _domain_from_configured_folder(source_name)
+    if configured_folder:
+        return configured_folder
+    source_domain = _domain_from_source(source_name)
+    if source_domain != "general":
+        return source_domain
+    return _domain_from_folder(source_name) or source_domain
 
 
 def _regulation_key(source_name: str, domain: str) -> str:
@@ -2352,12 +2373,30 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         if len(preferred_items) >= max(3, min(n_results, 6)):
             ranked_items = preferred_items + other_items
 
+    if query_profile["phrase_queries"]:
+        def _phrase_hit_count(item: Tuple[float, str, str, Dict[str, object]]) -> int:
+            text = _normalize_text(f"{item[3].get('section', '')} {item[2]}")
+            return sum(
+                1 for phrase in query_profile["phrase_queries"]
+                if _normalize_text(phrase) in text
+            )
+
+        ranked_items.sort(key=lambda item: (_phrase_hit_count(item), item[0]), reverse=True)
+
     selected = []
     selected_ids = set()
     source_counts = {}
     section_counts = {}
     source_cap = MAX_CHUNKS_PER_SOURCE + (2 if broad_query else 0)
     section_cap = 3 if broad_query else 2
+    if expected_domains:
+        preferred_source_count = len({
+            item[3].get("source", "unknown")
+            for item in ranked_items
+            if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
+        })
+        if preferred_source_count <= max(len(expected_domains), 1):
+            source_cap = max(source_cap, n_results)
     if query_profile["table_query"]:
         source_cap += 3
         section_cap += 2
@@ -2373,7 +2412,19 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
             ] or ranked_items
         diversity_target = min(3, len({item[3].get("source", "unknown") for item in diversity_pool}))
-    for item in ranked_items:
+    selection_items = ranked_items
+    if expected_domains:
+        preferred_selection_items = [
+            item for item in ranked_items
+            if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
+        ]
+        other_selection_items = [
+            item for item in ranked_items
+            if _source_domain_key(str(item[3].get("source", "")), item[3]) not in expected_domains
+        ]
+        if len(preferred_selection_items) >= max(3, min(n_results, 6)):
+            selection_items = preferred_selection_items + other_selection_items
+    for item in selection_items:
         _, doc_id, _, metadata = item
         source_name = metadata.get("source", "unknown")
         section_name = metadata.get("section", "") or "__none__"
@@ -2391,7 +2442,13 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             break
 
     if len(selected) < n_results:
-        for item in ranked_items:
+        fallback_pools = [selection_items]
+        if expected_domains:
+            fallback_pools.insert(0, [
+                item for item in selection_items
+                if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
+            ])
+        for item in [item for pool in fallback_pools for item in pool]:
             _, doc_id, _, _ = item
             if doc_id in selected_ids:
                 continue

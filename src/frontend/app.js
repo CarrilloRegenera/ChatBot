@@ -249,6 +249,20 @@ const ADMIN_PANEL_ALLOWED_EMAILS = new Set([
     "acarrillo@regeneraenergy.es",
 ]);
 
+const ADMIN_PANEL_ALLOWED_NAMES = new Set([
+    "adrian carrillo",
+    "jorge canete",
+]);
+
+function adminIdentityKey(value) {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+}
+
 const CHAT_MODE_STORAGE_KEY = "chatbot_active_mode";
 const CHAT_MODE_MAP_KEY = "chatbot_conversation_modes";
 const CHAT_MODE_LAST_CONVERSATION_KEY = "chatbot_mode_last_conversations";
@@ -442,7 +456,7 @@ function isAdminPanelAllowed() {
 
     const role = String(currentUser.rol || "").toLowerCase();
     const email = String(currentUser.email || "").trim().toLowerCase();
-    const userName = String(currentUser.nombre || "").trim().toLowerCase();
+    const userName = adminIdentityKey(currentUser.nombre);
     const authProvider = String(currentUser.authProvider || currentUser.auth_provider || "").trim().toLowerCase();
 
     if (authProvider === "entra" && ADMIN_PANEL_ALLOWED_EMAILS.has(email)) {
@@ -453,7 +467,7 @@ function isAdminPanelAllowed() {
         return true;
     }
 
-    return role === "administrador" && ADMIN_PANEL_ALLOWED_EMAILS.has(email);
+    return ADMIN_PANEL_ALLOWED_NAMES.has(userName) || (role === "administrador" && ADMIN_PANEL_ALLOWED_EMAILS.has(email));
 }
 
 function updateAdminVisibility() {

@@ -1,5 +1,6 @@
 import logging
 import time
+import unicodedata
 from threading import Lock, Thread
 from typing import Dict, List
 
@@ -7,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from business_query_service import answer_business_question, detect_business_route
-from config import ADMIN_API_KEY, ADMIN_PANEL_ALLOWED_EMAILS, CONVERSATION_LOCK_TIMEOUT_SECS, DEPLOY_WEBHOOK_SECRET, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
+from config import ADMIN_API_KEY, ADMIN_PANEL_ALLOWED_EMAILS, ADMIN_PANEL_ALLOWED_NAMES, CONVERSATION_LOCK_TIMEOUT_SECS, DEPLOY_WEBHOOK_SECRET, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
 from database import db_conn
 from deployment_service import (
     DeploymentConfigurationError,
@@ -170,6 +171,15 @@ def _save_chat_message(conversation_id: int, question: str, response: str, elaps
     return int((time.time() - start) * 1000)
 
 
+def _admin_identity_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return " ".join(without_marks.strip().lower().split())
+
+
+ADMIN_PANEL_ALLOWED_NAME_KEYS = {_admin_identity_key(name) for name in ADMIN_PANEL_ALLOWED_NAMES}
+
+
 def _assert_admin(request: Request) -> None:
     auth_header = (request.headers.get("authorization") or "").strip()
     if ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
@@ -195,7 +205,8 @@ def _assert_admin(request: Request) -> None:
     auth_provider = (request.headers.get("x-auth-provider") or "").strip().lower()
     is_local_admin = auth_provider == "local" and user_name == "admin"
     is_allowed_entra_email = bool(user_email and user_email in ADMIN_PANEL_ALLOWED_EMAILS)
-    if role != "administrador" or not (is_local_admin or is_allowed_entra_email):
+    is_allowed_admin_name = _admin_identity_key(user_name) in ADMIN_PANEL_ALLOWED_NAME_KEYS
+    if not (is_local_admin or is_allowed_entra_email or is_allowed_admin_name):
         raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
     if admin_key and ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Acceso admin denegado")

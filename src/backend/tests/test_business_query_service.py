@@ -232,6 +232,94 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertIn("produccion 2028 = 300,50", response)
         self.assertIn("produccion 2029 = 0,00", response)
 
+    def test_explicit_year_after_offer_reference_wins_over_offer_year(self):
+        parsed = business._parse_question(
+            "Que backlog tiene EST-188-2025 en 2026",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["reference"], "EST-188-2025")
+        self.assertEqual(parsed["year"], 2026)
+        self.assertEqual(parsed["fields"], ["produccion2026"])
+
+    def test_top_importe_contratado_does_not_create_por_filter(self):
+        parsed = business._parse_question(
+            "Dime el top 3 de licitaciones por importe contratado",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["metric"], "importecontratado")
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
+    def test_produccion_importe_contratado_total_keeps_importe_metric(self):
+        parsed = business._parse_question(
+            "Cuanto importe contratado total hay en produccion",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["metric"], "importecontratado")
+
+    def test_specific_produccion_month_uses_periodos_when_column_is_empty(self):
+        parsed = business._parse_question(
+            "Cual es la produccion de mayo de la obra 24036 en 2025",
+            module="produccion",
+            history=[],
+        )
+        result = business._build_produccion_result(
+            {
+                "CodigoObra": "24036",
+                "NombreObra": "Instalaciones ADIF tramo nonduermas",
+                "ProduccionMayo": None,
+                "PeriodosMensuales": [
+                    {"Anio": 2025, "Mes": 2, "Importe": 309858.11},
+                    {"Anio": 2025, "Mes": 5, "Importe": 2432652.38},
+                ],
+            },
+            parsed,
+        )
+        response = business._format_business_response(result, module="produccion", parsed=parsed)
+
+        self.assertIn("produccion mayo = 2.432.652,38", response)
+
+    def test_reference_after_tipo_de_obra_uses_numeric_code(self):
+        parsed = business._parse_question(
+            "Que tipo de obra tiene 24036",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(parsed["reference"], "24036")
+        self.assertEqual(parsed["fields"], ["tipoObra"])
+
+    def test_est_reference_with_produccion_field_stays_in_estudios(self):
+        result = business._answer_business_question_sql(
+            "Cual es la produccion 2027 de EST-188-2025",
+            preferred_route="business_licitaciones",
+            history=[],
+        )
+
+        self.assertEqual(result["route"], "business_licitaciones")
+        self.assertEqual(result["trace"]["module"], "estudios")
+        self.assertEqual(result["trace"]["fields"], ["produccion2027"])
+
+    def test_cierre_exact_field_query_does_not_return_other_mes_fields(self):
+        matches = business._match_cierre_fields(
+            {
+                "Valores": {
+                    "produccionMes": "10.00",
+                    "costesMes": "20.00",
+                    "certificacionMes": "30.00",
+                },
+                "ValoresNormalizados": [],
+            },
+            {"question": "Cual es la produccion mes del cierre de 26050"},
+        )
+
+        self.assertEqual(matches, [{"label": "produccionMes", "value": "10.00"}])
+
     def test_auth_required_response_is_traced(self):
         with patch.object(business, "APPREGENERA_DEV_BYPASS_KEY", ""):
             result = business.answer_business_question(

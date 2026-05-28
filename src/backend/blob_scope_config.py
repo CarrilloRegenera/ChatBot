@@ -10,12 +10,16 @@ def configured_blob_scopes(
     default_prefix: str,
     alta_tension: str,
     baja_tension: str,
+    fotovoltaica_om: str,
+    grupos_electrogenos: str,
     guias_tecnicas: str,
     rite: str,
 ) -> List[Tuple[str, str]]:
     configured = [
         ("alta_tension", normalize_prefix(alta_tension)),
         ("baja_tension", normalize_prefix(baja_tension)),
+        ("fotovoltaica_om", normalize_prefix(fotovoltaica_om)),
+        ("grupos_electrogenos", normalize_prefix(grupos_electrogenos)),
         ("guias_tecnicas", normalize_prefix(guias_tecnicas)),
         ("rite", normalize_prefix(rite)),
     ]

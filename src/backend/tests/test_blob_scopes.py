@@ -14,6 +14,8 @@ class BlobScopeConfigTests(unittest.TestCase):
             "",
             "alta_tension",
             "baja_tension/",
+            "fotovoltaica_om/",
+            "grupos_electrogenos/",
             " guias_tecnicas ",
             "rite",
         )
@@ -23,13 +25,15 @@ class BlobScopeConfigTests(unittest.TestCase):
             [
                 ("alta_tension", "alta_tension/"),
                 ("baja_tension", "baja_tension/"),
+                ("fotovoltaica_om", "fotovoltaica_om/"),
+                ("grupos_electrogenos", "grupos_electrogenos/"),
                 ("guias_tecnicas", "guias_tecnicas/"),
                 ("rite", "rite/"),
             ],
         )
 
     def test_falls_back_to_single_prefix_when_scoped_prefixes_are_missing(self):
-        scopes = configured_blob_scopes("documentacion", "", "", "", "")
+        scopes = configured_blob_scopes("documentacion", "", "", "", "", "", "")
 
         self.assertEqual(scopes, [("", "documentacion/")])
 

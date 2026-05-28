@@ -432,6 +432,8 @@ def _answer_business_question_sql(
     explicit_scope = _detect_explicit_scope(normalized)
     preferred_module = "estudios" if (preferred_route or detect_business_route(question)) == "business_licitaciones" else "produccion"
     reference_hint = _detect_reference_module(_extract_reference(question, normalized))
+    if reference_hint == "estudios" and explicit_scope == "produccion":
+        explicit_scope = None
     if _is_source_info_request(normalized):
         source_module = _infer_source_module_from_history(history, fallback=preferred_module)
         route = "business_licitaciones" if source_module == "estudios" else "business_produccion"
@@ -579,6 +581,15 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
         }
 
     top_rows = rows[: max(1, min(int(aggregate.get("top_n", 1) or 1), 10))]
+    if all((parse_decimal(row.get("Valor")) or 0.0) == 0.0 for row in top_rows):
+        return {
+            "response": f"No hay valores positivos para {label}{period_text}.",
+            "route": route,
+            "confidence": 1.0,
+            "sources": [{"source": "AppRegenera SQL", "module": module}],
+            "is_zero_value": True,
+        }
+
     if len(top_rows) == 1:
         row = top_rows[0]
         code = row.get("NumeroProyecto") or row.get("NumeroOferta") or row.get("CodigoObra") or "-"
@@ -601,7 +612,7 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
         "route": route,
         "confidence": 1.0,
         "sources": [{"source": "AppRegenera SQL", "module": module}],
-        "is_zero_value": all((parse_decimal(row.get("Valor")) or 0.0) == 0.0 for row in top_rows),
+        "is_zero_value": False,
     }
 
 
@@ -866,7 +877,9 @@ def _build_module_candidates(preferred_module: str, explicit_scope: str | None, 
 def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
     normalized = _normalize(question)
     history_context = _extract_history_context(history)
-    year_match = re.search(r"\b(20\d{2})\b", normalized)
+    reference = _resolve_reference(question, normalized, history)
+    year_text = _strip_reference_for_year_detection(normalized, reference)
+    year_match = re.search(r"\b(20\d{2})\b", year_text)
     year = int(year_match.group(1)) if year_match else None
     if year is None and _looks_like_follow_up(normalized):
         year = history_context.get("year")
@@ -874,7 +887,6 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
     month = _extract_month(normalized)
     if month is None and _looks_like_follow_up(normalized):
         month = history_context.get("month")
-    reference = _resolve_reference(question, normalized, history)
     per_month = _is_per_month_request(normalized)
     per_year = _is_per_year_request(normalized)
     fields = _detect_fields(
@@ -943,7 +955,7 @@ def _extract_reference(original_question: str, normalized: str) -> str | None:
     reference_patterns = (
         r"\b(est[-\s]?\d{1,4}[-\s]?20\d{2})\b",
         r"\b([a-z]{2,6}-\d{1,5}-20\d{2})\b",
-        r"\b(?:proyecto|obra|licitacion|licitacion|oferta|estudio)\s+([a-z0-9-]{4,30})\b",
+        r"\b(?:proyecto|obra|licitacion|licitacion|oferta|estudio)\s+([a-z0-9-]*\d[a-z0-9-]{3,29})\b",
     )
     for pattern in reference_patterns:
         match = re.search(pattern, normalized, flags=re.IGNORECASE)
@@ -960,6 +972,13 @@ def _extract_reference(original_question: str, normalized: str) -> str | None:
         value = (quoted.group(1) or quoted.group(2) or "").strip()
         return value or None
     return None
+
+
+def _strip_reference_for_year_detection(normalized: str, reference: str | None) -> str:
+    if not reference:
+        return normalized
+    ref = _normalize(reference).replace(" ", "-")
+    return re.sub(rf"\b{re.escape(ref)}\b", " ", normalized)
 
 
 def _extract_cuatrimestre(text: str) -> int | None:
@@ -1036,12 +1055,12 @@ def _detect_aggregate_metric(text: str, fields: List[str], *, module: str, year:
             return "importecontratado"
         return None
     if module == "produccion":
-        for field in fields:
-            if field in {"produccionTotal", *PRODUCTION_MONTH_FIELDS.values()}:
-                return field.lower()
         for metric, aliases in PRODUCCION_AGGREGATE_KEYWORDS.items():
             if any(alias in text for alias in aliases):
                 return metric
+        for field in fields:
+            if field in {"produccionTotal", *PRODUCTION_MONTH_FIELDS.values()}:
+                return field.lower()
         if "produccion" in text:
             return "producciontotal"
     return None
@@ -1064,7 +1083,7 @@ def _extract_filter_text(original_question: str, normalized: str) -> str | None:
     cleaned_candidates: List[str] = []
     for candidate in candidates:
         cleaned = candidate
-        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|adjudicada|adjudicadas|adjudicado|adjudicados|ano|anual|cada|total|del|de|la|las|los)\b", " ", cleaned)
+        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|adjudicada|adjudicadas|adjudicado|adjudicados|ano|anual|cada|total|por|del|de|la|las|los)\b", " ", cleaned)
         cleaned = re.sub(r"\b20\d{2}\b", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
         if cleaned and len(cleaned) >= 2:
@@ -1219,6 +1238,11 @@ def _detect_fields(
     if module == "estudios" and per_year:
         generic_yearly_keys = {"importeContratado", "produccion", "produccionPrevio"}
         fields = [field for field in fields if field not in generic_yearly_keys]
+    elif module == "estudios":
+        if any(re.fullmatch(r"produccion20\d{2}", field) for field in fields):
+            fields = [field for field in fields if field != "produccion"]
+        if any(re.fullmatch(r"importeContratado20\d{2}", field) for field in fields):
+            fields = [field for field in fields if field != "importeContratado"]
 
     if not fields and re.search(r"\bcual es la obra\b|\bque obra\b|\bnombre de la obra\b|\bnombre obra\b", text):
         fields.append("obra" if module == "estudios" else "nombreObra")
@@ -1332,6 +1356,8 @@ def _build_produccion_result(detail: Dict[str, Any], parsed: Dict[str, Any]) -> 
         value = _extract_produccion_value(detail, key)
         if key == "periodosMensuales" and parsed.get("per_month"):
             value = detail.get("PeriodosMensuales") or []
+        elif key in PRODUCTION_MONTH_FIELDS.values() and value is None:
+            value = _extract_periodo_month_value(detail, parsed)
         fields.append({"key": key, "value": value})
 
     return {
@@ -1342,6 +1368,20 @@ def _build_produccion_result(detail: Dict[str, Any], parsed: Dict[str, Any]) -> 
         },
         "fields": fields,
     }
+
+
+def _extract_periodo_month_value(detail: Dict[str, Any], parsed: Dict[str, Any]) -> Any:
+    requested_month = parsed.get("month")
+    requested_year = parsed.get("year")
+    if not requested_month:
+        return None
+    for periodo in detail.get("PeriodosMensuales") or []:
+        if int(periodo.get("Mes") or 0) != int(requested_month):
+            continue
+        if requested_year and int(periodo.get("Anio") or 0) != int(requested_year):
+            continue
+        return periodo.get("Importe")
+    return None
 
 
 def _extract_estudios_value(detail: Dict[str, Any], key: str, parsed: Dict[str, Any]) -> Any:
@@ -1468,6 +1508,12 @@ def _extract_produccion_value(detail: Dict[str, Any], key: str) -> Any:
 
 def _match_cierre_fields(cierre: Dict[str, Any], parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
     normalized_question = _normalize(parsed.get("question") or " ".join(parsed.get("fields") or []))
+    exact_fields = _extract_exact_cierre_fields(normalized_question)
+    if exact_fields:
+        exact_values = _collect_exact_cierre_values(cierre, exact_fields)
+        if exact_values:
+            return exact_values
+
     tokens = [
         token
         for token in re.split(r"\s+", normalized_question)
@@ -1510,6 +1556,34 @@ def _match_cierre_fields(cierre: Dict[str, Any], parsed: Dict[str, Any]) -> List
         seen.add(marker)
         deduped.append({"label": item["label"], "value": item["value"]})
     return deduped[:6]
+
+
+def _extract_exact_cierre_fields(normalized_question: str) -> List[str]:
+    fields = []
+    for label, field in CLOSURE_FIELD_HINTS.items():
+        if label in normalized_question:
+            fields.append(field)
+    return _dedupe(fields)
+
+
+def _collect_exact_cierre_values(cierre: Dict[str, Any], exact_fields: List[str]) -> List[Dict[str, Any]]:
+    values_by_label: Dict[str, Any] = {}
+    for item in cierre.get("ValoresNormalizados") or []:
+        label = str(item.get("Campo") or "").strip()
+        value = item.get("Valor")
+        if label and value not in (None, "") and not label.startswith("__"):
+            values_by_label[label] = value
+    for key, value in (cierre.get("Valores") or {}).items():
+        label = str(key)
+        if label and value not in (None, "") and not label.startswith("__"):
+            values_by_label.setdefault(label, value)
+
+    wanted = {_normalize(field).replace(" ", "") for field in exact_fields}
+    matches = []
+    for label, value in values_by_label.items():
+        if _normalize(label).replace(" ", "") in wanted:
+            matches.append({"label": label, "value": value})
+    return matches
 
 
 def _summarize_cierre(cierre: Dict[str, Any]) -> str | None:
