@@ -4,7 +4,8 @@
     "alta_tension": {
       "trigger_terms": [
         "alta tension", "itc-lat", "lineas electricas de alta",
-        "linea de at", "lineas de at", "instalacion at", "instalaciones at"
+        "linea de at", "lineas de at", "instalacion at", "instalaciones at",
+        "avance del sector electrico"
       ],
       "trigger_regex": ["\\blat\\b"],
       "source_tokens": ["itc-lat", "lat", "a16436", "a16554", "alta_tension", "alta-tension"],
@@ -18,6 +19,10 @@
         {
           "if_contains": ["lineas electricas", "alta tension"],
           "emit": ["Reglamento sobre condiciones técnicas y garantías de seguridad", "instrucciones técnicas complementarias ITC-LAT"]
+        },
+        {
+          "if_contains": ["sector electrico", "procedimientos"],
+          "emit": ["sector eléctrico", "adaptar todos los procedimientos", "agentes intervinientes"]
         }
       ],
       "scoring": {}
@@ -36,7 +41,7 @@
     "baja_tension": {
       "trigger_terms": [
         "rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico",
-        "electrificacion basica", "electrificacion elevada", "circuitos minimos", "itc-bt-25"
+        "electrificacion basica", "electrificacion elevada", "circuitos minimos", "circuito c1", "itc-bt-25"
       ],
       "trigger_regex": [],
       "source_tokens": ["rebt", "itc-bt", "baja_tension", "baja-tension", "boe-326"],
@@ -50,6 +55,10 @@
         {
           "if_contains": ["electrificacion basica", "c1"],
           "emit": ["C1 Iluminación", "Tabla 1. Características eléctricas de los circuitos"]
+        },
+        {
+          "if_contains": ["c1", "iluminacion"],
+          "emit": ["C Iluminación", "Interruptor automático – A: 10", "Tabla 1. Características eléctricas de los circuitos"]
         },
         {
           "if_contains": ["electrificacion elevada"],
@@ -117,6 +126,10 @@
         {
           "if_contains": ["cajas de campo"],
           "emit": ["cajas de campo", "riesgo eléctrico", "desconectadas y sin tensión"]
+        },
+        {
+          "if_contains": ["aviso de alarmas"],
+          "emit": ["Comprobación del sistema de aviso de alarmas", "mensaje", "de prueba"]
         }
       ],
       "scoring": {}
@@ -153,6 +166,14 @@
         {
           "if_contains": ["rated frequency"],
           "emit": ["declared frequency rated frequency", "frequency at which the generating set is designed to operate"]
+        },
+        {
+          "if_contains": ["iso 8528-2", "table 1"],
+          "emit": ["ISO 8528-2:2005, Table 1", "below maximum safety frequency"]
+        },
+        {
+          "if_contains": ["iso 8528-2", "tabla"],
+          "emit": ["ISO 8528-2:2005, Table 1", "below maximum safety frequency"]
         }
       ],
       "scoring": {}

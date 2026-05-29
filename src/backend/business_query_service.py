@@ -589,6 +589,7 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
             "sources": [{"source": "AppRegenera SQL", "module": module}],
             "is_zero_value": True,
         }
+    top_rows = [row for row in top_rows if (parse_decimal(row.get("Valor")) or 0.0) != 0.0]
 
     if len(top_rows) == 1:
         row = top_rows[0]
@@ -1072,9 +1073,15 @@ def _extract_periodo(text: str) -> str | None:
 
 
 def _extract_area(text: str) -> str | None:
-    for candidate in ("oi", "o&i", "man", "mt", "bt"):
-        if candidate in text:
-            return candidate.upper()
+    area_patterns = {
+        "OI": (r"\bo\s*i\b", r"\boi\b"),
+        "MAN": (r"\bman\b",),
+        "MT": (r"\bmt\b",),
+        "BT": (r"\bbt\b",),
+    }
+    for area, patterns in area_patterns.items():
+        if any(re.search(pattern, text) for pattern in patterns):
+            return area
     return None
 
 
@@ -1184,7 +1191,8 @@ def _detect_fields(
         else:
             fields.append("importeContratado")
 
-    if "produccion" in text and "backlog" not in text:
+    production_metric_text = _strip_produccion_scope_mentions(text) if module == "produccion" else text
+    if "produccion" in production_metric_text and "backlog" not in text:
         if module == "estudios":
             if year in {2026, 2027, 2028, 2029} and not cuatrimestre and not month:
                 fields.append(f"produccion{year}")
@@ -1257,6 +1265,12 @@ def _detect_fields(
 
 def _monthly_field_keys() -> List[str]:
     return [PRODUCTION_MONTH_FIELDS[index] for index in range(1, 13)]
+
+
+def _strip_produccion_scope_mentions(text: str) -> str:
+    cleaned = re.sub(r"\b(?:en|de|del)\s+produccion\b", " ", text)
+    cleaned = re.sub(r"\bproduccion\s+(?:para|del|de la|de los|de las)\b", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _dedupe(values: List[str]) -> List[str]:
@@ -1513,6 +1527,7 @@ def _match_cierre_fields(cierre: Dict[str, Any], parsed: Dict[str, Any]) -> List
         exact_values = _collect_exact_cierre_values(cierre, exact_fields)
         if exact_values:
             return exact_values
+        return [{"label": field, "value": None} for field in exact_fields]
 
     tokens = [
         token

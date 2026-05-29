@@ -262,6 +262,19 @@ class BusinessQueryServiceTests(unittest.TestCase):
 
         self.assertEqual(parsed["aggregate"]["metric"], "importecontratado")
 
+    def test_produccion_scope_word_does_not_add_monthly_field_noise(self):
+        parsed = business._parse_question(
+            "Que cliente, estado e importe contratado tiene la obra 24036 en produccion",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(
+            parsed["fields"],
+            ["importeContratado", "licitacionCliente", "licitacionEstado"],
+        )
+        self.assertNotIn("periodosMensuales", parsed["fields"])
+
     def test_specific_produccion_month_uses_periodos_when_column_is_empty(self):
         parsed = business._parse_question(
             "Cual es la produccion de mayo de la obra 24036 en 2025",
@@ -295,11 +308,25 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["fields"], ["tipoObra"])
 
     def test_est_reference_with_produccion_field_stays_in_estudios(self):
-        result = business._answer_business_question_sql(
-            "Cual es la produccion 2027 de EST-188-2025",
-            preferred_route="business_licitaciones",
-            history=[],
-        )
+        with patch.object(
+            business,
+            "sql_search_licitaciones",
+            return_value=[{"Id": "1", "NumeroProyecto": "26013", "NumeroOferta": "EST-188-2025", "Obra": "OPS"}],
+        ), patch.object(
+            business,
+            "sql_get_licitacion_detail",
+            return_value={
+                "NumeroProyecto": "26013",
+                "NumeroOferta": "EST-188-2025",
+                "Obra": "OPS",
+                "Produccion2027": 4311998.0,
+            },
+        ):
+            result = business._answer_business_question_sql(
+                "Cual es la produccion 2027 de EST-188-2025",
+                preferred_route="business_licitaciones",
+                history=[],
+            )
 
         self.assertEqual(result["route"], "business_licitaciones")
         self.assertEqual(result["trace"]["module"], "estudios")
@@ -319,6 +346,48 @@ class BusinessQueryServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(matches, [{"label": "produccionMes", "value": "10.00"}])
+
+    def test_cierre_exact_missing_field_returns_no_data_for_requested_field(self):
+        matches = business._match_cierre_fields(
+            {
+                "Valores": {
+                    "presupuestoTotal": "1293951.90",
+                    "costesMes": "0.00",
+                },
+                "ValoresNormalizados": [],
+            },
+            {"question": "Cual es el presupuesto vigente del cierre de la obra 26072"},
+        )
+
+        self.assertEqual(matches, [{"label": "presupuestoVigente", "value": None}])
+
+    def test_cierre_area_detection_does_not_match_suman(self):
+        parsed = business._parse_question(
+            "Cuanto suman los costes mes de cierre",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertIsNone(parsed["aggregate"]["area"])
+
+    def test_top_aggregate_omits_zero_padding_rows(self):
+        with patch.object(
+            business,
+            "sql_query_licitaciones_aggregate",
+            return_value=[
+                {"NumeroProyecto": "25002", "Obra": "A", "Valor": 34738.9},
+                {"NumeroProyecto": "24009", "Obra": "B", "Valor": 9500.0},
+                {"NumeroProyecto": "00000", "Obra": "Cero", "Valor": 0.0},
+            ],
+        ):
+            result = business._answer_business_question_sql(
+                "Dime el top 5 de licitaciones por importe contratado 2027",
+                preferred_route="business_licitaciones",
+                history=[],
+            )
+
+        self.assertIn("Top 2 por importe contratado 2027", result["response"])
+        self.assertNotIn("00000", result["response"])
 
     def test_auth_required_response_is_traced(self):
         with patch.object(business, "APPREGENERA_DEV_BYPASS_KEY", ""):
