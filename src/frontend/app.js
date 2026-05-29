@@ -518,6 +518,44 @@ function setLoadingState(active, message = "Cargando...") {
     }
 }
 
+function performanceNow() {
+    return window.performance?.now ? window.performance.now() : Date.now();
+}
+
+function logPerformance(label, startTime) {
+    const elapsedMs = Math.round(performanceNow() - startTime);
+    console.info(`[PERF] ${label}: ${elapsedMs}ms`);
+    return elapsedMs;
+}
+
+function setConversationListLoading(active, message = "Cargando conversaciones...") {
+    const status = document.getElementById("conversation-list-status");
+    const label = document.getElementById("conversation-list-status-text");
+    const list = document.getElementById("conversation-list");
+    if (!status || !label) return;
+
+    label.textContent = message;
+    status.classList.toggle("hidden", !active);
+    status.setAttribute("aria-hidden", active ? "false" : "true");
+    if (list) {
+        list.setAttribute("aria-busy", active ? "true" : "false");
+    }
+}
+
+function setChatLoadStatus(active, message = "Cargando...") {
+    const status = document.getElementById("chat-load-status");
+    const label = document.getElementById("chat-load-status-text");
+    const chatMain = document.querySelector(".chat-main");
+    if (!status || !label) return;
+
+    label.textContent = message;
+    status.classList.toggle("hidden", !active);
+    status.setAttribute("aria-hidden", active ? "false" : "true");
+    if (chatMain) {
+        chatMain.classList.toggle("chat-loading", active);
+    }
+}
+
 function openConfirmModal(message, options = {}) {
     const modal = document.getElementById("confirm-modal");
     const messageNode = document.getElementById("confirm-modal-message");
@@ -642,6 +680,8 @@ async function login() {
 
 function showModeSelector() {
     activeChatMode = null;
+    setConversationListLoading(false);
+    setChatLoadStatus(false);
     saveSession();
     showView("selector");
 }
@@ -660,17 +700,21 @@ function askSuggestionFromChip(index) {
 
 async function enterChatMode(mode) {
     if (!currentUser) return;
+    const startTime = performanceNow();
     activeChatMode = normalizeChatMode(mode) || "technical";
     updateModeCopy();
     showView("chat");
     updateAdminVisibility();
     saveSession();
-    setLoadingState(true, activeChatMode === "business" ? "Abriendo chatbot de negocio..." : "Abriendo chatbot tecnico...");
+    const modeLabel = activeChatMode === "business" ? "chatbot de negocio" : "chatbot tecnico";
+    setConversationListLoading(true, `Cargando ${modeLabel}...`);
+    setChatLoadStatus(true, `Cargando ${modeLabel}...`);
     try {
-        const loadPromise = loadConversations();
-        await Promise.race([loadPromise, wait(250)]);
+        await loadConversations();
     } finally {
-        setLoadingState(false);
+        setConversationListLoading(false);
+        setChatLoadStatus(false);
+        logPerformance(`enterChatMode:${activeChatMode}`, startTime);
     }
 }
 
@@ -878,6 +922,8 @@ function logout() {
 async function createConversation(reloadList = true) {
     if (!currentUser || !activeChatMode || isSending) return;
 
+    const startTime = performanceNow();
+    setChatLoadStatus(true, "Creando conversacion...");
     try {
         const config = getActiveChatModeConfig();
         const res = await fetch(`${API}/conversations`, {
@@ -900,6 +946,9 @@ async function createConversation(reloadList = true) {
         }
     } catch (err) {
         console.error("Error creating conversation:", err);
+    } finally {
+        setChatLoadStatus(false);
+        logPerformance("createConversation", startTime);
     }
 }
 
@@ -911,6 +960,8 @@ async function loadConversations() {
     }
 
     conversationsLoadPromise = (async () => {
+        const startTime = performanceNow();
+        setConversationListLoading(true, "Actualizando conversaciones...");
         try {
         const res = await fetch(`${API}/conversations/${currentUser.id}`, {
             headers: getUserHeaders(),
@@ -948,19 +999,17 @@ async function loadConversations() {
             const preferredId = currentConversation || rememberedId;
             const preferredConversation = conversations.find((conv) => conv.id === preferredId);
             if (preferredConversation) {
-                selectConversation(preferredConversation.id, { preferCached: true }).catch((err) => {
-                    console.error("Error selecting preferred conversation:", err);
-                });
+                await selectConversation(preferredConversation.id, { preferCached: true });
             } else {
                 const first = conversations[0];
-                selectConversation(first.id, { preferCached: true }).catch((err) => {
-                    console.error("Error selecting first conversation:", err);
-                });
+                await selectConversation(first.id, { preferCached: true });
             }
         }
         } catch (err) {
             console.error("Error loading conversations:", err);
         } finally {
+            setConversationListLoading(false);
+            logPerformance(`loadConversations:${activeChatMode}`, startTime);
             conversationsLoadPromise = null;
         }
     })();
@@ -971,18 +1020,21 @@ async function loadConversations() {
 async function selectConversation(id, options = {}) {
     if (isSending) return;
     const preferCached = options.preferCached === true;
+    const startTime = performanceNow();
     const requestId = ++activeConversationRequest;
     currentConversation = id;
     saveSession();
 
     document.querySelectorAll(".conversation-item").forEach((item) => {
         item.classList.toggle("active", item.dataset.conversationId === String(id));
+        item.classList.toggle("loading", item.dataset.conversationId === String(id));
     });
 
     if (preferCached && conversationMessagesCache.has(id)) {
         renderConversationMessages(conversationMessagesCache.get(id));
     }
 
+    setChatLoadStatus(true, preferCached && conversationMessagesCache.has(id) ? "Actualizando conversacion..." : "Cargando conversacion...");
     try {
         const res = await fetch(`${API}/conversations/${id}/messages`, {
             headers: getUserHeaders(),
@@ -1006,6 +1058,14 @@ async function selectConversation(id, options = {}) {
         if (!preferCached) {
             showWelcomeState();
         }
+    } finally {
+        document.querySelectorAll(".conversation-item").forEach((item) => {
+            item.classList.remove("loading");
+        });
+        if (requestId === activeConversationRequest && currentConversation === id) {
+            setChatLoadStatus(false);
+        }
+        logPerformance(`selectConversation:${id}`, startTime);
     }
 }
 
@@ -1206,6 +1266,7 @@ async function sendMessage() {
     const input = document.getElementById("question-input");
     const question = input.value.trim();
     if (!question || !currentConversation) return;
+    const startTime = performanceNow();
     const conversationId = currentConversation;
 
     setSendingState(true);
@@ -1281,6 +1342,7 @@ async function sendMessage() {
         clearPendingMessage();
     } finally {
         setSendingState(false);
+        logPerformance(`sendMessage:${activeChatMode || "unknown"}`, startTime);
     }
 }
 

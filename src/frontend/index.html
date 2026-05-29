@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>REGENERA</title>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <link rel="stylesheet" href="styles.css?v=18">
+    <link rel="stylesheet" href="styles.css?v=19">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -194,6 +194,10 @@
                 <span>Nueva conversación</span>
             </button>
             <div id="conversation-list" class="conversation-list"></div>
+            <div id="conversation-list-status" class="conversation-list-status hidden" role="status" aria-live="polite">
+                <span class="mini-spinner" aria-hidden="true"></span>
+                <span id="conversation-list-status-text">Cargando conversaciones...</span>
+            </div>
             <div class="sidebar-footer">
                 <div class="user-info">
                     <div class="user-avatar" id="user-avatar">A</div>
@@ -218,6 +222,10 @@
                     <span>Selector</span>
                 </button>
                 <span id="mobile-mode-label" class="mobile-mode-label">Chatbot reglamento técnico</span>
+            </div>
+            <div id="chat-load-status" class="chat-load-status hidden" role="status" aria-live="polite">
+                <span class="mini-spinner" aria-hidden="true"></span>
+                <span id="chat-load-status-text">Cargando...</span>
             </div>
             <!-- Welcome state -->
             <div id="chat-welcome" class="chat-welcome">
