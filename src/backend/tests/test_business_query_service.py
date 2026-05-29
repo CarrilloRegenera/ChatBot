@@ -157,6 +157,21 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["aggregate"]["metric"], "importecontratado")
         self.assertEqual(parsed["aggregate"]["scope"], "backlog")
         self.assertEqual(parsed["aggregate"]["top_n"], 10)
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
+    def test_latest_average_importe_for_adjudicated_licitaciones_is_structured(self):
+        parsed = business._parse_question(
+            "Cual es el importe contratado medio de las ultimas 10 liictaciones que estan adjudicadas",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "avg")
+        self.assertEqual(parsed["aggregate"]["metric"], "importecontratado")
+        self.assertEqual(parsed["aggregate"]["scope"], "backlog")
+        self.assertEqual(parsed["aggregate"]["top_n"], 10)
+        self.assertEqual(parsed["aggregate"]["order"], "latest")
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
 
     def test_schema_synonyms_parse_average_for_won_licitaciones(self):
         parsed = business._parse_question(
@@ -183,6 +198,19 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["aggregate"]["top_n"], 5)
         self.assertIsNone(parsed["aggregate"]["filter_text"])
 
+    def test_latest_average_for_produccion_obras_is_structured(self):
+        parsed = business._parse_question(
+            "Cual es la media de cartera de las ultimas 5 obras en produccion",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "avg")
+        self.assertEqual(parsed["aggregate"]["metric"], "cartera2026")
+        self.assertEqual(parsed["aggregate"]["top_n"], 5)
+        self.assertEqual(parsed["aggregate"]["order"], "latest")
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
     def test_generic_average_words_do_not_become_free_text_filter(self):
         parsed = business._parse_question(
             "Cual es la media de presupuesto total de los 3 cierres",
@@ -192,6 +220,19 @@ class BusinessQueryServiceTests(unittest.TestCase):
 
         self.assertEqual(parsed["aggregate"]["kind"], "avg")
         self.assertEqual(parsed["aggregate"]["metric"], "cierre:presupuestoTotal")
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
+    def test_latest_average_for_cierres_is_structured(self):
+        parsed = business._parse_question(
+            "Cual es la media de presupuesto total de los ultimos 3 cierres",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "avg")
+        self.assertEqual(parsed["aggregate"]["metric"], "cierre:presupuestoTotal")
+        self.assertEqual(parsed["aggregate"]["top_n"], 3)
+        self.assertEqual(parsed["aggregate"]["order"], "latest")
         self.assertIsNone(parsed["aggregate"]["filter_text"])
 
     def test_pipeline_per_year_uses_yearly_aggregate_sql(self):
@@ -249,6 +290,7 @@ class BusinessQueryServiceTests(unittest.TestCase):
             year=2027,
             scope=None,
             free_text=None,
+            order=None,
         )
         self.assertEqual(result["route"], "business_licitaciones")
         self.assertIn("Total de importe contratado 2027 (2027): 1.234,50.", result["response"])
@@ -273,11 +315,70 @@ class BusinessQueryServiceTests(unittest.TestCase):
             year=None,
             scope="backlog",
             free_text=None,
+            order=None,
         )
         self.assertIn(
             "Media de importe contratado de las 10 con mayor importe contratado en backlog: 4.567,89.",
             result["response"],
         )
+
+    def test_latest_average_sql_uses_latest_order_without_free_text_filter(self):
+        with patch.object(business, "sql_query_licitaciones_aggregate", return_value=[{"Valor": 9876.54}]) as query:
+            result = business._answer_business_question_sql(
+                "Cual es el importe contratado medio de las ultimas 10 liictaciones que estan adjudicadas",
+                preferred_route="business_licitaciones",
+                history=[],
+            )
+
+        query.assert_called_once_with(
+            select_field="importecontratado",
+            agg="avg",
+            top=10,
+            year=None,
+            scope="backlog",
+            free_text=None,
+            order="latest",
+        )
+        self.assertIn(
+            "Media de importe contratado de las ultimas 10 en backlog: 9.876,54.",
+            result["response"],
+        )
+
+    def test_latest_average_sql_for_produccion_uses_latest_order(self):
+        with patch.object(business, "sql_query_produccion_aggregate", return_value=[{"Valor": 3456.78}]) as query:
+            result = business._answer_business_question_sql(
+                "Cual es la media de cartera de las ultimas 5 obras en produccion",
+                preferred_route="business_produccion",
+                history=[],
+            )
+
+        query.assert_called_once_with(
+            select_field="cartera2026",
+            agg="avg",
+            top=5,
+            free_text=None,
+            order="latest",
+        )
+        self.assertIn("Media de cartera 2026 de las ultimas 5: 3.456,78.", result["response"])
+
+    def test_latest_average_sql_for_cierre_uses_latest_order(self):
+        with patch.object(business, "sql_query_cierre_aggregate", return_value=[{"Valor": 7654.32}]) as query:
+            result = business._answer_business_question_sql(
+                "Cual es la media de presupuesto total de los ultimos 3 cierres",
+                preferred_route="business_produccion",
+                history=[],
+            )
+
+        query.assert_called_once_with(
+            campo="presupuestoTotal",
+            agg="avg",
+            top=3,
+            periodo=None,
+            area=None,
+            free_text=None,
+            order="latest",
+        )
+        self.assertIn("Media de presupuesto total de las ultimas 3: 7.654,32.", result["response"])
 
     def test_licitacion_field_sql_uses_expected_yearly_columns(self):
         self.assertEqual(

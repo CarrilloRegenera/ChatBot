@@ -411,6 +411,8 @@ let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
 let adminActiveView = "deployments";
 let deploymentsLoading = false;
+let deploymentsPage = 1;
+const DEPLOYMENTS_PAGE_SIZE = 25;
 let confirmModalResolver = null;
 let loadingStateDepth = 0;
 const PENDING_MESSAGE_KEY = "chatbot_pending_message";
@@ -1445,6 +1447,7 @@ function openAdminPanel() {
         return;
     }
     document.getElementById("admin-panel").classList.remove("hidden");
+    deploymentsPage = 1;
     setAdminView("deployments");
     loadAdminPanel();
 }
@@ -1508,7 +1511,7 @@ function renderDeploymentsHistory(items) {
     const container = document.getElementById("deploy-history-list");
     if (!container) return;
     if (!items?.length) {
-        container.innerHTML = `<div class="deploy-history-empty">Todavia no hay despliegues registrados.</div>`;
+        container.innerHTML = `<div class="deploy-history-empty">No hay despliegues en esta pagina.</div>`;
         return;
     }
 
@@ -1546,27 +1549,75 @@ function renderDeploymentsHistory(items) {
     }).join("");
 }
 
-async function loadDeploymentsPanel() {
+function renderDeploymentsPagination(pageData = {}) {
+    const container = document.getElementById("deploy-history-pagination");
+    if (!container) return;
+    const page = Number(pageData.page || deploymentsPage || 1);
+    const pageSize = Number(pageData.page_size || DEPLOYMENTS_PAGE_SIZE);
+    const hasPrevious = Boolean(pageData.has_previous);
+    const hasNext = Boolean(pageData.has_next);
+    const start = ((page - 1) * pageSize) + 1;
+    const count = Array.isArray(pageData.deployments) ? pageData.deployments.length : 0;
+    const end = count ? start + count - 1 : 0;
+    const rangeText = count ? `${start}-${end}` : "0";
+
+    container.innerHTML = `
+        <div class="deploy-pagination-info">Pagina ${page} · registros ${rangeText}</div>
+        <div class="deploy-pagination-actions">
+            <button class="deploy-page-btn" type="button" onclick="goToDeploymentsPage(${page - 1})" ${hasPrevious && !deploymentsLoading ? "" : "disabled"}>Anterior</button>
+            <button class="deploy-page-btn" type="button" onclick="goToDeploymentsPage(${page + 1})" ${hasNext && !deploymentsLoading ? "" : "disabled"}>Siguiente</button>
+        </div>
+    `;
+}
+
+function goToDeploymentsPage(page) {
+    if (deploymentsLoading) return;
+    const targetPage = Math.max(1, Number(page || 1));
+    loadDeploymentsPanel(targetPage);
+}
+
+async function loadDeploymentsPanel(page = deploymentsPage) {
     const container = document.getElementById("deploy-history-list");
+    const targetPage = Math.max(1, Number(page || 1));
     if (container && !deploymentsLoading) {
-        container.innerHTML = `<div class="deploy-history-empty">Cargando historico de despliegues...</div>`;
+        container.innerHTML = `<div class="deploy-history-empty">Cargando pagina ${targetPage} del historico...</div>`;
     }
     deploymentsLoading = true;
+    renderDeploymentsPagination({
+        page: targetPage,
+        page_size: DEPLOYMENTS_PAGE_SIZE,
+        deployments: [],
+        has_previous: targetPage > 1,
+        has_next: false,
+    });
+    let loadedPageData = null;
     try {
-        const res = await fetch(`${API}/admin/deployments?limit=40`, { headers: getAdminHeaders() });
+        const res = await fetch(`${API}/admin/deployments?page=${targetPage}&page_size=${DEPLOYMENTS_PAGE_SIZE}`, { headers: getAdminHeaders() });
         if (!res.ok) {
             throw new Error("No se pudieron cargar los despliegues");
         }
         const data = await res.json();
+        deploymentsPage = Number(data.page || targetPage);
         renderDeploymentSettings(data.settings || {});
         renderDeploymentsHistory(data.deployments || []);
+        loadedPageData = data;
     } catch (err) {
         console.error("Error loading deployments panel:", err);
         if (container) {
             container.innerHTML = `<div class="deploy-history-empty">No se pudo cargar el historico de despliegues.</div>`;
         }
+        loadedPageData = {
+            page: targetPage,
+            page_size: DEPLOYMENTS_PAGE_SIZE,
+            deployments: [],
+            has_previous: targetPage > 1,
+            has_next: false,
+        };
     } finally {
         deploymentsLoading = false;
+        if (loadedPageData) {
+            renderDeploymentsPagination(loadedPageData);
+        }
     }
 }
 

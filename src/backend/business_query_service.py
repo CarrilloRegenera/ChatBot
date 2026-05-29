@@ -601,6 +601,7 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
             periodo=aggregate.get("periodo"),
             area=aggregate.get("area"),
             free_text=aggregate.get("filter_text"),
+            order=aggregate.get("order"),
         )
     elif module == "produccion":
         rows = sql_query_produccion_aggregate(
@@ -608,6 +609,7 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
             agg=aggregate_kind,
             top=aggregate.get("top_n", 1),
             free_text=aggregate.get("filter_text"),
+            order=aggregate.get("order"),
         )
     else:
         rows = sql_query_licitaciones_aggregate(
@@ -617,6 +619,7 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
             year=parsed.get("year"),
             scope=aggregate.get("scope"),
             free_text=aggregate.get("filter_text"),
+            order=aggregate.get("order"),
         )
     if not rows:
         return {
@@ -635,7 +638,13 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
         value = rows[0].get("Valor")
         scope_copy = f" en {scope_label}" if scope_label else ""
         filter_copy = f" para {filter_text}" if filter_text else ""
-        top_copy = f" de las {aggregate.get('top_n')} con mayor {label}" if aggregate_kind == "avg" and int(aggregate.get("top_n") or 1) > 1 else ""
+        top_copy = ""
+        if aggregate_kind == "avg" and int(aggregate.get("top_n") or 1) > 1:
+            top_copy = (
+                f" de las ultimas {aggregate.get('top_n')}"
+                if aggregate.get("order") == "latest"
+                else f" de las {aggregate.get('top_n')} con mayor {label}"
+            )
         numeric_value = parse_decimal(value) or 0.0
         aggregate_copy = "Media de" if aggregate_kind == "avg" else "Total de"
         return {
@@ -1077,11 +1086,12 @@ def _is_per_year_request(text: str) -> bool:
 
 def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str], year: int | None, reference: str | None) -> Dict[str, Any] | None:
     top_match = re.search(r"\btop\s+(\d+)\b", text)
-    count_match = re.search(r"\b(?:las|los|primeras|primeros)\s+(\d+)\b", text)
+    count_match = re.search(r"\b(?:las|los|primeras|primeros|ultimas|ultimos)\s+(\d+)\b", text)
     top_n = int((top_match or count_match).group(1)) if top_match or count_match else 1
     is_top = bool(top_match) or any(token in text for token in ("proyecto con mas", "proyecto con mayor", "obra con mas", "obra con mayor", "estudio con mas", "ranking", *_schema_aggregation_aliases("top")))
     is_avg = any(token in text for token in ("importe medio", "importe promedio", "media de ", "promedio de ", "valor medio", *_schema_aggregation_aliases("avg")))
     is_sum = any(token in text for token in ("cuanto ", "cuanta ", "cuantos ", "cuantas ", "total de ", "suma de ", *_schema_aggregation_aliases("sum")))
+    order = "latest" if any(token in text for token in ("ultimas", "ultimos", "recientes", "mas recientes")) else None
     has_specific_reference = bool(reference)
     asks_plural = any(token in text for token in ("proyectos", "obras", "estudios", "cierres"))
 
@@ -1108,6 +1118,7 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
         "filter_text": _extract_filter_text(question, text),
         "periodo": _extract_periodo(text),
         "area": _extract_area(text),
+        "order": order,
     }
 
 
@@ -1160,7 +1171,7 @@ def _extract_filter_text(original_question: str, normalized: str) -> str | None:
     cleaned_candidates: List[str] = []
     for candidate in candidates:
         cleaned = candidate
-        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|importe medio|importe promedio|importe|media|medio|promedio|valor|mayor|mayores|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|cierres|presupuesto|presupuestos|adjudicada|adjudicadas|adjudicado|adjudicados|ganada|ganadas|ganado|ganados|conseguida|conseguidas|contratada|contratadas|hemos|han|que|nos|en|ano|anual|cada|total|por|para|del|de|la|las|los)\b", " ", cleaned)
+        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|importe medio|importe promedio|importe|media|medio|promedio|valor|mayor|mayores|ultimas|ultimos|recientes|estan|esta|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|cierres|presupuesto|presupuestos|adjudicada|adjudicadas|adjudicado|adjudicados|ganada|ganadas|ganado|ganados|conseguida|conseguidas|contratada|contratadas|hemos|han|que|nos|en|ano|anual|cada|total|por|para|del|de|la|las|los)\b", " ", cleaned)
         cleaned = re.sub(r"\b20\d{2}\b", " ", cleaned)
         cleaned = re.sub(r"\b\d+\b", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
@@ -1797,7 +1808,8 @@ def _build_period_text(parsed: Dict[str, Any]) -> str:
 
 def _aggregate_label(metric: str, year: int | None) -> str:
     if metric.startswith("cierre:"):
-        return metric.split(":", 1)[1]
+        field = metric.split(":", 1)[1]
+        return next((label for label, value in CLOSURE_FIELD_HINTS.items() if value == field), field)
     if metric == "importecontratado":
         return f"importe contratado {year}" if year else "importe contratado"
     if metric == "importecontratadoprevio":

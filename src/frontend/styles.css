@@ -1501,6 +1501,43 @@ html, body {
     background: var(--green-subtle);
 }
 
+.deploy-history-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 4px 0;
+    color: var(--gray-500);
+    font-size: 13px;
+}
+
+.deploy-pagination-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.deploy-page-btn {
+    border: 1px solid var(--gray-300);
+    border-radius: 8px;
+    padding: 8px 12px;
+    background: var(--white);
+    color: var(--gray-700);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.deploy-page-btn:hover:not(:disabled) {
+    border-color: var(--green);
+    color: var(--green-dark);
+    background: var(--green-subtle);
+}
+
+.deploy-page-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .admin-metrics-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

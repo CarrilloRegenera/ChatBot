@@ -644,18 +644,14 @@ def admin_pending(request: Request, limit: int = 50):
 
 
 @router.get("/admin/deployments")
-def admin_list_deployments(request: Request, limit: int = 40):
+def admin_list_deployments(request: Request, page: int = 1, page_size: int = 25):
     _assert_admin(request)
-    Thread(
-        target=sync_recent_deployments,
-        kwargs={"limit": limit},
-        daemon=True,
-        name="deploy-history-sync",
-    ).start()
-    return {
-        "deployments": list_deployments(limit=limit),
-        "settings": get_notification_settings(),
-    }
+    current_page = max(1, int(page or 1))
+    size = max(1, min(int(page_size or 25), 50))
+    sync_recent_deployments(limit=size, page=current_page)
+    page_data = list_deployments(page=current_page, page_size=size)
+    page_data["settings"] = get_notification_settings()
+    return page_data
 
 
 @router.post("/admin/deployments/run")

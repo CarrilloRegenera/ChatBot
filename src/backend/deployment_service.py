@@ -554,12 +554,13 @@ def notify_run_if_needed(run_id: int) -> None:
     _maybe_notify(run)
 
 
-def sync_recent_deployments(limit: int | None = None) -> None:
+def sync_recent_deployments(limit: int | None = None, page: int = 1) -> None:
     per_page = max(10, min(limit or DEPLOYMENTS_HISTORY_LIMIT, 100))
+    page_number = max(1, int(page or 1))
     try:
         response = _github_request(
             "GET",
-            f"/repos/{GITHUB_REPOSITORY_OWNER}/{GITHUB_REPOSITORY_NAME}/actions/workflows/{GITHUB_DEPLOY_WORKFLOW}/runs?per_page={per_page}",
+            f"/repos/{GITHUB_REPOSITORY_OWNER}/{GITHUB_REPOSITORY_NAME}/actions/workflows/{GITHUB_DEPLOY_WORKFLOW}/runs?per_page={per_page}&page={page_number}",
         )
     except DeploymentConfigurationError:
         return
@@ -571,22 +572,31 @@ def sync_recent_deployments(limit: int | None = None) -> None:
         _upsert_run(_run_record_from_github(run))
 
 
-def list_deployments(limit: int | None = None) -> list[dict[str, Any]]:
-    max_rows = limit or DEPLOYMENTS_HISTORY_LIMIT
+def list_deployments(page: int = 1, page_size: int = 25) -> dict[str, Any]:
+    page_number = max(1, int(page or 1))
+    size = max(1, min(int(page_size or 25), 50))
+    offset = (page_number - 1) * size
+    fetch_size = size + 1
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            f"""
-            SELECT TOP ({max_rows})
+            """
+            SELECT
                 GitHubRunId, RunNumber, RunAttempt, WorkflowName, Branch, RequestedAction,
                 TriggerSource, TriggeredByEmail, TriggeredByName, Actor, Status, Conclusion,
                 HtmlUrl, LogsUrl, BackendUrl, FrontendUrl, StartedAt, CompletedAt, DurationSeconds, UpdatedAt
             FROM DeploymentRuns
             ORDER BY COALESCE(CompletedAt, StartedAt, UpdatedAt, CreatedAt) DESC, GitHubRunId DESC
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
             """
+            ,
+            offset,
+            fetch_size,
         )
         rows = cursor.fetchall()
 
+    has_next = len(rows) > size
+    rows = rows[:size]
     deployments = []
     for row in rows:
         deployments.append(
@@ -613,4 +623,10 @@ def list_deployments(limit: int | None = None) -> list[dict[str, Any]]:
                 "updated_at": _iso_datetime(row[19]),
             }
         )
-    return deployments
+    return {
+        "deployments": deployments,
+        "page": page_number,
+        "page_size": size,
+        "has_next": has_next,
+        "has_previous": page_number > 1,
+    }

@@ -174,6 +174,7 @@ def query_licitaciones_aggregate(
     year: int | None = None,
     scope: str | None = None,
     free_text: str | None = None,
+    order: str | None = None,
 ) -> List[Dict[str, Any]]:
     agg_sql = "AVG" if agg == "avg" else ("SUM" if agg == "sum" else "MAX")
     filters = []
@@ -202,6 +203,11 @@ def query_licitaciones_aggregate(
 
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
     field_sql = _resolve_licitacion_field_sql(select_field, year=year, scope=scope)
+    order_sql = (
+        "COALESCE(FechaAdjudicacion, UpdatedDate, CreatedDate) DESC, NumeroProyecto DESC, NumeroOferta DESC"
+        if order == "latest"
+        else f"{field_sql} DESC, NumeroProyecto, NumeroOferta"
+    )
 
     with appregenera_conn() as conn:
         cursor = conn.cursor()
@@ -211,7 +217,7 @@ def query_licitaciones_aggregate(
                 SELECT TOP (?) NumeroProyecto, NumeroOferta, Obra, Cliente, Estado, TipoObra, {field_sql} AS Valor
                 FROM dbo.Licitaciones
                 {where_clause}
-                ORDER BY {field_sql} DESC, NumeroProyecto, NumeroOferta
+                ORDER BY {order_sql}
                 """,
                 top,
                 *params,
@@ -226,7 +232,7 @@ def query_licitaciones_aggregate(
                     SELECT TOP (?) {field_sql} AS Valor
                     FROM dbo.Licitaciones
                     {avg_where_clause}
-                    ORDER BY {field_sql} DESC, NumeroProyecto, NumeroOferta
+                    ORDER BY {order_sql}
                 ) ranked
                 """,
                 top,
@@ -423,6 +429,7 @@ def query_produccion_aggregate(
     agg: str,
     top: int = 1,
     free_text: str | None = None,
+    order: str | None = None,
 ) -> List[Dict[str, Any]]:
     field_sql = _resolve_produccion_field_sql(select_field)
     filters = [f"{field_sql} IS NOT NULL"]
@@ -440,6 +447,11 @@ def query_produccion_aggregate(
         params.extend([like, like, like, like, like, like])
 
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    order_sql = (
+        "COALESCE(p.UpdatedDate, p.CreatedDate) DESC, p.CodigoObra DESC"
+        if order == "latest"
+        else f"{field_sql} DESC, p.CodigoObra"
+    )
     with appregenera_conn() as conn:
         cursor = conn.cursor()
         if agg == "top":
@@ -450,7 +462,7 @@ def query_produccion_aggregate(
                 FROM dbo.ProyectosProduccionSync p
                 LEFT JOIN dbo.Licitaciones l ON l.Id = p.LicitacionId
                 {where_clause}
-                ORDER BY {field_sql} DESC, p.CodigoObra
+                ORDER BY {order_sql}
                 """,
                 top,
                 *params,
@@ -466,7 +478,7 @@ def query_produccion_aggregate(
                     FROM dbo.ProyectosProduccionSync p
                     LEFT JOIN dbo.Licitaciones l ON l.Id = p.LicitacionId
                     {avg_where_clause}
-                    ORDER BY {field_sql} DESC, p.CodigoObra
+                    ORDER BY {order_sql}
                 ) ranked
                 """,
                 top,
@@ -534,6 +546,7 @@ def query_cierre_aggregate(
     periodo: str | None = None,
     area: str | None = None,
     free_text: str | None = None,
+    order: str | None = None,
 ) -> List[Dict[str, Any]]:
     campo_safe = "".join(ch for ch in (campo or "") if ch.isalnum() or ch == "_")
     if not campo_safe:
@@ -568,6 +581,11 @@ def query_cierre_aggregate(
         params.extend([like, like, like, like, like])
 
     where_clause = f"WHERE {' AND '.join(filters)}"
+    order_sql = (
+        "COALESCE(latest.Periodo, f.Periodo) DESC, f.UpdatedDate DESC, COALESCE(l.NumeroProyecto, f.Numero) DESC"
+        if order == "latest"
+        else f"{numeric_sql} DESC, COALESCE(l.NumeroProyecto, f.Numero), l.NumeroOferta"
+    )
     with appregenera_conn() as conn:
         cursor = conn.cursor()
         if agg == "top":
@@ -607,7 +625,7 @@ def query_cierre_aggregate(
                 LEFT JOIN dbo.Licitaciones l ON l.Id = COALESCE(latest.LicitacionId, f.LicitacionId)
                 {where_clause}
                   AND f.frn = 1
-                ORDER BY {numeric_sql} DESC, COALESCE(l.NumeroProyecto, f.Numero), l.NumeroOferta
+                ORDER BY {order_sql}
                 """,
                 top,
                 campo,
@@ -651,7 +669,7 @@ def query_cierre_aggregate(
                     {where_clause}
                       AND f.frn = 1
                       AND {numeric_sql} <> 0
-                    ORDER BY {numeric_sql} DESC, COALESCE(l.NumeroProyecto, f.Numero), l.NumeroOferta
+                    ORDER BY {order_sql}
                 ) ranked
                 """,
                 top,
