@@ -808,6 +808,15 @@ html, body {
     font-weight: 600;
 }
 
+.conversation-list.loading .conversation-item {
+    opacity: 0.56;
+    pointer-events: none;
+}
+
+.conversation-list.loading .conversation-delete-btn {
+    opacity: 0;
+}
+
 .sidebar-footer {
     padding: 16px;
     border-top: 1px solid rgba(255,255,255,0.08);
@@ -865,26 +874,6 @@ html, body {
     flex-direction: column;
     background: var(--white);
     position: relative;
-}
-
-.chat-load-status {
-    position: absolute;
-    top: 16px;
-    left: 50%;
-    z-index: 20;
-    transform: translateX(-50%);
-    min-height: 36px;
-    padding: 8px 14px;
-    border-radius: 999px;
-    border: 1px solid rgba(141, 179, 62, 0.2);
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
-    color: var(--gray-700);
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    font-size: 13px;
-    font-weight: 700;
 }
 
 .mini-spinner {
@@ -1950,12 +1939,6 @@ body.app-loading {
 }
 
 @media (max-width: 900px) {
-    .chat-load-status {
-        top: 72px;
-        max-width: calc(100vw - 32px);
-        white-space: nowrap;
-    }
-
     .admin-503-summary {
         grid-template-columns: 1fr;
     }

@@ -126,6 +126,28 @@ function isBackendWarmupResponse(res, bodyText = "") {
     );
 }
 
+async function waitForBackendReady(label, maxAttempts = 6) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (label) {
+            label.textContent = `Preparando servidor (${attempt}/${maxAttempts})...`;
+        }
+        try {
+            const res = await fetchWithTimeout(`${API}/health`, { method: "GET" }, 8000);
+            const body = await readResponseBody(res);
+            if (res.ok && !isBackendWarmupResponse(res, body.text)) {
+                return true;
+            }
+            lastError = new Error(body.data?.detail || body.text || "Servidor no disponible todavia");
+        } catch (err) {
+            lastError = err;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+    }
+    console.warn("El backend no confirmo health antes del login:", lastError);
+    return false;
+}
+
 async function getMsalClient() {
     if (!ENTRA_CONFIG.enabled) {
         throw new Error("Entra ID no está habilitado");
@@ -159,19 +181,21 @@ async function getMsalClient() {
 
 async function finalizeEntraSession(token) {
     const loadingLabel = document.getElementById("loading-overlay-message");
+    await waitForBackendReady(loadingLabel);
     if (loadingLabel) loadingLabel.textContent = "Completando acceso con Microsoft...";
     let res = null;
     let responseBody = { data: {}, text: "" };
     let lastError = null;
-    const maxAttempts = 4;
+    const maxAttempts = 5;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
+            if (loadingLabel) loadingLabel.textContent = `Completando acceso con Microsoft (${attempt}/${maxAttempts})...`;
             res = await fetchWithTimeout(`${API}/login/entra`, {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${token}`,
                 },
-            }, 60000);
+            }, 18000);
             responseBody = await readResponseBody(res);
             if (!isBackendWarmupResponse(res, responseBody.text) || attempt === maxAttempts) {
                 break;
@@ -578,20 +602,7 @@ function setConversationListLoading(active, message = "Cargando conversaciones..
     status.setAttribute("aria-hidden", active ? "false" : "true");
     if (list) {
         list.setAttribute("aria-busy", active ? "true" : "false");
-    }
-}
-
-function setChatLoadStatus(active, message = "Cargando...") {
-    const status = document.getElementById("chat-load-status");
-    const label = document.getElementById("chat-load-status-text");
-    const chatMain = document.querySelector(".chat-main");
-    if (!status || !label) return;
-
-    label.textContent = message;
-    status.classList.toggle("hidden", !active);
-    status.setAttribute("aria-hidden", active ? "false" : "true");
-    if (chatMain) {
-        chatMain.classList.toggle("chat-loading", active);
+        list.classList.toggle("loading", active);
     }
 }
 
@@ -725,7 +736,6 @@ async function login() {
 function showModeSelector() {
     activeChatMode = null;
     setConversationListLoading(false);
-    setChatLoadStatus(false);
     saveSession();
     showView("selector");
 }
@@ -752,13 +762,11 @@ async function enterChatMode(mode) {
     saveSession();
     const modeLabel = activeChatMode === "business" ? "chatbot de negocio" : "chatbot tecnico";
     setConversationListLoading(true, `Cargando ${modeLabel}...`);
-    setChatLoadStatus(true, `Cargando ${modeLabel}...`);
     try {
         conversationsLoadPromise = null;
         await loadConversations();
     } finally {
         setConversationListLoading(false);
-        setChatLoadStatus(false);
         logPerformance(`enterChatMode:${activeChatMode}`, startTime);
     }
 }
@@ -968,7 +976,7 @@ async function createConversation(reloadList = true) {
     if (!currentUser || !activeChatMode || isSending) return;
 
     const startTime = performanceNow();
-    setChatLoadStatus(true, "Creando conversacion...");
+    setConversationListLoading(true, "Creando conversacion...");
     try {
         const config = getActiveChatModeConfig();
         const res = await fetch(`${API}/conversations`, {
@@ -992,7 +1000,7 @@ async function createConversation(reloadList = true) {
     } catch (err) {
         console.error("Error creating conversation:", err);
     } finally {
-        setChatLoadStatus(false);
+        setConversationListLoading(false);
         logPerformance("createConversation", startTime);
     }
 }
@@ -1079,7 +1087,6 @@ async function selectConversation(id, options = {}) {
         renderConversationMessages(conversationMessagesCache.get(id));
     }
 
-    setChatLoadStatus(true, preferCached && conversationMessagesCache.has(id) ? "Actualizando conversacion..." : "Cargando conversacion...");
     try {
         const res = await fetch(`${API}/conversations/${id}/messages`, {
             headers: getUserHeaders(),
@@ -1107,9 +1114,6 @@ async function selectConversation(id, options = {}) {
         document.querySelectorAll(".conversation-item").forEach((item) => {
             item.classList.remove("loading");
         });
-        if (requestId === activeConversationRequest && currentConversation === id) {
-            setChatLoadStatus(false);
-        }
         logPerformance(`selectConversation:${id}`, startTime);
     }
 }
@@ -1132,7 +1136,6 @@ async function deleteConversation(conversationId, title) {
     activeConversationRequest += 1;
     conversationsLoadPromise = null;
     setConversationListLoading(true, "Eliminando conversacion...");
-    setChatLoadStatus(true, wasCurrent ? "Eliminando conversacion..." : "Actualizando conversaciones...");
 
     const item = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
     if (item) {
@@ -1172,7 +1175,6 @@ async function deleteConversation(conversationId, title) {
             element.removeAttribute("aria-busy");
         });
         setConversationListLoading(false);
-        setChatLoadStatus(false);
         logPerformance("deleteConversation", startTime);
     }
 }
@@ -2053,8 +2055,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         })
         .finally(() => {
-            setLoadingState(false);
-            return;
             try {
                 if (!currentUser && restoreSession()) {
                     setUserChrome();
