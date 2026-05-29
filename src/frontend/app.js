@@ -126,14 +126,14 @@ function isBackendWarmupResponse(res, bodyText = "") {
     );
 }
 
-async function waitForBackendReady(label, maxAttempts = 6) {
+async function waitForBackendReady(label, maxAttempts = 2) {
     let lastError = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         if (label) {
-            label.textContent = `Preparando servidor (${attempt}/${maxAttempts})...`;
+            label.textContent = "Conectando...";
         }
         try {
-            const res = await fetchWithTimeout(`${API}/health`, { method: "GET" }, 8000);
+            const res = await fetchWithTimeout(`${API}/health`, { method: "GET" }, 4000);
             const body = await readResponseBody(res);
             if (res.ok && !isBackendWarmupResponse(res, body.text)) {
                 return true;
@@ -142,7 +142,7 @@ async function waitForBackendReady(label, maxAttempts = 6) {
         } catch (err) {
             lastError = err;
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
     }
     console.warn("El backend no confirmo health antes del login:", lastError);
     return false;
@@ -182,20 +182,20 @@ async function getMsalClient() {
 async function finalizeEntraSession(token) {
     const loadingLabel = document.getElementById("loading-overlay-message");
     await waitForBackendReady(loadingLabel);
-    if (loadingLabel) loadingLabel.textContent = "Completando acceso con Microsoft...";
+    if (loadingLabel) loadingLabel.textContent = "Cargando acceso...";
     let res = null;
     let responseBody = { data: {}, text: "" };
     let lastError = null;
-    const maxAttempts = 5;
+    const maxAttempts = 4;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            if (loadingLabel) loadingLabel.textContent = `Completando acceso con Microsoft (${attempt}/${maxAttempts})...`;
+            if (loadingLabel) loadingLabel.textContent = attempt === 1 ? "Cargando acceso..." : "Conectando de nuevo...";
             res = await fetchWithTimeout(`${API}/login/entra`, {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${token}`,
                 },
-            }, 18000);
+            }, 12000);
             responseBody = await readResponseBody(res);
             if (!isBackendWarmupResponse(res, responseBody.text) || attempt === maxAttempts) {
                 break;
@@ -207,8 +207,8 @@ async function finalizeEntraSession(token) {
                 throw err;
             }
         }
-        if (loadingLabel) loadingLabel.textContent = `El servidor esta arrancando. Reintentando acceso (${attempt}/${maxAttempts})...`;
-        await new Promise((resolve) => window.setTimeout(resolve, 3500));
+        if (loadingLabel) loadingLabel.textContent = "Conectando de nuevo...";
+        await new Promise((resolve) => window.setTimeout(resolve, 1800));
     }
     if (!res) {
         throw lastError || new Error("No se pudo completar el login con Microsoft");
@@ -2046,7 +2046,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
     }
 
-    setLoadingState(true, "Preparando acceso...");
+    setLoadingState(true, "Conectando...");
     handleEntraRedirect()
         .catch((err) => {
             const loginError = document.getElementById("login-error");
