@@ -10,7 +10,6 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
-from database import ensure_app_schema, ping_database
 from config import ALLOWED_ORIGINS, CHATBOT_FRONTEND_URL, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
 from entra_auth import warm_entra_jwks
 from observability import RequestIdFilter, reset_request_id, set_request_id
@@ -76,14 +75,7 @@ def startup_init():
 
 def _startup_background_init():
     logger = logging.getLogger(__name__)
-    try:
-        ensure_app_schema()
-        ping_database()
-        app.state.database_ready = True
-    except Exception:
-        app.state.database_ready = False
-        app.state.startup_error = "database"
-        logger.exception("No se pudo validar la base de datos en startup; la API arranca de todos modos")
+    app.state.database_ready = False
     try:
         warm_entra_jwks()
     except Exception:
@@ -115,7 +107,7 @@ def root():
 def health():
     return {
         "status": "ok",
-        "database": "ready" if bool(getattr(app.state, "database_ready", False)) else "unknown",
+        "database": "deferred",
         "runtime_ready": bool(getattr(app.state, "runtime_ready", False)),
         "startup_error": getattr(app.state, "startup_error", ""),
     }
