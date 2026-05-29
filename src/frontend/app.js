@@ -95,6 +95,37 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
     }
 }
 
+async function readResponseBody(res) {
+    const contentType = (res.headers.get("content-type") || "").toLowerCase();
+    const rawText = await res.text();
+    if (!rawText) {
+        return { data: {}, text: "" };
+    }
+    if (contentType.includes("application/json")) {
+        try {
+            return { data: JSON.parse(rawText), text: rawText };
+        } catch {
+            return { data: {}, text: rawText };
+        }
+    }
+    try {
+        return { data: JSON.parse(rawText), text: rawText };
+    } catch {
+        return { data: {}, text: rawText };
+    }
+}
+
+function isBackendWarmupResponse(res, bodyText = "") {
+    const text = String(bodyText || "").toLowerCase();
+    return (
+        res.status >= 500 ||
+        text.includes("backend call failure") ||
+        text.includes("service unavailable") ||
+        text.includes("upstream") ||
+        text.includes("temporarily unavailable")
+    );
+}
+
 async function getMsalClient() {
     if (!ENTRA_CONFIG.enabled) {
         throw new Error("Entra ID no está habilitado");
@@ -130,8 +161,10 @@ async function finalizeEntraSession(token) {
     const loadingLabel = document.getElementById("loading-overlay-message");
     if (loadingLabel) loadingLabel.textContent = "Completando acceso con Microsoft...";
     let res = null;
+    let responseBody = { data: {}, text: "" };
     let lastError = null;
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    const maxAttempts = 4;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             res = await fetchWithTimeout(`${API}/login/entra`, {
                 method: "POST",
@@ -139,26 +172,31 @@ async function finalizeEntraSession(token) {
                     "Authorization": `Bearer ${token}`,
                 },
             }, 60000);
-            if (res.status < 500 || attempt === 2) {
+            responseBody = await readResponseBody(res);
+            if (!isBackendWarmupResponse(res, responseBody.text) || attempt === maxAttempts) {
                 break;
             }
             lastError = new Error("El backend aun esta arrancando.");
         } catch (err) {
             lastError = err;
-            if (attempt === 2) {
+            if (attempt === maxAttempts) {
                 throw err;
             }
         }
-        if (loadingLabel) loadingLabel.textContent = "El servidor esta arrancando. Reintentando acceso...";
-        await new Promise((resolve) => window.setTimeout(resolve, 3000));
+        if (loadingLabel) loadingLabel.textContent = `El servidor esta arrancando. Reintentando acceso (${attempt}/${maxAttempts})...`;
+        await new Promise((resolve) => window.setTimeout(resolve, 3500));
     }
     if (!res) {
         throw lastError || new Error("No se pudo completar el login con Microsoft");
     }
 
-    const data = await res.json();
+    const data = responseBody.data || {};
     if (!res.ok) {
-        throw new Error(data?.detail || "No se pudo completar el login con Microsoft");
+        const plainText = String(responseBody.text || "").trim();
+        const warmupMessage = isBackendWarmupResponse(res, plainText)
+            ? "El servidor sigue arrancando. Espera unos segundos y vuelve a intentarlo."
+            : "No se pudo completar el login con Microsoft";
+        throw new Error(data?.detail || (plainText && plainText !== "Backend call failure" ? plainText : warmupMessage));
     }
 
     currentUser = {
@@ -343,6 +381,7 @@ let activeChatMode = null;
 let isSending = false;
 let activeConversationRequest = 0;
 let conversationsLoadPromise = null;
+let deletingConversationId = null;
 const conversationMessagesCache = new Map();
 let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
@@ -612,6 +651,10 @@ function renderConversationItem(conv) {
     const item = document.createElement("div");
     item.className = "conversation-item" + (conv.id === currentConversation ? " active" : "");
     item.dataset.conversationId = String(conv.id);
+    if (conv.id === deletingConversationId) {
+        item.classList.add("deleting", "disabled");
+        item.setAttribute("aria-busy", "true");
+    }
 
     const title = document.createElement("span");
     title.className = "conversation-title";
@@ -623,16 +666,17 @@ function renderConversationItem(conv) {
     deleteBtn.title = "Borrar conversación";
     deleteBtn.setAttribute("aria-label", `Borrar conversación ${conv.title}`);
     deleteBtn.textContent = "x";
+    deleteBtn.disabled = conv.id === deletingConversationId;
     deleteBtn.onclick = (event) => {
         event.stopPropagation();
-        if (isSending) return;
+        if (isSending || deletingConversationId) return;
         deleteConversation(conv.id, conv.title);
     };
 
     item.appendChild(title);
     item.appendChild(deleteBtn);
     item.onclick = () => {
-        if (isSending) return;
+        if (isSending || deletingConversationId === conv.id) return;
         selectConversation(conv.id, { preferCached: true });
     };
     return item;
@@ -657,7 +701,7 @@ async function login() {
             body: JSON.stringify({ nombre, password }),
         }, 20000);
 
-        const data = await res.json();
+        const { data, text } = await readResponseBody(res);
 
         if (res.ok) {
             currentUser = data.usuario;
@@ -669,7 +713,7 @@ async function login() {
             updateAdminVisibility();
             showModeSelector();
         } else {
-            document.getElementById("login-error").textContent = data.detail;
+            document.getElementById("login-error").textContent = data.detail || (isBackendWarmupResponse(res, text) ? "El servidor esta arrancando. Intentalo de nuevo en unos segundos." : "No se pudo iniciar sesion.");
         }
     } catch {
         document.getElementById("login-error").textContent = "Error de conexión con el servidor.";
@@ -710,6 +754,7 @@ async function enterChatMode(mode) {
     setConversationListLoading(true, `Cargando ${modeLabel}...`);
     setChatLoadStatus(true, `Cargando ${modeLabel}...`);
     try {
+        conversationsLoadPromise = null;
         await loadConversations();
     } finally {
         setConversationListLoading(false);
@@ -1070,7 +1115,7 @@ async function selectConversation(id, options = {}) {
 }
 
 async function deleteConversation(conversationId, title) {
-    if (!currentUser || isSending) return;
+    if (!currentUser || isSending || deletingConversationId) return;
     const confirmed = await openConfirmModal(
         `¿Quieres borrar la conversación "${title}"? Esta acción no se puede deshacer.`,
         {
@@ -1080,6 +1125,20 @@ async function deleteConversation(conversationId, title) {
         },
     );
     if (!confirmed) return;
+
+    const startTime = performanceNow();
+    const wasCurrent = currentConversation === conversationId;
+    deletingConversationId = conversationId;
+    activeConversationRequest += 1;
+    conversationsLoadPromise = null;
+    setConversationListLoading(true, "Eliminando conversacion...");
+    setChatLoadStatus(true, wasCurrent ? "Eliminando conversacion..." : "Actualizando conversaciones...");
+
+    const item = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
+    if (item) {
+        item.classList.add("deleting", "disabled");
+        item.setAttribute("aria-busy", "true");
+    }
 
     try {
         const res = await fetch(`${API}/conversations/${conversationId}`, {
@@ -1091,21 +1150,30 @@ async function deleteConversation(conversationId, title) {
             throw new Error(data?.detail || "No se pudo borrar la conversación.");
         }
 
-        const wasCurrent = currentConversation === conversationId;
         clearConversationMode(conversationId);
         forgetConversationForMode(conversationId);
         conversationMessagesCache.delete(conversationId);
+        item?.remove();
         if (wasCurrent) {
             currentConversation = null;
-            activeConversationRequest += 1;
+            clearPendingMessage();
             document.getElementById("chat-messages").innerHTML = "";
             showWelcomeState();
             saveSession();
         }
-
+        conversationsLoadPromise = null;
         await loadConversations();
     } catch (err) {
         alert(err?.message || "No se pudo borrar la conversación.");
+    } finally {
+        deletingConversationId = null;
+        document.querySelectorAll(".conversation-item.deleting").forEach((element) => {
+            element.classList.remove("deleting", "disabled");
+            element.removeAttribute("aria-busy");
+        });
+        setConversationListLoading(false);
+        setChatLoadStatus(false);
+        logPerformance("deleteConversation", startTime);
     }
 }
 
