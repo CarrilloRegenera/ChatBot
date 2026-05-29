@@ -18,6 +18,7 @@ from deployment_service import (
     notify_run_if_needed,
     register_webhook_run,
     store_webhook_run,
+    sync_recent_deployments,
     trigger_full_deploy,
     update_notification_settings,
 )
@@ -645,6 +646,12 @@ def admin_pending(request: Request, limit: int = 50):
 @router.get("/admin/deployments")
 def admin_list_deployments(request: Request, limit: int = 40):
     _assert_admin(request)
+    Thread(
+        target=sync_recent_deployments,
+        kwargs={"limit": limit},
+        daemon=True,
+        name="deploy-history-sync",
+    ).start()
     return {
         "deployments": list_deployments(limit=limit),
         "settings": get_notification_settings(),
