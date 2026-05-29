@@ -1,6 +1,8 @@
 import logging
+import json
 import re
 import unicodedata
+from pathlib import Path
 from typing import Any, Dict, List
 
 from appregenera_client import AppRegeneraClientError, get_json, post_json
@@ -21,6 +23,52 @@ from config import APPREGENERA_DEV_BYPASS_KEY
 
 
 logger = logging.getLogger(__name__)
+
+
+def _load_business_schema() -> Dict[str, Any]:
+    schema_path = Path(__file__).with_name("business_schema.json")
+    try:
+        return json.loads(schema_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("No se pudo cargar business_schema.json: %s", exc)
+        return {}
+
+
+BUSINESS_SCHEMA = _load_business_schema()
+
+
+def _schema_module_hints(module: str) -> tuple[str, ...]:
+    return tuple(
+        _normalize_static(hint)
+        for hint in ((BUSINESS_SCHEMA.get("modules") or {}).get(module) or {}).get("route_hints", [])
+        if hint
+    )
+
+
+def _schema_scope_aliases(scope: str) -> tuple[str, ...]:
+    return tuple(
+        _normalize_static(alias)
+        for alias in ((BUSINESS_SCHEMA.get("scopes") or {}).get(scope) or {}).get("aliases", [])
+        if alias
+    )
+
+
+def _schema_field_synonyms(module: str, metric: str) -> tuple[str, ...]:
+    field = (BUSINESS_SCHEMA.get("fields") or {}).get(f"{module}.{metric}") or {}
+    return tuple(_normalize_static(alias) for alias in field.get("synonyms", []) if alias)
+
+
+def _schema_aggregation_aliases(kind: str) -> tuple[str, ...]:
+    aggregate = (BUSINESS_SCHEMA.get("aggregations") or {}).get(kind) or {}
+    return tuple(_normalize_static(alias) for alias in aggregate.get("aliases", []) if alias)
+
+
+def _normalize_static(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text or "")
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    normalized = normalized.lower().strip()
+    normalized = re.sub(r"[^\w\s/-]", " ", normalized)
+    return re.sub(r"\s+", " ", normalized)
 
 
 MONTH_ALIASES = {
@@ -246,6 +294,16 @@ def _normalize(text: str) -> str:
     normalized = normalized.lower().strip()
     normalized = re.sub(r"[^\w\s/-]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized)
+    typo_replacements = {
+        "imorte": "importe",
+        "impote": "importe",
+        "liictacion": "licitacion",
+        "liictaciones": "licitaciones",
+        "liciitacion": "licitacion",
+        "liciitaciones": "licitaciones",
+    }
+    typo_replacements.update({str(key): str(value) for key, value in (BUSINESS_SCHEMA.get("typos") or {}).items()})
+    normalized = " ".join(typo_replacements.get(token, token) for token in normalized.split())
     return normalized
 
 
@@ -367,11 +425,17 @@ def detect_business_route(question: str) -> str | None:
 
     if any(hint in text for hint in ("control de produccion", "cierre", "cartera", "rentabilidad", "produccion estimada", "produccion marzo", "produccion abril")):
         return "business_produccion"
-    if any(hint in text for hint in ("pipeline", "backlog", "licitacion", "licitaciones", "estudio", "oferta", "adjudicacion", "plan ")):
+    if any(hint in text for hint in _schema_module_hints("cierre")):
+        return "business_produccion"
+    if any(hint in text for hint in _schema_module_hints("produccion")):
+        return "business_produccion"
+    if any(hint in text for hint in ("pipeline", "backlog", "licitacion", "licitaciones", "estudio", "oferta", "adjudicacion", "adjudicado", "adjudicada", "adjudicados", "adjudicadas", "plan ")):
+        return "business_licitaciones"
+    if any(hint in text for hint in _schema_module_hints("estudios")):
         return "business_licitaciones"
     if any(hint in text for hint in ("cliente", "estado", "numero proyecto", "numero oferta", "tipo obra", "concurso")):
         return "business_licitaciones"
-    if any(hint in text for hint in ("importe contratado", "importe adjudicado", "probabilidad de adjudicacion", "situacion oferta", "periodo de ejecucion", "tipologia de obra")):
+    if any(hint in text for hint in ("importe medio", "importe promedio", "importe contratado", "importe adjudicado", "probabilidad de adjudicacion", "situacion oferta", "periodo de ejecucion", "tipologia de obra")):
         return "business_licitaciones"
     return None
 
@@ -567,13 +631,15 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
     scope_label = aggregate.get("scope")
     period_text = _build_period_text(parsed)
 
-    if aggregate_kind == "sum":
+    if aggregate_kind in {"sum", "avg"}:
         value = rows[0].get("Valor")
         scope_copy = f" en {scope_label}" if scope_label else ""
         filter_copy = f" para {filter_text}" if filter_text else ""
+        top_copy = f" de las {aggregate.get('top_n')} con mayor {label}" if aggregate_kind == "avg" and int(aggregate.get("top_n") or 1) > 1 else ""
         numeric_value = parse_decimal(value) or 0.0
+        aggregate_copy = "Media de" if aggregate_kind == "avg" else "Total de"
         return {
-            "response": f"Total de {label}{period_text}{scope_copy}{filter_copy}: {_format_value(value)}.",
+            "response": f"{aggregate_copy} {label}{top_copy}{period_text}{scope_copy}{filter_copy}: {_format_value(value)}.",
             "route": route,
             "confidence": 1.0,
             "sources": [{"source": "AppRegenera SQL", "module": module}],
@@ -1011,9 +1077,11 @@ def _is_per_year_request(text: str) -> bool:
 
 def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str], year: int | None, reference: str | None) -> Dict[str, Any] | None:
     top_match = re.search(r"\btop\s+(\d+)\b", text)
-    top_n = int(top_match.group(1)) if top_match else 1
-    is_top = bool(top_match) or any(token in text for token in ("proyecto con mas", "proyecto con mayor", "obra con mas", "obra con mayor", "estudio con mas", "ranking"))
-    is_sum = any(token in text for token in ("cuanto ", "cuanta ", "cuantos ", "cuantas ", "total de ", "suma de "))
+    count_match = re.search(r"\b(?:las|los|primeras|primeros)\s+(\d+)\b", text)
+    top_n = int((top_match or count_match).group(1)) if top_match or count_match else 1
+    is_top = bool(top_match) or any(token in text for token in ("proyecto con mas", "proyecto con mayor", "obra con mas", "obra con mayor", "estudio con mas", "ranking", *_schema_aggregation_aliases("top")))
+    is_avg = any(token in text for token in ("importe medio", "importe promedio", "media de ", "promedio de ", "valor medio", *_schema_aggregation_aliases("avg")))
+    is_sum = any(token in text for token in ("cuanto ", "cuanta ", "cuantos ", "cuantas ", "total de ", "suma de ", *_schema_aggregation_aliases("sum")))
     has_specific_reference = bool(reference)
     asks_plural = any(token in text for token in ("proyectos", "obras", "estudios", "cierres"))
 
@@ -1023,17 +1091,17 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
     metric = _detect_aggregate_metric(text, fields, module=module, year=year)
     if not metric:
         return None
-    if not is_top and not is_sum:
+    if not is_top and not is_sum and not is_avg:
         return None
 
     scope = None
-    if "pipeline" in text or any(field.startswith("plan20") for field in fields):
+    if "pipeline" in text or any(alias in text for alias in _schema_scope_aliases("pipeline")) or any(field.startswith("plan20") for field in fields):
         scope = "pipeline"
-    elif "backlog" in text or any(token in text for token in ("adjudicada", "adjudicadas", "adjudicado", "adjudicados")):
+    elif "backlog" in text or any(alias in text for alias in _schema_scope_aliases("backlog")) or any(token in text for token in ("adjudicada", "adjudicadas", "adjudicado", "adjudicados")):
         scope = "backlog"
 
     return {
-        "kind": "top" if is_top else "sum",
+        "kind": "avg" if is_avg else ("top" if is_top else "sum"),
         "top_n": top_n,
         "metric": metric,
         "scope": scope,
@@ -1050,14 +1118,16 @@ def _detect_aggregate_metric(text: str, fields: List[str], *, module: str, year:
                 return f"cierre:{field}"
     if module == "estudios":
         for metric, aliases in STUDIES_AGGREGATE_KEYWORDS.items():
-            if any(alias in text for alias in aliases):
+            if any(alias in text for alias in aliases) or any(alias in text for alias in _schema_field_synonyms("estudios", metric)):
                 return metric
+        if any(token in text for token in ("importe medio", "importe promedio", "media de importe", "promedio de importe")):
+            return "importecontratado"
         if year in {2026, 2027, 2028, 2029} and any(field.startswith("importeContratado") for field in fields):
             return "importecontratado"
         return None
     if module == "produccion":
         for metric, aliases in PRODUCCION_AGGREGATE_KEYWORDS.items():
-            if any(alias in text for alias in aliases):
+            if any(alias in text for alias in aliases) or any(alias in text for alias in _schema_field_synonyms("produccion", metric)):
                 return metric
         for field in fields:
             if field in {"produccionTotal", *PRODUCTION_MONTH_FIELDS.values()}:
@@ -1090,8 +1160,9 @@ def _extract_filter_text(original_question: str, normalized: str) -> str | None:
     cleaned_candidates: List[str] = []
     for candidate in candidates:
         cleaned = candidate
-        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|adjudicada|adjudicadas|adjudicado|adjudicados|ano|anual|cada|total|por|del|de|la|las|los)\b", " ", cleaned)
+        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|importe medio|importe promedio|importe|media|medio|promedio|valor|mayor|mayores|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|cierres|presupuesto|presupuestos|adjudicada|adjudicadas|adjudicado|adjudicados|ganada|ganadas|ganado|ganados|conseguida|conseguidas|contratada|contratadas|hemos|han|que|nos|en|ano|anual|cada|total|por|para|del|de|la|las|los)\b", " ", cleaned)
         cleaned = re.sub(r"\b20\d{2}\b", " ", cleaned)
+        cleaned = re.sub(r"\b\d+\b", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
         if cleaned and len(cleaned) >= 2:
             cleaned_candidates.append(cleaned)

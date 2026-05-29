@@ -175,7 +175,7 @@ def query_licitaciones_aggregate(
     scope: str | None = None,
     free_text: str | None = None,
 ) -> List[Dict[str, Any]]:
-    agg_sql = "SUM" if agg == "sum" else "MAX"
+    agg_sql = "AVG" if agg == "avg" else ("SUM" if agg == "sum" else "MAX")
     filters = []
     params: List[Any] = []
 
@@ -212,6 +212,22 @@ def query_licitaciones_aggregate(
                 FROM dbo.Licitaciones
                 {where_clause}
                 ORDER BY {field_sql} DESC, NumeroProyecto, NumeroOferta
+                """,
+                top,
+                *params,
+            )
+        elif agg == "avg" and top > 1:
+            avg_filters = [*filters, f"{field_sql} <> 0"]
+            avg_where_clause = f"WHERE {' AND '.join(avg_filters)}" if avg_filters else ""
+            cursor.execute(
+                f"""
+                SELECT AVG(Valor) AS Valor
+                FROM (
+                    SELECT TOP (?) {field_sql} AS Valor
+                    FROM dbo.Licitaciones
+                    {avg_where_clause}
+                    ORDER BY {field_sql} DESC, NumeroProyecto, NumeroOferta
+                ) ranked
                 """,
                 top,
                 *params,
@@ -439,10 +455,28 @@ def query_produccion_aggregate(
                 top,
                 *params,
             )
-        else:
+        elif agg == "avg" and top > 1:
+            avg_filters = [*filters, f"{field_sql} <> 0"]
+            avg_where_clause = f"WHERE {' AND '.join(avg_filters)}" if avg_filters else ""
             cursor.execute(
                 f"""
-                SELECT SUM({field_sql}) AS Valor
+                SELECT AVG(Valor) AS Valor
+                FROM (
+                    SELECT TOP (?) {field_sql} AS Valor
+                    FROM dbo.ProyectosProduccionSync p
+                    LEFT JOIN dbo.Licitaciones l ON l.Id = p.LicitacionId
+                    {avg_where_clause}
+                    ORDER BY {field_sql} DESC, p.CodigoObra
+                ) ranked
+                """,
+                top,
+                *params,
+            )
+        else:
+            agg_sql = "AVG" if agg == "avg" else "SUM"
+            cursor.execute(
+                f"""
+                SELECT {agg_sql}({field_sql}) AS Valor
                 FROM dbo.ProyectosProduccionSync p
                 LEFT JOIN dbo.Licitaciones l ON l.Id = p.LicitacionId
                 {where_clause}
@@ -579,7 +613,7 @@ def query_cierre_aggregate(
                 campo,
                 *params,
             )
-        else:
+        elif agg == "avg" and top > 1:
             cursor.execute(
                 f"""
                 WITH latest AS (
@@ -604,7 +638,53 @@ def query_cierre_aggregate(
                         ) AS frn
                     FROM dbo.CierresProduccionFilasImportadas f
                 )
-                SELECT SUM({numeric_sql}) AS Valor
+                SELECT AVG(Valor) AS Valor
+                FROM (
+                    SELECT TOP (?) {numeric_sql} AS Valor
+                    FROM rows_latest f
+                    LEFT JOIN latest
+                        ON latest.LicitacionId = f.LicitacionId
+                       AND latest.rn = 1
+                       AND latest.Campo = ?
+                       AND COALESCE(latest.Periodo, f.Periodo) = f.Periodo
+                    LEFT JOIN dbo.Licitaciones l ON l.Id = COALESCE(latest.LicitacionId, f.LicitacionId)
+                    {where_clause}
+                      AND f.frn = 1
+                      AND {numeric_sql} <> 0
+                    ORDER BY {numeric_sql} DESC, COALESCE(l.NumeroProyecto, f.Numero), l.NumeroOferta
+                ) ranked
+                """,
+                top,
+                campo,
+                *params,
+            )
+        else:
+            agg_sql = "AVG" if agg == "avg" else "SUM"
+            cursor.execute(
+                f"""
+                WITH latest AS (
+                    SELECT
+                        v.LicitacionId,
+                        v.Area,
+                        v.Campo,
+                        v.Valor,
+                        v.Periodo,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY v.LicitacionId, v.Campo, COALESCE(v.Area, '')
+                            ORDER BY v.Periodo DESC, v.UpdatedDate DESC
+                        ) AS rn
+                    FROM dbo.CierresProduccionValores v
+                ),
+                rows_latest AS (
+                    SELECT
+                        f.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(CONVERT(varchar(36), f.LicitacionId), f.Numero, f.Nombre), COALESCE(f.Area, '')
+                            ORDER BY f.Periodo DESC, f.UpdatedDate DESC
+                        ) AS frn
+                    FROM dbo.CierresProduccionFilasImportadas f
+                )
+                SELECT {agg_sql}({numeric_sql}) AS Valor
                 FROM rows_latest f
                 LEFT JOIN latest
                     ON latest.LicitacionId = f.LicitacionId

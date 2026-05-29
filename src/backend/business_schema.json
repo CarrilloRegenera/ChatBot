@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "description": "Diccionario semantico del chatbot negocio para relacionar preguntas con tablas, campos y agregaciones permitidas.",
+  "typos": {
+    "imorte": "importe",
+    "impote": "importe",
+    "liictacion": "licitacion",
+    "liictaciones": "licitaciones",
+    "liciitacion": "licitacion",
+    "liciitaciones": "licitaciones"
+  },
+  "modules": {
+    "estudios": {
+      "route": "business_licitaciones",
+      "tables": ["dbo.Licitaciones", "dbo.LicitacionesDistribuciones", "dbo.LicitacionesImportesContratadosMensuales"],
+      "route_hints": ["licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas", "adjudicacion", "adjudicada", "adjudicadas", "adjudicado", "adjudicados", "ganada", "ganadas"],
+      "human_description": "Ofertas, estudios y licitaciones, incluyendo estado, cliente, importe contratado, pipeline y backlog."
+    },
+    "produccion": {
+      "route": "business_produccion",
+      "tables": ["dbo.ProyectosProduccionSync", "dbo.ProyectosProduccionSyncPeriodos"],
+      "route_hints": ["produccion", "control de produccion", "obra", "obras", "cartera", "rentabilidad", "pendiente 2026"],
+      "human_description": "Obras en produccion sincronizadas desde AppRegenera, con cartera, importes, responsable y produccion mensual."
+    },
+    "cierre": {
+      "route": "business_produccion",
+      "tables": ["dbo.CierresProduccionFilasImportadas", "dbo.CierresProduccionValores"],
+      "route_hints": ["cierre", "cierres", "presupuesto total", "costes mes", "certificacion mes", "resultado previsto"],
+      "human_description": "Datos de cierre de produccion por periodo y area, normalizados desde valores importados."
+    }
+  },
+  "relationships": [
+    {
+      "from_table": "dbo.ProyectosProduccionSync",
+      "from_field": "LicitacionId",
+      "to_table": "dbo.Licitaciones",
+      "to_field": "Id",
+      "description": "Relaciona una obra de produccion con su licitacion o estudio origen."
+    },
+    {
+      "from_table": "dbo.CierresProduccionFilasImportadas",
+      "from_field": "LicitacionId",
+      "to_table": "dbo.Licitaciones",
+      "to_field": "Id",
+      "description": "Relaciona una fila de cierre con la licitacion/proyecto asociado cuando existe."
+    },
+    {
+      "from_table": "dbo.CierresProduccionValores",
+      "from_field": "LicitacionId",
+      "to_table": "dbo.Licitaciones",
+      "to_field": "Id",
+      "description": "Guarda valores normalizados de cierre por licitacion, campo, area y periodo."
+    }
+  ],
+  "scopes": {
+    "backlog": {
+      "description": "Licitaciones adjudicadas o completadas, entendidas como trabajo ganado/backlog.",
+      "aliases": ["adjudicada", "adjudicadas", "adjudicado", "adjudicados", "ganada", "ganadas", "ganado", "ganados", "hemos adjudicado", "nos hemos adjudicado", "conseguida", "conseguidas", "contratada", "contratadas"]
+    },
+    "pipeline": {
+      "description": "Licitaciones pendientes, potenciales o pendientes de adjudicar/presentar.",
+      "aliases": ["pipeline", "plan", "potencial", "pendiente de adjudicar", "pendiente de presentar"]
+    }
+  },
+  "aggregations": {
+    "sum": {
+      "description": "Suma total de un campo numerico.",
+      "aliases": ["total", "suma", "suman", "cuanto", "cuanta", "cuantos", "cuantas"]
+    },
+    "avg": {
+      "description": "Media o promedio de un campo numerico. Si se indica un numero, se aplica a las N mayores filas positivas.",
+      "aliases": ["media", "medio", "promedio", "valor medio", "importe medio", "importe promedio"]
+    },
+    "top": {
+      "description": "Ranking de mayores valores de un campo numerico.",
+      "aliases": ["top", "ranking", "mayor", "mas alto", "mas altos", "principales"]
+    }
+  },
+  "fields": {
+    "estudios.importecontratado": {
+      "table": "dbo.Licitaciones",
+      "sql_field": "ImporteContratado",
+      "label": "importe contratado",
+      "human_description": "Importe contratado o adjudicado de una licitacion/estudio.",
+      "synonyms": ["importe", "importe contratado", "importe adjudicado", "valor adjudicado", "valor contratado", "contratado"],
+      "aggregations": ["sum", "avg", "top"]
+    },
+    "estudios.backlog": {
+      "table": "dbo.Licitaciones",
+      "sql_field": "Produccion, Produccion2026, Produccion2027, Produccion2028, Produccion2029",
+      "label": "backlog",
+      "human_description": "Produccion prevista de licitaciones adjudicadas o completadas.",
+      "synonyms": ["backlog", "produccion adjudicada", "produccion prevista", "trabajo adjudicado"],
+      "aggregations": ["sum", "avg", "top"]
+    },
+    "estudios.pipeline": {
+      "table": "dbo.Licitaciones",
+      "sql_field": "Plan2026, Plan2027, Plan2028, Plan2029",
+      "label": "pipeline",
+      "human_description": "Plan o pipeline previsto de licitaciones pendientes o potenciales.",
+      "synonyms": ["pipeline", "plan", "prevision", "potencial"],
+      "aggregations": ["sum", "avg", "top"]
+    },
+    "produccion.importecontratado": {
+      "table": "dbo.ProyectosProduccionSync",
+      "sql_field": "ImporteContratado",
+      "label": "importe contratado",
+      "human_description": "Importe contratado asociado a una obra en produccion.",
+      "synonyms": ["importe", "importe contratado", "importe adjudicado", "valor contratado"],
+      "aggregations": ["sum", "avg", "top"]
+    },
+    "produccion.cartera2026": {
+      "table": "dbo.ProyectosProduccionSync",
+      "sql_field": "Cartera2026",
+      "label": "cartera 2026",
+      "human_description": "Cartera de produccion pendiente para 2026.",
+      "synonyms": ["cartera", "cartera 2026", "cartera pendiente"],
+      "aggregations": ["sum", "avg", "top"]
+    },
+    "cierre.presupuestoTotal": {
+      "table": "dbo.CierresProduccionValores",
+      "sql_field": "presupuestoTotal",
+      "label": "presupuesto total",
+      "human_description": "Presupuesto total importado en el cierre de produccion.",
+      "synonyms": ["presupuesto total", "presupuesto"],
+      "aggregations": ["sum", "avg", "top"]
+    },
+    "cierre.costesMes": {
+      "table": "dbo.CierresProduccionValores",
+      "sql_field": "costesMes",
+      "label": "costes mes",
+      "human_description": "Costes del mes en cierre de produccion.",
+      "synonyms": ["costes mes", "coste mes", "costes del mes"],
+      "aggregations": ["sum", "avg", "top"]
+    }
+  }
+}

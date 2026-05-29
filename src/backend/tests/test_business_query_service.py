@@ -21,6 +21,17 @@ class BusinessQueryServiceTests(unittest.TestCase):
             "business_produccion",
         )
 
+    def test_detects_business_route_with_common_typos_and_average(self):
+        self.assertEqual(
+            business.detect_business_route("Cual es el imorte medio de las 10 liictaciones que nos hemos adjudicado"),
+            "business_licitaciones",
+        )
+
+    def test_business_schema_loads_fields_and_relationships(self):
+        self.assertIn("estudios.importecontratado", business.BUSINESS_SCHEMA["fields"])
+        self.assertTrue(business.BUSINESS_SCHEMA["relationships"])
+        self.assertIn("nos hemos adjudicado", business.BUSINESS_SCHEMA["scopes"]["backlog"]["aliases"])
+
     def test_parse_pipeline_per_year_expands_plan_fields(self):
         parsed = business._parse_question("Dime el pipeline por ano", module="estudios", history=[])
 
@@ -135,6 +146,54 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertIsNone(intent["filter_text"])
         self.assertIsNone(intent["group_by"])
 
+    def test_average_importe_for_adjudicated_licitaciones_is_structured(self):
+        parsed = business._parse_question(
+            "Cual es el imorte medio de las 10 liictaciones que nos hemos adjudicado",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "avg")
+        self.assertEqual(parsed["aggregate"]["metric"], "importecontratado")
+        self.assertEqual(parsed["aggregate"]["scope"], "backlog")
+        self.assertEqual(parsed["aggregate"]["top_n"], 10)
+
+    def test_schema_synonyms_parse_average_for_won_licitaciones(self):
+        parsed = business._parse_question(
+            "Cual es el promedio de importe de las 5 licitaciones ganadas",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "avg")
+        self.assertEqual(parsed["aggregate"]["metric"], "importecontratado")
+        self.assertEqual(parsed["aggregate"]["scope"], "backlog")
+        self.assertEqual(parsed["aggregate"]["top_n"], 5)
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
+    def test_schema_synonyms_parse_average_for_produccion_obras(self):
+        parsed = business._parse_question(
+            "Cual es la media de cartera de las 5 obras en produccion",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "avg")
+        self.assertEqual(parsed["aggregate"]["metric"], "cartera2026")
+        self.assertEqual(parsed["aggregate"]["top_n"], 5)
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
+    def test_generic_average_words_do_not_become_free_text_filter(self):
+        parsed = business._parse_question(
+            "Cual es la media de presupuesto total de los 3 cierres",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "avg")
+        self.assertEqual(parsed["aggregate"]["metric"], "cierre:presupuestoTotal")
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
     def test_pipeline_per_year_uses_yearly_aggregate_sql(self):
         values = [[{"Valor": 10.0}], [{"Valor": 20.0}], [{"Valor": 0.0}], [{"Valor": 40.5}]]
         with patch.object(business, "sql_query_licitaciones_aggregate", side_effect=values) as query:
@@ -198,6 +257,27 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(result["trace"]["outcome"], "aggregate")
         self.assertEqual(result["trace"]["aggregate"]["metric"], "importecontratado")
         self.assertIsNone(result["trace"]["aggregate"]["filter_text"])
+
+    def test_aggregate_sql_average_formats_response_without_real_database(self):
+        with patch.object(business, "sql_query_licitaciones_aggregate", return_value=[{"Valor": 4567.89}]) as query:
+            result = business._answer_business_question_sql(
+                "Cual es el imorte medio de las 10 liictaciones que nos hemos adjudicado",
+                preferred_route="business_licitaciones",
+                history=[],
+            )
+
+        query.assert_called_once_with(
+            select_field="importecontratado",
+            agg="avg",
+            top=10,
+            year=None,
+            scope="backlog",
+            free_text=None,
+        )
+        self.assertIn(
+            "Media de importe contratado de las 10 con mayor importe contratado en backlog: 4.567,89.",
+            result["response"],
+        )
 
     def test_licitacion_field_sql_uses_expected_yearly_columns(self):
         self.assertEqual(
