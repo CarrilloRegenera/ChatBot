@@ -1,6 +1,6 @@
 import logging
 import os
-from threading import Thread
+from threading import Lock, Thread
 import uuid
 from pathlib import Path
 
@@ -28,6 +28,9 @@ app = FastAPI(title="ChatBot API")
 app.state.runtime_ready = False
 app.state.startup_error = ""
 app.state.database_ready = False
+app.state.chat_router_ready = False
+app.state.chat_router_error = ""
+_chat_router_lock = Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,13 +44,21 @@ app.include_router(auth_router, prefix="/api")
 
 
 def _include_chat_router() -> None:
-    from routes.chat import router as chat_router
+    if getattr(app.state, "chat_router_ready", False):
+        return
+    with _chat_router_lock:
+        if getattr(app.state, "chat_router_ready", False):
+            return
+        app.state.chat_router_error = ""
+        logger = logging.getLogger(__name__)
+        logger.info("Cargando rutas de chat")
+        from routes.chat import router as chat_router
 
-    app.include_router(chat_router)
-    app.include_router(chat_router, prefix="/api")
+        app.include_router(chat_router)
+        app.include_router(chat_router, prefix="/api")
+        app.state.chat_router_ready = True
+        logger.info("Rutas de chat cargadas")
 
-
-_include_chat_router()
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.is_dir():
@@ -76,6 +87,11 @@ def startup_init():
 def _startup_background_init():
     logger = logging.getLogger(__name__)
     app.state.database_ready = False
+    try:
+        _include_chat_router()
+    except Exception as exc:
+        app.state.chat_router_error = str(exc)
+        logger.exception("No se pudieron cargar las rutas de chat")
     try:
         warm_entra_jwks()
     except Exception:
@@ -110,6 +126,8 @@ def health():
         "database": "deferred",
         "runtime_ready": bool(getattr(app.state, "runtime_ready", False)),
         "startup_error": getattr(app.state, "startup_error", ""),
+        "chat_router_ready": bool(getattr(app.state, "chat_router_ready", False)),
+        "chat_router_error": getattr(app.state, "chat_router_error", ""),
     }
 
 
