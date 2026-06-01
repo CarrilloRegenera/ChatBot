@@ -202,6 +202,19 @@ def query_licitaciones_aggregate(
         filters.append("(Estado LIKE 'Adjudicada%' OR Estado LIKE 'Completada%')")
 
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    if agg == "count":
+        with appregenera_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT COUNT(*) AS Valor
+                FROM dbo.Licitaciones
+                {where_clause}
+                """,
+                *params,
+            )
+            return _rows_to_dicts(cursor)
+
     field_sql = _resolve_licitacion_field_sql(select_field, year=year, scope=scope)
     order_sql = (
         "COALESCE(FechaAdjudicacion, UpdatedDate, CreatedDate) DESC, NumeroProyecto DESC, NumeroOferta DESC"
@@ -431,8 +444,8 @@ def query_produccion_aggregate(
     free_text: str | None = None,
     order: str | None = None,
 ) -> List[Dict[str, Any]]:
-    field_sql = _resolve_produccion_field_sql(select_field)
-    filters = [f"{field_sql} IS NOT NULL"]
+    field_sql = _resolve_produccion_field_sql(select_field) if agg != "count" else ""
+    filters = [] if agg == "count" else [f"{field_sql} IS NOT NULL"]
     params: List[Any] = []
 
     if free_text:
@@ -447,6 +460,20 @@ def query_produccion_aggregate(
         params.extend([like, like, like, like, like, like])
 
     where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    if agg == "count":
+        with appregenera_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT COUNT(*) AS Valor
+                FROM dbo.ProyectosProduccionSync p
+                LEFT JOIN dbo.Licitaciones l ON l.Id = p.LicitacionId
+                {where_clause}
+                """,
+                *params,
+            )
+            return _rows_to_dicts(cursor)
+
     order_sql = (
         "COALESCE(p.UpdatedDate, p.CreatedDate) DESC, p.CodigoObra DESC"
         if order == "latest"
@@ -548,6 +575,45 @@ def query_cierre_aggregate(
     free_text: str | None = None,
     order: str | None = None,
 ) -> List[Dict[str, Any]]:
+    if agg == "count":
+        filters = [
+            "(? IS NULL OR f.Periodo = ?)",
+            "(? IS NULL OR f.Area = ?)",
+        ]
+        params: List[Any] = [periodo, periodo, area, area]
+        if free_text:
+            like = f"%{free_text}%"
+            filters.append(
+                "("
+                "COALESCE(l.NumeroProyecto, '') LIKE ? OR COALESCE(l.NumeroOferta, '') LIKE ? "
+                "OR COALESCE(l.Obra, '') LIKE ? OR COALESCE(f.Nombre, '') LIKE ? OR COALESCE(f.ProyectoBc, '') LIKE ?"
+                ")"
+            )
+            params.extend([like, like, like, like, like])
+        where_clause = f"WHERE {' AND '.join(filters)}"
+        with appregenera_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                WITH rows_latest AS (
+                    SELECT
+                        f.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY COALESCE(CONVERT(varchar(36), f.LicitacionId), f.Numero, f.Nombre), COALESCE(f.Area, '')
+                            ORDER BY f.Periodo DESC, f.UpdatedDate DESC
+                        ) AS frn
+                    FROM dbo.CierresProduccionFilasImportadas f
+                )
+                SELECT COUNT(*) AS Valor
+                FROM rows_latest f
+                LEFT JOIN dbo.Licitaciones l ON l.Id = f.LicitacionId
+                {where_clause}
+                  AND f.frn = 1
+                """,
+                *params,
+            )
+            return _rows_to_dicts(cursor)
+
     campo_safe = "".join(ch for ch in (campo or "") if ch.isalnum() or ch == "_")
     if not campo_safe:
         return []

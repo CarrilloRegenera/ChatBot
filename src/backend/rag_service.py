@@ -281,6 +281,15 @@ DOMAIN_FOLDER_PREFIXES: dict = {
     for name, cfg in _DOMAIN_CFG["domains"].items()
 }
 
+DOMAIN_TAXONOMY: dict = {
+    name: {
+        "department": str(cfg.get("department", "general") or "general").strip() or "general",
+        "document_type": str(cfg.get("document_type", "documento") or "documento").strip() or "documento",
+        "confidentiality": str(cfg.get("confidentiality", "internal") or "internal").strip() or "internal",
+    }
+    for name, cfg in _DOMAIN_CFG["domains"].items()
+}
+
 
 logger = logging.getLogger(__name__)
 
@@ -1100,7 +1109,8 @@ def _metadata_text(metadata: Dict[str, object]) -> str:
         " ".join(
             str(metadata.get(key, ""))
             for key in (
-                "source", "folder", "domain", "regulation", "itc_refs", "section",
+                "source", "folder", "department", "domain", "document_type", "confidentiality",
+                "regulation", "itc_refs", "section",
                 "section_type", "topics", "table_hint", "table_title", "content_intent",
                 "scope_hint", "exact_refs", "chunk_kind",
             )
@@ -1208,6 +1218,28 @@ def _source_domain_key(source_name: str, metadata: Dict[str, object] | None = No
     if source_domain != "general":
         return source_domain
     return _domain_from_folder(source_name) or source_domain
+
+
+def _taxonomy_for_domain(domain: str) -> Dict[str, str]:
+    return DOMAIN_TAXONOMY.get(
+        domain,
+        {
+            "department": "general",
+            "document_type": "documento",
+            "confidentiality": "internal",
+        },
+    )
+
+
+def _source_taxonomy(source_name: str, metadata: Dict[str, object] | None = None) -> Dict[str, str]:
+    domain = _source_domain_key(source_name, metadata)
+    base = dict(_taxonomy_for_domain(domain))
+    if metadata:
+        for key in ("department", "document_type", "confidentiality"):
+            explicit = str(metadata.get(key, "") or "").strip()
+            if explicit:
+                base[key] = explicit
+    return base
 
 
 def _regulation_key(source_name: str, domain: str) -> str:
@@ -1337,6 +1369,7 @@ def _delete_source_chunks(source_name: str) -> None:
 def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     source_name = str(filepath.relative_to(root_path)).replace("\\", "/")
     domain = _source_domain_key(source_name)
+    taxonomy = _taxonomy_for_domain(domain)
     regulation = _regulation_key(source_name, domain)
     documents, metadatas, ids = [], [], []
 
@@ -1423,7 +1456,10 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 metadatas.append({
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
+                    "department": taxonomy["department"],
                     "domain": domain,
+                    "document_type": taxonomy["document_type"],
+                    "confidentiality": taxonomy["confidentiality"],
                     "regulation": regulation,
                     "page": page_index + 1,
                     "printed_page": printed_page,
@@ -1476,7 +1512,10 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 row_metadata = {
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
+                    "department": taxonomy["department"],
                     "domain": domain,
+                    "document_type": taxonomy["document_type"],
+                    "confidentiality": taxonomy["confidentiality"],
                     "regulation": regulation,
                     "page": page_index + 1,
                     "printed_page": printed_page,
@@ -2686,9 +2725,16 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     sources = []
     seen_sources = set()
     matched_domains = 0
+    matched_departments = 0
     table_selected_chunks = 0
     table_selected_signal_count = 0
+    expected_departments = sorted({
+        _taxonomy_for_domain(domain_name)["department"]
+        for domain_name in expected_domains
+    })
     for _, _, document, metadata in selected:
+        source_name = str(metadata.get("source", ""))
+        taxonomy = _source_taxonomy(source_name, metadata)
         clean_section = _sanitize_section_label(str(metadata.get("section", "")))
         section_suffix = f", {clean_section}" if clean_section else ""
         printed_suffix = f", pag. doc {metadata.get('printed_page')}" if metadata.get("printed_page") else ""
@@ -2700,8 +2746,10 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         if source_label not in seen_sources:
             sources.append(source_label)
             seen_sources.add(source_label)
-        if expected_domains and _source_domain_key(str(metadata.get("source", "")), metadata) in expected_domains:
+        if expected_domains and _source_domain_key(source_name, metadata) in expected_domains:
             matched_domains += 1
+        if expected_departments and taxonomy["department"] in expected_departments:
+            matched_departments += 1
         if str(metadata.get("chunk_kind", "")) in {"table", "table_row"}:
             table_selected_chunks += 1
         table_selected_signal_count += int(metadata.get("table_signal_count", 0) or 0)
@@ -2729,6 +2777,14 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         _source_domain_key(str(item[3].get("source", "")), item[3])
         for item in selected
     })
+    selected_departments = sorted({
+        _source_taxonomy(str(item[3].get("source", "")), item[3])["department"]
+        for item in selected
+    })
+    selected_document_types = sorted({
+        _source_taxonomy(str(item[3].get("source", "")), item[3])["document_type"]
+        for item in selected
+    })
     retrieval_stats = {
         "candidate_count": candidate_count,
         "selected_count": len(selected),
@@ -2737,6 +2793,10 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         "selected_domains": selected_domains,
         "expected_domains": expected_domains,
         "domain_match_ratio": round(matched_domains / max(len(selected), 1), 4) if expected_domains else 1.0,
+        "selected_departments": selected_departments,
+        "expected_departments": expected_departments,
+        "department_match_ratio": round(matched_departments / max(len(selected), 1), 4) if expected_departments else 1.0,
+        "selected_document_types": selected_document_types,
         "broad_query": broad_query,
         "table_selected_chunks": table_selected_chunks,
         "table_collection_hits": table_collection_hits,

@@ -595,7 +595,7 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
     aggregate_kind = aggregate.get("kind", "top")
     if metric.startswith("cierre:"):
         rows = sql_query_cierre_aggregate(
-            campo=metric.split(":", 1)[1],
+            campo="" if aggregate_kind == "count" else metric.split(":", 1)[1],
             agg=aggregate_kind,
             top=aggregate.get("top_n", 1),
             periodo=aggregate.get("periodo"),
@@ -634,7 +634,7 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
     scope_label = aggregate.get("scope")
     period_text = _build_period_text(parsed)
 
-    if aggregate_kind in {"sum", "avg"}:
+    if aggregate_kind in {"sum", "avg", "count"}:
         value = rows[0].get("Valor")
         scope_copy = f" en {scope_label}" if scope_label else ""
         filter_copy = f" para {filter_text}" if filter_text else ""
@@ -646,9 +646,10 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
                 else f" de las {aggregate.get('top_n')} con mayor {label}"
             )
         numeric_value = parse_decimal(value) or 0.0
-        aggregate_copy = "Media de" if aggregate_kind == "avg" else "Total de"
+        aggregate_copy = "Numero de" if aggregate_kind == "count" else ("Media de" if aggregate_kind == "avg" else "Total de")
+        formatted_value = str(int(numeric_value)) if aggregate_kind == "count" else _format_value(value)
         return {
-            "response": f"{aggregate_copy} {label}{top_copy}{period_text}{scope_copy}{filter_copy}: {_format_value(value)}.",
+            "response": f"{aggregate_copy} {label}{top_copy}{period_text}{scope_copy}{filter_copy}: {formatted_value}.",
             "route": route,
             "confidence": 1.0,
             "sources": [{"source": "AppRegenera SQL", "module": module}],
@@ -1090,7 +1091,8 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
     top_n = int((top_match or count_match).group(1)) if top_match or count_match else 1
     is_top = bool(top_match) or any(token in text for token in ("proyecto con mas", "proyecto con mayor", "obra con mas", "obra con mayor", "estudio con mas", "ranking", *_schema_aggregation_aliases("top")))
     is_avg = any(token in text for token in ("importe medio", "importe promedio", "media de ", "promedio de ", "valor medio", *_schema_aggregation_aliases("avg")))
-    is_sum = any(token in text for token in ("cuanto ", "cuanta ", "cuantos ", "cuantas ", "total de ", "suma de ", *_schema_aggregation_aliases("sum")))
+    is_count = _is_count_request(text)
+    is_sum = (not is_count) and any(token in text for token in ("cuanto ", "cuanta ", "cuantos ", "cuantas ", "total de ", "suma de ", *_schema_aggregation_aliases("sum")))
     order = "latest" if any(token in text for token in ("ultimas", "ultimos", "recientes", "mas recientes")) else None
     has_specific_reference = bool(reference)
     asks_plural = any(token in text for token in ("proyectos", "obras", "estudios", "cierres"))
@@ -1098,10 +1100,10 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
     if has_specific_reference and not is_top:
         return None
 
-    metric = _detect_aggregate_metric(text, fields, module=module, year=year)
+    metric = _detect_count_metric(text, module) if is_count else _detect_aggregate_metric(text, fields, module=module, year=year)
     if not metric:
         return None
-    if not is_top and not is_sum and not is_avg:
+    if not is_top and not is_sum and not is_avg and not is_count:
         return None
 
     scope = None
@@ -1111,7 +1113,7 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
         scope = "backlog"
 
     return {
-        "kind": "avg" if is_avg else ("top" if is_top else "sum"),
+        "kind": "count" if is_count else ("avg" if is_avg else ("top" if is_top else "sum")),
         "top_n": top_n,
         "metric": metric,
         "scope": scope,
@@ -1148,6 +1150,41 @@ def _detect_aggregate_metric(text: str, fields: List[str], *, module: str, year:
     return None
 
 
+def _is_count_request(text: str) -> bool:
+    count_markers = (
+        "cuantas ",
+        "cuantos ",
+        "numero de ",
+        "n de ",
+        "cantidad de ",
+        "cuenta de ",
+    )
+    if not any(marker in text for marker in count_markers):
+        return False
+    numeric_metric_markers = (
+        "importe",
+        "media",
+        "medio",
+        "promedio",
+        "total",
+        "suma",
+        "cartera",
+        "pipeline",
+        "backlog",
+        "rentabilidad",
+        "presupuesto",
+        "coste",
+        "costes",
+    )
+    return not any(marker in text for marker in numeric_metric_markers)
+
+
+def _detect_count_metric(text: str, module: str) -> str:
+    if "cierre" in text or "cierres" in text or _contains_cierre_hint(text):
+        return "cierre:count"
+    return "obras" if module == "produccion" else "licitaciones"
+
+
 def _extract_periodo(text: str) -> str | None:
     match = re.search(r"\b(20\d{2}-\d{2})\b", text)
     return match.group(1) if match else None
@@ -1171,7 +1208,7 @@ def _extract_filter_text(original_question: str, normalized: str) -> str | None:
     cleaned_candidates: List[str] = []
     for candidate in candidates:
         cleaned = candidate
-        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|importe medio|importe promedio|importe|media|medio|promedio|valor|mayor|mayores|ultimas|ultimos|recientes|estan|esta|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|cierres|presupuesto|presupuestos|adjudicada|adjudicadas|adjudicado|adjudicados|ganada|ganadas|ganado|ganados|conseguida|conseguidas|contratada|contratadas|hemos|han|que|nos|en|ano|anual|cada|total|por|para|del|de|la|las|los)\b", " ", cleaned)
+        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|importe medio|importe promedio|importe|media|medio|promedio|valor|mayor|mayores|ultimas|ultimos|recientes|estan|esta|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|cierres|presupuesto|presupuestos|adjudicada|adjudicadas|adjudicado|adjudicados|ganada|ganadas|ganado|ganados|conseguida|conseguidas|contratada|contratadas|hemos|han|que|nos|tenemos|tienen|llevamos|actualmente|ahora|hay|van|vamos|en|ano|anual|cada|total|por|para|del|de|la|las|los)\b", " ", cleaned)
         cleaned = re.sub(r"\b20\d{2}\b", " ", cleaned)
         cleaned = re.sub(r"\b\d+\b", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
@@ -1808,8 +1845,12 @@ def _build_period_text(parsed: Dict[str, Any]) -> str:
 
 def _aggregate_label(metric: str, year: int | None) -> str:
     if metric.startswith("cierre:"):
+        if metric == "cierre:count":
+            return "cierres"
         field = metric.split(":", 1)[1]
         return next((label for label, value in CLOSURE_FIELD_HINTS.items() if value == field), field)
+    if metric in {"licitaciones", "obras"}:
+        return metric
     if metric == "importecontratado":
         return f"importe contratado {year}" if year else "importe contratado"
     if metric == "importecontratadoprevio":

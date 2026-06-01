@@ -2,6 +2,9 @@
   "_comment": "Configuración de dominios RAG. Añadir nuevos dominios aquí sin tocar rag_service.py.",
   "domains": {
     "alta_tension": {
+      "department": "ingenieria",
+      "document_type": "reglamento",
+      "confidentiality": "internal",
       "trigger_terms": [
         "alta tension", "itc-lat", "lineas electricas de alta",
         "linea de at", "lineas de at", "instalacion at", "instalaciones at",
@@ -28,6 +31,9 @@
       "scoring": {}
     },
     "rite": {
+      "department": "ingenieria",
+      "document_type": "reglamento",
+      "confidentiality": "internal",
       "trigger_terms": [
         "rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion"
       ],
@@ -39,6 +45,9 @@
       "scoring": {}
     },
     "baja_tension": {
+      "department": "ingenieria",
+      "document_type": "reglamento",
+      "confidentiality": "internal",
       "trigger_terms": [
         "rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico",
         "electrificacion basica", "electrificacion elevada", "circuitos minimos", "circuito c1", "itc-bt-25"
@@ -76,6 +85,9 @@
       "scoring": {}
     },
     "guias_tecnicas": {
+      "department": "ingenieria",
+      "document_type": "guia_tecnica",
+      "confidentiality": "internal",
       "trigger_terms": [
         "bt-40", "guia bt 40", "guia-bt-40",
         "instalaciones generadoras", "generadoras de baja tension",
@@ -104,6 +116,9 @@
       }
     },
     "fotovoltaica_om": {
+      "department": "mantenimiento",
+      "document_type": "manual",
+      "confidentiality": "internal",
       "trigger_terms": [
         "fotovoltaica", "fotovoltaico", "paneles solares", "planta solar",
         "operacion y mantenimiento", "mantenimiento fv", "planta fv",
@@ -135,6 +150,9 @@
       "scoring": {}
     },
     "grupos_electrogenos": {
+      "department": "mantenimiento",
+      "document_type": "norma",
+      "confidentiality": "internal",
       "trigger_terms": [
         "grupo electrogeno", "grupos electrogenos", "generador diesel", "iso 8528", "8528"
       ],
@@ -179,6 +197,9 @@
       "scoring": {}
     },
     "pendiente_ocr": {
+      "department": "general",
+      "document_type": "pendiente_ocr",
+      "confidentiality": "internal",
       "trigger_terms": [],
       "trigger_regex": [],
       "source_tokens": [],

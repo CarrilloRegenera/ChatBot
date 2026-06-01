@@ -13,7 +13,7 @@ from pathlib import Path
 # Permite importar rag_service cuando se ejecuta desde src/backend.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rag_service import _source_domain_key  # noqa: E402
+from rag_service import _source_domain_key, _source_taxonomy  # noqa: E402
 
 
 CASES = [
@@ -53,6 +53,52 @@ def test_domain_classification():
         f"\nClasificación de dominio incorrecta en {len(failures)} caso(s):\n"
         + "\n".join(failures)
     )
+
+TAXONOMY_CASES = [
+    (
+        "alta_tension/A16436-16554.pdf",
+        {"department": "ingenieria", "document_type": "reglamento", "confidentiality": "internal"},
+    ),
+    (
+        "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf",
+        {"department": "ingenieria", "document_type": "reglamento", "confidentiality": "internal"},
+    ),
+    (
+        "rite/A35931-35984.pdf",
+        {"department": "ingenieria", "document_type": "reglamento", "confidentiality": "internal"},
+    ),
+    (
+        "guias_tecnicas/Guia_bt_40_sep13R1 (1).pdf",
+        {"department": "ingenieria", "document_type": "guia_tecnica", "confidentiality": "internal"},
+    ),
+    (
+        "fotovoltaica_om/Manual-de-Manteminiento.pdf",
+        {"department": "mantenimiento", "document_type": "manual", "confidentiality": "internal"},
+    ),
+    (
+        "grupos_electrogenos/ISO-8528-5-2018.pdf",
+        {"department": "mantenimiento", "document_type": "norma", "confidentiality": "internal"},
+    ),
+]
+
+
+def test_source_taxonomy_from_domain_config():
+    for source, expected in TAXONOMY_CASES:
+        assert _source_taxonomy(source) == expected
+
+
+def test_source_taxonomy_allows_explicit_metadata_override():
+    metadata = {
+        "domain": "fotovoltaica_om",
+        "department": "operaciones",
+        "document_type": "procedimiento",
+        "confidentiality": "restricted",
+    }
+    assert _source_taxonomy("fotovoltaica_om/manual.pdf", metadata) == {
+        "department": "operaciones",
+        "document_type": "procedimiento",
+        "confidentiality": "restricted",
+    }
 
 
 if __name__ == "__main__":

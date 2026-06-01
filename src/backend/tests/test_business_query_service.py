@@ -146,6 +146,36 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertIsNone(intent["filter_text"])
         self.assertIsNone(intent["group_by"])
 
+    def test_count_licitaciones_is_structured_without_numeric_metric(self):
+        parsed = business._parse_question(
+            "Cuantas licitaciones llevamos adjudicadas hasta ahora?",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "count")
+        self.assertEqual(parsed["aggregate"]["metric"], "licitaciones")
+        self.assertEqual(parsed["aggregate"]["scope"], "backlog")
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
+    def test_count_produccion_and_cierres_are_structured(self):
+        produccion = business._parse_question(
+            "Cuantas obras tenemos en produccion actualmente?",
+            module="produccion",
+            history=[],
+        )
+        cierre = business._parse_question(
+            "Cuantos cierres hay ahora?",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(produccion["aggregate"]["kind"], "count")
+        self.assertEqual(produccion["aggregate"]["metric"], "obras")
+        self.assertIsNone(produccion["aggregate"]["filter_text"])
+        self.assertEqual(cierre["aggregate"]["kind"], "count")
+        self.assertEqual(cierre["aggregate"]["metric"], "cierre:count")
+
     def test_average_importe_for_adjudicated_licitaciones_is_structured(self):
         parsed = business._parse_question(
             "Cual es el imorte medio de las 10 liictaciones que nos hemos adjudicado",
@@ -299,6 +329,58 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(result["trace"]["outcome"], "aggregate")
         self.assertEqual(result["trace"]["aggregate"]["metric"], "importecontratado")
         self.assertIsNone(result["trace"]["aggregate"]["filter_text"])
+
+    def test_count_sql_formats_response_without_real_database(self):
+        with patch.object(business, "sql_query_licitaciones_aggregate", return_value=[{"Valor": 95}]) as query:
+            result = business._answer_business_question_sql(
+                "Cuantas licitaciones llevamos adjudicadas hasta ahora?",
+                preferred_route="business_licitaciones",
+                history=[],
+            )
+
+        query.assert_called_once_with(
+            select_field="licitaciones",
+            agg="count",
+            top=1,
+            year=None,
+            scope="backlog",
+            free_text=None,
+            order=None,
+        )
+        self.assertIn("Numero de licitaciones en backlog: 95.", result["response"])
+
+    def test_count_sql_for_produccion_and_cierre(self):
+        with patch.object(business, "sql_query_produccion_aggregate", return_value=[{"Valor": 99}]) as prod_query:
+            prod_result = business._answer_business_question_sql(
+                "Cuantas obras tenemos en produccion actualmente?",
+                preferred_route="business_produccion",
+                history=[],
+            )
+        with patch.object(business, "sql_query_cierre_aggregate", return_value=[{"Valor": 18}]) as cierre_query:
+            cierre_result = business._answer_business_question_sql(
+                "Cuantos cierres hay ahora?",
+                preferred_route="business_produccion",
+                history=[],
+            )
+
+        prod_query.assert_called_once_with(
+            select_field="obras",
+            agg="count",
+            top=1,
+            free_text=None,
+            order=None,
+        )
+        cierre_query.assert_called_once_with(
+            campo="",
+            agg="count",
+            top=1,
+            periodo=None,
+            area=None,
+            free_text=None,
+            order=None,
+        )
+        self.assertIn("Numero de obras: 99.", prod_result["response"])
+        self.assertIn("Numero de cierres: 18.", cierre_result["response"])
 
     def test_aggregate_sql_average_formats_response_without_real_database(self):
         with patch.object(business, "sql_query_licitaciones_aggregate", return_value=[{"Valor": 4567.89}]) as query:
