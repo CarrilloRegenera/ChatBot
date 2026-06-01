@@ -1078,11 +1078,41 @@ def _split_metadata_refs(value: object) -> set[str]:
     return refs
 
 
+def _inferred_rebt_itc_by_page_section(metadata: Dict[str, object], document: str = "") -> set[str]:
+    source = _normalize_text(str(metadata.get("source", "")))
+    if "baja_tension" not in source and "rebt" not in source and "boe-326" not in source:
+        return set()
+    try:
+        page = int(str(metadata.get("page", "") or "0"))
+    except ValueError:
+        page = 0
+    text = _normalize_text(f"{metadata.get('section', '')} {document}")
+    refs: set[str] = set()
+    if (
+        "10. puestas a tierra" in text
+        and "vida de la instalacion" in text
+        and "24 v" in text
+    ) or 99 <= page <= 101:
+        refs.add("itc-bt-09")
+    if "resistencia de las tomas de tierra" in text or 123 <= page <= 130:
+        refs.add("itc-bt-18")
+    if (
+        "tension de contacto limite convencional" in text
+        or "proteccion contra los contactos indirectos" in text
+        or 161 <= page <= 166
+    ):
+        refs.add("itc-bt-24")
+    if "red de tierra para plazas de aparcamiento" in text or 287 <= page <= 294:
+        refs.add("itc-bt-52")
+    return refs
+
+
 def _inferred_itc_refs(metadata: Dict[str, object], document: str = "") -> set[str]:
     refs = set()
     refs.update(_split_metadata_refs(metadata.get("itc_refs", "")))
     refs.update(_split_metadata_refs(metadata.get("exact_refs", "")))
     refs.update(_split_metadata_refs(f"{metadata.get('source', '')} {metadata.get('section', '')} {document}"))
+    refs.update(_inferred_rebt_itc_by_page_section(metadata, document))
     return refs
 
 

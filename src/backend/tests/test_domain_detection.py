@@ -13,7 +13,7 @@ from pathlib import Path
 # Permite importar rag_service cuando se ejecuta desde src/backend.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rag_service import _source_domain_key, _source_taxonomy  # noqa: E402
+from rag_service import _domain_phrase_queries, _source_domain_key, _source_taxonomy  # noqa: E402
 
 
 CASES = [
@@ -99,6 +99,18 @@ def test_source_taxonomy_allows_explicit_metadata_override():
         "document_type": "procedimiento",
         "confidentiality": "restricted",
     }
+
+
+def test_rebt_contact_voltage_phrase_queries_cover_grounding_questions():
+    phrases = _domain_phrase_queries(
+        "maxima tension de contacto a lo largo de la vida util en puestas a tierra segun REBT"
+    )
+    assert "ITC-BT-09. INSTALACIONES DE ALUMBRADO EXTERIOR" in phrases
+    assert "ITC-BT-52. INSTALACIONES CON FINES ESPECIALES" in phrases
+    assert "ITC-BT-18" in phrases
+    assert "no se puedan producir tensiones" in phrases
+    assert "mayores de 24 V" in phrases
+    assert "RESISTENCIA DE LAS TOMAS DE TIERRA" in phrases
 
 
 if __name__ == "__main__":

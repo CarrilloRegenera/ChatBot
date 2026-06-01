@@ -158,6 +158,18 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["aggregate"]["scope"], "backlog")
         self.assertIsNone(parsed["aggregate"]["filter_text"])
 
+    def test_count_pipeline_offers_keeps_count_intent_and_scope(self):
+        parsed = business._parse_question(
+            "Cuantas ofertas tenemos en pipeline ahora mismo?",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "count")
+        self.assertEqual(parsed["aggregate"]["metric"], "licitaciones")
+        self.assertEqual(parsed["aggregate"]["scope"], "pipeline")
+        self.assertIsNone(parsed["aggregate"]["filter_text"])
+
     def test_count_produccion_and_cierres_are_structured(self):
         produccion = business._parse_question(
             "Cuantas obras tenemos en produccion actualmente?",
@@ -175,6 +187,33 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertIsNone(produccion["aggregate"]["filter_text"])
         self.assertEqual(cierre["aggregate"]["kind"], "count")
         self.assertEqual(cierre["aggregate"]["metric"], "cierre:count")
+
+    def test_plain_importe_detail_maps_to_importe_contratado(self):
+        parsed = business._parse_question(
+            "Que cliente tiene el proyecto 26018 y cuanto importe tiene?",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertIn("cliente", parsed["fields"])
+        self.assertIn("importeContratado", parsed["fields"])
+
+    def test_metric_words_do_not_become_free_text_filters(self):
+        diferencia = business._parse_question(
+            "Como vamos de diferencia total en produccion?",
+            module="produccion",
+            history=[],
+        )
+        costes = business._parse_question(
+            "Media de costes mes de los ultimos 5 cierres",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(diferencia["aggregate"]["metric"], "diferencia")
+        self.assertIsNone(diferencia["aggregate"]["filter_text"])
+        self.assertEqual(costes["aggregate"]["metric"], "cierre:costesMes")
+        self.assertIsNone(costes["aggregate"]["filter_text"])
 
     def test_average_importe_for_adjudicated_licitaciones_is_structured(self):
         parsed = business._parse_question(

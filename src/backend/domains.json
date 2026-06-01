@@ -80,6 +80,24 @@
         {
           "if_contains": ["puestas a tierra", "tension"],
           "emit": ["puesta a tierra"]
+        },
+        {
+          "if_contains": ["vida", "contacto"],
+          "emit": [
+            "ITC-BT-09. INSTALACIONES DE ALUMBRADO EXTERIOR",
+            "ITC-BT-52. INSTALACIONES CON FINES ESPECIALES",
+            "vida de la",
+            "no se puedan producir tensiones",
+            "mayores de 24 V"
+          ]
+        },
+        {
+          "if_contains": ["puesta", "contacto"],
+          "emit": [
+            "ITC-BT-18",
+            "RESISTENCIA DE LAS TOMAS DE TIERRA",
+            "tensiones de contacto superiores"
+          ]
         }
       ],
       "scoring": {}

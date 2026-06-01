@@ -1161,6 +1161,9 @@ def _is_count_request(text: str) -> bool:
     )
     if not any(marker in text for marker in count_markers):
         return False
+    if any(entity in text for entity in ("ofertas", "licitaciones", "obras", "cierres", "estudios")):
+        return True
+
     numeric_metric_markers = (
         "importe",
         "media",
@@ -1169,8 +1172,6 @@ def _is_count_request(text: str) -> bool:
         "total",
         "suma",
         "cartera",
-        "pipeline",
-        "backlog",
         "rentabilidad",
         "presupuesto",
         "coste",
@@ -1208,7 +1209,9 @@ def _extract_filter_text(original_question: str, normalized: str) -> str | None:
     cleaned_candidates: List[str] = []
     for candidate in candidates:
         cleaned = candidate
-        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|importe medio|importe promedio|importe|media|medio|promedio|valor|mayor|mayores|ultimas|ultimos|recientes|estan|esta|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|cierres|presupuesto|presupuestos|adjudicada|adjudicadas|adjudicado|adjudicados|ganada|ganadas|ganado|ganados|conseguida|conseguidas|contratada|contratadas|hemos|han|que|nos|tenemos|tienen|llevamos|actualmente|ahora|hay|van|vamos|en|ano|anual|cada|total|por|para|del|de|la|las|los)\b", " ", cleaned)
+        for label in sorted(CLOSURE_FIELD_HINTS, key=len, reverse=True):
+            cleaned = re.sub(rf"\b{re.escape(label)}\b", " ", cleaned)
+        cleaned = re.sub(r"\b(importe contratado|importe adjudicado|importe medio|importe promedio|importe|media|medio|promedio|valor|mayor|mayores|ultimas|ultimos|recientes|estan|esta|pipeline|backlog|produccion|proyecto|proyectos|obra|obras|estudio|estudios|licitacion|licitaciones|cliente|estado|concurso|cartera|cierre|cierres|presupuesto|presupuestos|diferencia|adjudicada|adjudicadas|adjudicado|adjudicados|ganada|ganadas|ganado|ganados|conseguida|conseguidas|contratada|contratadas|hemos|han|que|nos|tenemos|tienen|llevamos|actualmente|ahora|hay|van|vamos|en|ano|anual|cada|total|por|para|del|de|la|las|los)\b", " ", cleaned)
         cleaned = re.sub(r"\b20\d{2}\b", " ", cleaned)
         cleaned = re.sub(r"\b\d+\b", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -")
@@ -1297,7 +1300,7 @@ def _detect_fields(
         else:
             fields.append("produccion")
 
-    if "importe contratado" in text or "importe adjudicado" in text:
+    if re.search(r"\bimporte\b", text) or "importe contratado" in text or "importe adjudicado" in text:
         if module == "estudios":
             if per_year:
                 fields.extend(["importeContratado2026", "importeContratado2027", "importeContratado2028", "importeContratado2029"])
