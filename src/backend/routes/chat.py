@@ -40,6 +40,8 @@ _locks_guard = Lock()
 _conversation_locks: Dict[int, Lock] = {}
 _lock_last_used: Dict[int, float] = {}
 _last_lock_cleanup: float = 0.0
+_deploy_sync_lock = Lock()
+_deploy_sync_inflight = False
 _LOCK_TTL = 1800
 _LOCK_CLEANUP_INTERVAL = 300
 
@@ -48,6 +50,30 @@ def _memory_service():
     import memory_service
 
     return memory_service
+
+
+def _sync_recent_deployments_background(limit: int, page: int) -> None:
+    global _deploy_sync_inflight
+    with _deploy_sync_lock:
+        if _deploy_sync_inflight:
+            return
+        _deploy_sync_inflight = True
+
+    def _worker() -> None:
+        global _deploy_sync_inflight
+        try:
+            sync_recent_deployments(limit=limit, page=page)
+        except Exception:
+            logger.exception("No se pudo actualizar el historico de despliegues en segundo plano")
+        finally:
+            with _deploy_sync_lock:
+                _deploy_sync_inflight = False
+
+    Thread(
+        target=_worker,
+        daemon=True,
+        name=f"deploy-history-sync-p{page}",
+    ).start()
 
 
 def _rag_service():
@@ -648,9 +674,9 @@ def admin_list_deployments(request: Request, page: int = 1, page_size: int = 25)
     _assert_admin(request)
     current_page = max(1, int(page or 1))
     size = max(1, min(int(page_size or 25), 50))
-    sync_recent_deployments(limit=size, page=current_page)
     page_data = list_deployments(page=current_page, page_size=size)
     page_data["settings"] = get_notification_settings()
+    _sync_recent_deployments_background(limit=size, page=current_page)
     return page_data
 
 
