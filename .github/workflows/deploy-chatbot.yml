@@ -392,7 +392,7 @@ jobs:
             exit 0
           }
 
-          $webhookUrl = "$env:STATIC_WEB_APP_API_BASE/admin/deployments/webhook"
+          $webhookUrl = "$env:BACKEND_URL/admin/deployments/webhook"
           $payload = @{
             run_id = [int64]"${{ github.run_id }}"
             run_number = [int]"${{ github.run_number }}"
