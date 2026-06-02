@@ -45,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY backend/requirements.txt .
 RUN pip install --upgrade pip \
-    && pip install --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.3.1+cpu" \
+    && pip install --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.4.1+cpu" \
     && pip install -r requirements.txt
 RUN python -c "import os; from sentence_transformers import SentenceTransformer; model=os.environ['RERANK_MODEL']; revision=os.getenv('RERANK_MODEL_REVISION') or None; kwargs={'revision': revision} if revision else {}; SentenceTransformer(model, **kwargs)"
 
