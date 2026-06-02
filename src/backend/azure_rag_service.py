@@ -35,6 +35,7 @@ from rag_service import (
     _encode_passage,
     _encode_query,
     _EF_VERSION,
+    _decode_chunk_corruption,
     _extract_text_blocks,
     _extract_topic_terms,
     _normalize_text,
@@ -153,6 +154,7 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
         for page_index, page in enumerate(pdf):
             page_number = page_index + 1
             text = _extract_page_text(page)
+            text = _decode_chunk_corruption(text, blob_name)
             page_blocks = _extract_text_blocks(text)
             if not page_blocks:
                 continue
@@ -359,6 +361,7 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         section_suffix = f", {section}" if section else ""
         source_label = f"{source} (pag. {page}{section_suffix})"
         content = item.get("content", "")
+        content = _decode_chunk_corruption(content, source)
         context_parts.append(f"[{source_label}]\n{content}")
         if source_label not in seen_sources:
             sources.append(source_label)

@@ -142,6 +142,55 @@ def _is_noise_chunk(text: str) -> bool:
     if len(words) >= 4 and len(set(w.lower() for w in words)) <= 2:
         return True
     return False
+
+
+def _normalize_rite_table31_text(text: str) -> str:
+    """Hace legibles filas compactadas de la Tabla 3.1 del RITE."""
+    if not text:
+        return text
+    normalized = text
+    replacements = {
+        "Tabla?Operacionesdemantenimientopreventivoysuperiodicidad": (
+            "Tabla 3.1. Operaciones de mantenimiento preventivo y su periodicidad"
+        ),
+        "Limpiezadelosevaporadores": "Limpieza de los evaporadores",
+        "Limpiezadeloscondensadores": "Limpieza de los condensadores",
+        "RevisiÓngeneraldecalderasdegas": "Revision general de calderas de gas",
+        "RevisiÓngeneraldecalderasdegasÓleo": "Revision general de calderas de gasoleo",
+        "3FWJTJÓO\u0001HFOFSBM\u0001EF\u0001DBMEFSBT\u0001EF\u0001HBT": "Revision general de calderas de gas",
+        "3FWJTJÓO HFOFSBM EF DBMEFSBT EF HBT": "Revision general de calderas de gas",
+        "3FWJTJÓO\u0001HFOFSBM\u0001EF\u0001DBMEFSBT\u0001EF\u0001HBTÓMFP": "Revision general de calderas de gasoleo",
+        "0QFSBDJÓO": "Operacion",
+        "1FSJPEJDJEBE": "Periodicidad",
+        "RevisiÓndeloselementosdeseguridad": "Revision de los elementos de seguridad",
+        "T VOBWF[DBEBTFNBOB": "S = una vez cada semana",
+        "N VOBWF[BMNFT": "M = una vez al mes",
+        "U VOBWF[QPSUFNQPSBEB": "U = una vez por temporada",
+        "BÒP": "(año)",
+    }
+    for old, new in replacements.items():
+        normalized = normalized.replace(old, new)
+
+    compact = normalized.replace(" ", "")
+    if (
+        "Tabla3.1" in compact
+        or "Tabla?Operacionesdemantenimientopreventivoysuperiodicidad" in text
+        or "Limpiezadelosevaporadores" in compact
+        or "Limpiezadeloscondensadores" in compact
+        or "Revisiongeneraldecalderasdegas" in compact
+        or "Revision general de calderas de gas" in normalized
+        or "Revisión general de calderas de gas" in normalized
+    ):
+        legend = (
+            "Leyenda Tabla 3.1 RITE: en el texto extraido, U corresponde a "
+            "una vez por temporada (año). Si una fila aparece como U U, la "
+            "periodicidad es una vez por temporada para ambas columnas de potencia."
+        )
+        if legend not in normalized:
+            normalized = f"{normalized}\n{legend}"
+    return normalized
+
+
 def _decode_chunk_corruption(text: str, source: str = "") -> str:
     """Decodifica corrupción de desplazamiento +31 bytes en PDFs con fuentes mal embebidas.
 
@@ -175,7 +224,8 @@ def _decode_chunk_corruption(text: str, source: str = "") -> str:
             changed = True
         else:
             result.append(line)
-    return "\n".join(result) if changed else text
+    decoded = "\n".join(result) if changed else text
+    return _normalize_rite_table31_text(decoded)
 
 
 MAX_TOPIC_TOKENS = 6

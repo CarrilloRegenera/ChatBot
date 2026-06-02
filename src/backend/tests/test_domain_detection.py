@@ -164,6 +164,17 @@ def test_alias_document_triggers_correct_domain():
 # Fallo 2 — Decoder +31 de corrupción
 # ---------------------------------------------------------------------------
 
+def test_rite_table31_human_queries_trigger_rite_domain():
+    """Preguntas humanas sobre Tabla 3.1/mantenimiento HVAC deben acotar a RITE."""
+    questions = [
+        "En un edificio de menos de 70kw indicame la periodicidad de revision general de caldera de gas segun tabla 3.1",
+        "periodicidad de limpieza de condensadores en operaciones de mantenimiento",
+        "y limpieza de los evaporadores?",
+    ]
+    for question in questions:
+        assert "rite" in _expected_domains(question)
+
+
 def test_decode_chunk_corruption_known_rows():
     """Las filas conocidas de la Tabla 3.1 del RITE se decodifican correctamente."""
     rite_source = "rite/A35931-35984.pdf"
@@ -186,6 +197,15 @@ def test_decode_chunk_corruption_known_rows():
     assert "U U" in decoded_cond or decoded_cond.strip().endswith("U"), (
         f"Códigos de periodicidad alterados: {decoded_cond!r}"
     )
+
+
+def test_decode_rite_table31_adds_human_readable_legend():
+    rite_source = "rite/A35931-35984.pdf"
+    chunk = "Tabla?Operacionesdemantenimientopreventivoysuperiodicidad\nLimpiezadelosevaporadores. U U"
+    decoded = _decode_chunk_corruption(chunk, rite_source)
+    assert "Tabla 3.1" in decoded
+    assert "Limpieza de los evaporadores" in decoded
+    assert "U corresponde a una vez por temporada" in decoded
 
 
 def test_decode_chunk_corruption_preserves_legible_text():
@@ -240,10 +260,10 @@ def test_detect_hint_domains_from_baja_tension_history():
     assert "baja_tension" in hints
 
 
-def test_detect_hint_domains_empty_on_generic_text():
-    """Texto genérico sin trigger_terms no produce hints."""
+def test_detect_hint_domains_from_rite_table31_followup():
+    """Seguimientos sobre evaporadores mantienen el dominio RITE."""
     hints = detect_hint_domains("y cuál es la periodicidad de limpieza de los evaporadores")
-    assert hints == []
+    assert "rite" in hints
 
 
 def test_detect_hint_domains_empty_input():

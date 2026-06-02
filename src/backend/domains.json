@@ -37,6 +37,9 @@
       "confidentiality": "internal",
       "trigger_terms": [
         "rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion",
+        "tabla 3.1", "operaciones de mantenimiento", "mantenimiento preventivo",
+        "caldera de gas", "calderas de gas", "limpieza de condensadores",
+        "limpieza de evaporadores", "condensadores", "evaporadores",
         "a35931-35984", "a35931", "a35984"
       ],
       "trigger_regex": [],
@@ -55,7 +58,7 @@
         },
         {
           "if_contains": ["caldera", "gas"],
-          "emit": ["3FWJTJÓOHFOFSBMEFDBMFSBTEFHBT", "una vez por temporada"]
+          "emit": ["3FWJTJÓOHFOFSBMEFDBMEFSBTEFHBT", "3FWJTJÓOHFOFSBMEFDBMFSBTEFHBT", "DBMEFSBT", "HBT", "1FSJPEJDJEBE: U", "una vez por temporada"]
         },
         {
           "if_contains": ["tabla", "mantenimiento"],

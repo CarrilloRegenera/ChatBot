@@ -68,7 +68,7 @@ env:
   EMBEDDING_PASSAGE_PREFIX: "passage:"
   RERANK_MODEL: intfloat/multilingual-e5-small
   RERANK_MODEL_REVISION: ""
-  RAG_INDEX_VERSION: "2"
+  RAG_INDEX_VERSION: "3"
   RERANK_WEIGHT: "9.0"
   MAX_CHUNKS_PER_SOURCE: "4"
   MIN_QUERY_LENGTH: "4"
@@ -327,10 +327,14 @@ jobs:
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             try {
               $response = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/health" -TimeoutSec 20
-              if ($response.status -eq "ok") {
+              if ($response.chat_router_error) {
+                throw "Error cargando rutas de chat: $($response.chat_router_error)"
+              }
+              if ($response.status -eq "ok" -and $response.runtime_ready -eq $true -and $response.chat_router_ready -eq $true) {
                 Write-Host "Health check correcto en $env:BACKEND_URL/health"
                 exit 0
               }
+              Write-Host "Backend vivo pero aun preparando runtime/chat router (intento $attempt/$maxAttempts)"
             } catch {
               Write-Host "Backend aun arrancando (intento $attempt/$maxAttempts)"
             }
@@ -393,6 +397,17 @@ jobs:
           }
 
           $webhookUrl = "$env:BACKEND_URL/admin/deployments/webhook"
+          try {
+            $health = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/health" -TimeoutSec 20
+            if (-not ($health.status -eq "ok" -and $health.runtime_ready -eq $true -and $health.chat_router_ready -eq $true)) {
+              Write-Warning "Webhook omitido: backend no listo para rutas admin. health=$($health | ConvertTo-Json -Compress)"
+              exit 0
+            }
+          } catch {
+            Write-Warning "Webhook omitido: no se pudo comprobar /health antes de notificar: $($_.Exception.Message)"
+            exit 0
+          }
+
           $payload = @{
             run_id = [int64]"${{ github.run_id }}"
             run_number = [int]"${{ github.run_number }}"
