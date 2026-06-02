@@ -1,4 +1,5 @@
-FROM mcr.microsoft.com/devcontainers/python:3.11-bookworm
+ARG BASE_IMAGE=python:3.11-bookworm
+FROM ${BASE_IMAGE}
 
 ARG EMBEDDING_MODEL=intfloat/multilingual-e5-small
 ARG RERANK_MODEL=${EMBEDDING_MODEL}
