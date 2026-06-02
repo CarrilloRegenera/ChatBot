@@ -128,6 +128,7 @@ def health():
         "startup_error": getattr(app.state, "startup_error", ""),
         "chat_router_ready": bool(getattr(app.state, "chat_router_ready", False)),
         "chat_router_error": getattr(app.state, "chat_router_error", ""),
+        "deployment_image_tag": os.getenv("DEPLOY_IMAGE_TAG", "").strip(),
     }
 
 

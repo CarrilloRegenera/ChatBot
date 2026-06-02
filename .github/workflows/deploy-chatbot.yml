@@ -217,6 +217,7 @@ jobs:
             "OPENAI_API_KEY=$env:OPENAI_API_KEY",
             "HF_TOKEN=$env:HF_TOKEN",
             "HUGGINGFACE_HUB_TOKEN=$env:HUGGINGFACE_HUB_TOKEN",
+            "DEPLOY_IMAGE_TAG=$env:IMAGE_TAG",
             "OPENAI_MODEL=$env:OPENAI_MODEL",
             "OPENAI_BASELINE_MODEL=$env:OPENAI_BASELINE_MODEL",
             "LLM_SECONDARY_MODEL=$env:LLM_SECONDARY_MODEL",
@@ -324,18 +325,30 @@ jobs:
         shell: pwsh
         run: |
           $maxAttempts = 120
+          $stableChecks = 0
+          Write-Host "Esperando a que el backend sirva la imagen $env:IMAGE_TAG"
+          Start-Sleep -Seconds 30
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             try {
               $response = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/health" -TimeoutSec 20
               if ($response.chat_router_error) {
                 throw "Error cargando rutas de chat: $($response.chat_router_error)"
               }
-              if ($response.status -eq "ok" -and $response.runtime_ready -eq $true -and $response.chat_router_ready -eq $true) {
-                Write-Host "Health check correcto en $env:BACKEND_URL/health"
+              $isExpectedImage = $response.deployment_image_tag -eq $env:IMAGE_TAG
+              $isReady = $response.status -eq "ok" -and $response.runtime_ready -eq $true -and $response.chat_router_ready -eq $true
+              if ($isReady -and $isExpectedImage) {
+                $stableChecks += 1
+                Write-Host "Health correcto ($stableChecks/3) para imagen $env:IMAGE_TAG"
+              } else {
+                $stableChecks = 0
+                Write-Host "Backend vivo pero no listo para esta imagen (intento $attempt/$maxAttempts): $($response | ConvertTo-Json -Compress)"
+              }
+              if ($stableChecks -ge 3) {
+                Write-Host "Health check estable en $env:BACKEND_URL/health"
                 exit 0
               }
-              Write-Host "Backend vivo pero aun preparando runtime/chat router (intento $attempt/$maxAttempts)"
             } catch {
+              $stableChecks = 0
               Write-Host "Backend aun arrancando (intento $attempt/$maxAttempts)"
             }
             Start-Sleep -Seconds 10
@@ -399,7 +412,7 @@ jobs:
           $webhookUrl = "$env:BACKEND_URL/admin/deployments/webhook"
           try {
             $health = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/health" -TimeoutSec 20
-            if (-not ($health.status -eq "ok" -and $health.runtime_ready -eq $true -and $health.chat_router_ready -eq $true)) {
+            if (-not ($health.status -eq "ok" -and $health.runtime_ready -eq $true -and $health.chat_router_ready -eq $true -and $health.deployment_image_tag -eq $env:IMAGE_TAG)) {
               Write-Warning "Webhook omitido: backend no listo para rutas admin. health=$($health | ConvertTo-Json -Compress)"
               exit 0
             }
