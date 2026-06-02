@@ -8,7 +8,8 @@
       "trigger_terms": [
         "alta tension", "itc-lat", "lineas electricas de alta",
         "linea de at", "lineas de at", "instalacion at", "instalaciones at",
-        "avance del sector electrico"
+        "avance del sector electrico",
+        "a16436-16554", "a16436", "a16554"
       ],
       "trigger_regex": ["\\blat\\b"],
       "source_tokens": ["itc-lat", "lat", "a16436", "a16554", "alta_tension", "alta-tension"],
@@ -35,13 +36,40 @@
       "document_type": "reglamento",
       "confidentiality": "internal",
       "trigger_terms": [
-        "rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion"
+        "rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion",
+        "a35931-35984", "a35931", "a35984"
       ],
       "trigger_regex": [],
       "source_tokens": ["rite", "a35931", "a35984", "termicas", "instalaciones_termicas"],
       "source_phrases": ["instalaciones termicas"],
       "folder_prefixes": ["rite", "instalaciones_termicas", "termicas"],
-      "phrase_queries": [],
+      "encoding": {"type": "shift31"},
+      "phrase_queries": [
+        {
+          "if_contains": ["condensadores"],
+          "emit": ["-JNQJF[BEFMPTDPOEFOTBEPSFT", "una vez por temporada"]
+        },
+        {
+          "if_contains": ["evaporadores"],
+          "emit": ["-JNQJF[BEFMPTFWBQPSBEPSFT", "una vez por temporada"]
+        },
+        {
+          "if_contains": ["caldera", "gas"],
+          "emit": ["3FWJTJÓOHFOFSBMEFDBMFSBTEFHBT", "una vez por temporada"]
+        },
+        {
+          "if_contains": ["tabla", "mantenimiento"],
+          "emit": ["una vez por temporada", "IT 3.3"]
+        },
+        {
+          "if_contains": ["indice", "rite"],
+          "emit": ["rticulo 1", "NDICE"]
+        },
+        {
+          "if_contains": ["indice", "articulos"],
+          "emit": ["rticulo 1", "NDICE"]
+        }
+      ],
       "scoring": {}
     },
     "baja_tension": {
@@ -49,7 +77,7 @@
       "document_type": "reglamento",
       "confidentiality": "internal",
       "trigger_terms": [
-        "rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico",
+        "rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico", "boe326",
         "electrificacion basica", "electrificacion elevada", "circuitos minimos", "circuito c1", "itc-bt-25"
       ],
       "trigger_regex": [],

@@ -54,6 +54,15 @@ def _load_domain_config() -> dict:
 
 _DOMAIN_CFG = _load_domain_config()
 
+# Tokens de fuente de dominios que usan encoding shift+31 (fuentes PDF mal embebidas).
+# Se deriva de domains.json en tiempo de carga; no requiere cambios en código para nuevos dominios.
+_SHIFT31_SOURCE_TOKENS: frozenset[str] = frozenset(
+    token
+    for cfg in _DOMAIN_CFG.get("domains", {}).values()
+    if cfg.get("encoding", {}).get("type") == "shift31"
+    for token in cfg.get("source_tokens", [])
+)
+
 # OCR opcional para PDFs escaneados. Activar con RAG_OCR_ENABLED=1.
 # Requiere Tesseract instalado en el sistema y `pytesseract` + `Pillow` en pip.
 # Si no están disponibles, el pipeline OCR se desactiva en caliente con un
@@ -132,6 +141,42 @@ def _is_noise_chunk(text: str) -> bool:
     if len(words) >= 4 and len(set(w.lower() for w in words)) <= 2:
         return True
     return False
+def _decode_chunk_corruption(text: str, source: str = "") -> str:
+    """Decodifica corrupción de desplazamiento +31 bytes en PDFs con fuentes mal embebidas.
+
+    Solo actúa sobre fuentes RITE (a35931 en nombre de fichero).  Detecta
+    líneas con la firma de corrupción (guion o dígito + 3+ mayúsculas ASCII) y
+    aplica el decode +31 a la parte del nombre de operación, preservando los
+    códigos de periodicidad al final de cada fila (ej. 'U U', 'T').
+    Devuelve el texto original sin cambios si no hay firma o si la fuente no es RITE.
+    """
+    src = source.lower().replace("\\", "/")
+    if not any(token in src for token in _SHIFT31_SOURCE_TOKENS):
+        return text
+    lines = text.split("\n")
+    changed = False
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if _LINE_CORRUPT_PATTERN.match(stripped):
+            trail = _TRAILING_CODES_RE.search(stripped)
+            if trail:
+                name_part = stripped[: trail.start()]
+                code_part = stripped[trail.start():]
+            else:
+                name_part = stripped
+                code_part = ""
+            decoded_name = "".join(
+                chr(ord(c) + 31) if 32 <= ord(c) + 31 <= 126 else c
+                for c in name_part
+            )
+            result.append(decoded_name + code_part)
+            changed = True
+        else:
+            result.append(line)
+    return "\n".join(result) if changed else text
+
+
 MAX_TOPIC_TOKENS = 6
 SECTION_LABEL_MAX_LENGTH = 80
 HEADING_LINE_MAX_WORDS = 10
@@ -193,6 +238,11 @@ UNIT_QUERY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 LIST_CUE_PATTERN = re.compile(r"(?:^|\n)(?:[-*]\s+|\d+\.\s+)", re.IGNORECASE)
+# Detección de corrupción +31 en PDFs con fuentes mal embebidas (ej. RITE Tabla 3.1).
+# Firma: línea que empieza con guion o dígito seguido de 3+ letras mayúsculas ASCII.
+_LINE_CORRUPT_PATTERN = re.compile(r"^[-0-9][A-Z\[\]]{3,}")
+# Códigos de periodicidad al final de fila (p.ej. " U U", " T", " 2U") — no se decodifican.
+_TRAILING_CODES_RE = re.compile(r"(\s+[A-Z0-9]{1,3}){1,4}\s*$")
 CIRCUIT_LIST_CUE_PATTERN = re.compile(r"\bC(?:1[0-3]?|[1-9])\b", re.IGNORECASE)
 TABLE_ROW_CUE_PATTERN = re.compile(
     r"(?:\b(?:c\d{1,2}|itc[-\s]*[a-z]{1,4}[-\s]*\d+|ip\d{2}|ik\d{2})\b|\s{2,}|[;|]{1}|\b(?:fase|circuito|uso|proteccion|potencia|seccion|denominacion|descripcion)\b)",
@@ -307,12 +357,13 @@ class _QueryCache:
         self._ttl = ttl
         self._lock = threading.Lock()
 
-    def _key(self, question: str, n_results: int, domain: str = "") -> str:
+    def _key(self, question: str, n_results: int, domain: str = "", hint_domains: List[str] | None = None) -> str:
         normalized = _normalize_text(question.strip())
-        return f"{normalized}::{n_results}::{_normalize_text(domain)}"
+        hints = ",".join(sorted(hint_domains)) if hint_domains else ""
+        return f"{normalized}::{n_results}::{_normalize_text(domain)}::{hints}"
 
-    def get(self, question: str, n_results: int, domain: str = ""):
-        key = self._key(question, n_results, domain)
+    def get(self, question: str, n_results: int, domain: str = "", hint_domains: List[str] | None = None):
+        key = self._key(question, n_results, domain, hint_domains)
         with self._lock:
             entry = self._cache.get(key)
             if entry is None:
@@ -324,8 +375,8 @@ class _QueryCache:
             self._cache.move_to_end(key)
             return value
 
-    def put(self, question: str, n_results: int, value: object, domain: str = "") -> None:
-        key = self._key(question, n_results, domain)
+    def put(self, question: str, n_results: int, value: object, domain: str = "", hint_domains: List[str] | None = None) -> None:
+        key = self._key(question, n_results, domain, hint_domains)
         with self._lock:
             self._cache[key] = (time.monotonic(), value)
             self._cache.move_to_end(key)
@@ -889,6 +940,37 @@ def _domain_phrase_queries(clean_question: str) -> List[str]:
                         phrases.append(phrase)
     return phrases
 
+
+# Palabras funcionales largas que no son términos técnicos (8+ chars pero genéricas).
+_GENERIC_LONG_WORDS: frozenset[str] = frozenset([
+    "instalaciones", "instalacion", "articulos", "documento", "documentos",
+    "reglamento", "informacion", "descripcion", "diferencia", "relacionado",
+    "siguientes", "siguiente", "anterior", "anteriores", "regulacion",
+    "normativa", "normativas", "especifica", "especificas", "especifico",
+    "preguntas", "respuesta", "respuestas", "indicadas", "indicados",
+    "obligatorio", "obligatoria", "necesario", "necesaria", "requisitos",
+    "requisito", "cualquier", "diferente", "distintos", "distintas",
+    "tambien", "ademas", "segun", "mediante", "conforme",
+])
+
+
+def _auto_technical_terms(clean_question: str) -> List[str]:
+    """Extrae términos técnicos de la pregunta para usarlos como búsqueda léxica adicional.
+
+    Solo devuelve palabras de 8+ caracteres que no sean funcionales ni genéricas.
+    Se usa cuando expected_domains no está vacío para acotar el ruido.
+    """
+    normalized = _normalize_text(clean_question)
+    words = re.findall(r"[a-z]{8,}", normalized)
+    seen: set = set()
+    result = []
+    for w in words:
+        if w not in _GENERIC_LONG_WORDS and w not in seen:
+            seen.add(w)
+            result.append(w)
+    return result
+
+
 def _extract_reference_terms(text: str) -> List[str]:
     return [match.group(0).strip().lower() for match in REFERENCE_PATTERN.finditer(text or "")]
 
@@ -1323,6 +1405,15 @@ def _expected_domains(question: str) -> List[str]:
     return domains
 
 
+def detect_hint_domains(text: str) -> List[str]:
+    """Extrae dominios detectables de un texto (p.ej. historial de conversación).
+
+    Pensado para propagar contexto de dominio de turnos anteriores a preguntas
+    de seguimiento cortas que no contienen trigger_terms explícitos.
+    """
+    return _expected_domains(_clean_question(text)) if text and text.strip() else []
+
+
 def _query_mentions_bt40(question: str) -> bool:
     normalized = _normalize_text(question or "")
     compact = re.sub(r"[^a-z0-9]+", "", normalized)
@@ -1439,6 +1530,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                         "[OCR] %s pag %d: texto recuperado por OCR (%d chars)",
                         source_name, page_index + 1, len(text),
                     )
+            text = _decode_chunk_corruption(text, source_name)
             page_blocks = _extract_text_blocks(text)
             if not page_blocks:
                 continue
@@ -1654,7 +1746,7 @@ def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> in
     return collection.count()
 
 
-def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESULTS, domain: str = "") -> Tuple[str, List[str], Dict[str, object]]:
+def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESULTS, domain: str = "", hint_domains: List[str] | None = None) -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
         return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
     if _embedding_fn is None:
@@ -1705,6 +1797,9 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             if t not in core_terms:
                 core_terms.append(t)
     expected_domains = [domain] if domain else _expected_domains(clean_question)
+    if not expected_domains and hint_domains:
+        expected_domains = [d for d in hint_domains if d]
+        logger.debug("hint_domains aplicados como fallback: %s", expected_domains)
     if mentions_bt40 and "guias_tecnicas" not in expected_domains:
         expected_domains.append("guias_tecnicas")
     if target_itc_refs and "baja_tension" not in expected_domains:
@@ -1713,6 +1808,13 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         for domain in ("baja_tension", "guias_tecnicas"):
             if domain not in expected_domains:
                 expected_domains.append(domain)
+    if expected_domains:
+        auto_terms = _auto_technical_terms(clean_question)
+        existing = set(query_profile["phrase_queries"])
+        new_terms = [t for t in auto_terms if t not in existing]
+        if new_terms:
+            query_profile["phrase_queries"] = query_profile["phrase_queries"] + new_terms
+            logger.debug("auto_technical_terms añadidos: %s", new_terms)
     broad_query = any((
         query_profile["definition_query"],
         query_profile["list_query"],
@@ -2469,6 +2571,8 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     if query_profile["table_query"]:
         source_cap += 3
         section_cap += 2
+        if expected_domains and len(expected_domains) == 1:
+            source_cap = max(source_cap, n_results + 4)
     if mentions_bt_generators:
         source_cap += 3
         section_cap += 2
@@ -2772,7 +2876,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         inferred_itcs = sorted(_inferred_itc_refs(metadata, document))
         itc_suffix = f", {', '.join(ref.upper() for ref in inferred_itcs[:3])}" if inferred_itcs else ""
         source_label = f"{metadata['source']} (pag. {metadata['page']}{printed_suffix}{itc_suffix}{section_suffix}{kind_suffix})"
-        context_parts.append(f"[{source_label}]\n{document}")
+        context_parts.append(f"[{source_label}]\n{_decode_chunk_corruption(document, source_name)}")
         if source_label not in seen_sources:
             sources.append(source_label)
             seen_sources.add(source_label)
@@ -2846,8 +2950,8 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     return "\n\n".join(context_parts), sources, retrieval_stats
 
 
-def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, domain: str = "") -> Tuple[str, List[str], Dict[str, object]]:
-    cached = _query_cache.get(question, n_results, domain)
+def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, domain: str = "", hint_domains: List[str] | None = None) -> Tuple[str, List[str], Dict[str, object]]:
+    cached = _query_cache.get(question, n_results, domain, hint_domains)
     if cached is not None:
         logger.debug("Cache hit para query: %s", question[:60])
         return cached
@@ -2855,8 +2959,8 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, dom
         from azure_rag_service import search_documents_detailed_azure
         result = search_documents_detailed_azure(question, n_results=n_results)
     else:
-        result = _search_documents_detailed_chroma(question, n_results=n_results, domain=domain)
-    _query_cache.put(question, n_results, result, domain)
+        result = _search_documents_detailed_chroma(question, n_results=n_results, domain=domain, hint_domains=hint_domains)
+    _query_cache.put(question, n_results, result, domain, hint_domains)
     return result
 
 
