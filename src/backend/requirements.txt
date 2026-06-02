@@ -6,6 +6,7 @@ openai>=1.0.0
 PyMuPDF==1.27.2.2
 chromadb==1.5.7
 sentence-transformers==5.4.1
+transformers==4.45.2
 azure-core>=1.30.0
 azure-storage-blob>=12.19.0
 azure-search-documents>=11.6.0
