@@ -327,7 +327,7 @@ jobs:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
         run: |
-          $maxAttempts = 30
+          $maxAttempts = 60
           $stableChecks = 0
           Write-Host "Esperando a que el backend sirva la imagen $env:IMAGE_TAG"
           Start-Sleep -Seconds 30
