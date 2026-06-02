@@ -1,4 +1,4 @@
-FROM python:3.11-bookworm
+FROM mcr.microsoft.com/devcontainers/python:3.11-bookworm
 
 ARG EMBEDDING_MODEL=intfloat/multilingual-e5-small
 ARG RERANK_MODEL=${EMBEDDING_MODEL}
