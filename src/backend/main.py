@@ -43,6 +43,18 @@ app.include_router(auth_router)
 app.include_router(auth_router, prefix="/api")
 
 
+def _is_lightweight_path(path: str) -> bool:
+    normalized = path.rstrip("/") or "/"
+    return (
+        normalized in {"/", "/api", "/health", "/api/health"}
+        or normalized.startswith("/login")
+        or normalized.startswith("/api/login")
+        or normalized.startswith("/registro")
+        or normalized.startswith("/api/registro")
+        or normalized.startswith("/ui")
+    )
+
+
 def _include_chat_router() -> None:
     if getattr(app.state, "chat_router_ready", False):
         return
@@ -77,6 +89,25 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def lazy_chat_router_middleware(request: Request, call_next):
+    if request.method.upper() != "OPTIONS" and not _is_lightweight_path(request.url.path):
+        try:
+            _include_chat_router()
+        except Exception as exc:
+            app.state.chat_router_error = str(exc)
+            logging.getLogger(__name__).exception("No se pudieron cargar las rutas de chat")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "El servicio de chat todavia se esta cargando. Intentalo de nuevo en unos segundos.",
+                    "chat_router_ready": False,
+                    "chat_router_error": str(exc),
+                },
+            )
+    return await call_next(request)
+
+
 @app.on_event("startup")
 def startup_init():
     app.state.runtime_ready = False
@@ -87,18 +118,14 @@ def startup_init():
 def _startup_background_init():
     logger = logging.getLogger(__name__)
     app.state.database_ready = False
-    try:
-        _include_chat_router()
-    except Exception as exc:
-        app.state.chat_router_error = str(exc)
-        logger.exception("No se pudieron cargar las rutas de chat")
+    if not SYNC_DOCUMENTS_ON_STARTUP:
+        logger.info("sync_documents desactivado en startup (SYNC_DOCUMENTS_ON_STARTUP=false)")
+        app.state.runtime_ready = True
     try:
         warm_entra_jwks()
     except Exception:
         logger.warning("No se pudo precalentar JWKS de Entra en startup", exc_info=True)
     if not SYNC_DOCUMENTS_ON_STARTUP:
-        logger.info("sync_documents desactivado en startup (SYNC_DOCUMENTS_ON_STARTUP=false)")
-        app.state.runtime_ready = True
         return
     try:
         from rag_service import sync_documents

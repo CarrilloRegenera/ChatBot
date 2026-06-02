@@ -338,7 +338,7 @@ jobs:
                 throw "Error cargando rutas de chat: $($response.chat_router_error)"
               }
               $isExpectedImage = $response.deployment_image_tag -eq $env:IMAGE_TAG
-              $isReady = $response.status -eq "ok" -and $response.runtime_ready -eq $true -and $response.chat_router_ready -eq $true
+              $isReady = $response.status -eq "ok" -and $response.runtime_ready -eq $true
               if ($isReady -and $isExpectedImage) {
                 $stableChecks += 1
                 Write-Host "Health correcto ($stableChecks/3) para imagen $env:IMAGE_TAG"
@@ -427,11 +427,11 @@ jobs:
           try {
             $health = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/health" -TimeoutSec 20
             if (-not ($health.status -eq "ok" -and $health.runtime_ready -eq $true -and $health.chat_router_ready -eq $true -and $health.deployment_image_tag -eq $env:IMAGE_TAG)) {
-              Write-Warning "Webhook omitido: backend no listo para rutas admin. health=$($health | ConvertTo-Json -Compress)"
+              Write-Host "Webhook omitido: backend no listo para rutas admin. health=$($health | ConvertTo-Json -Compress)"
               exit 0
             }
           } catch {
-            Write-Warning "Webhook omitido: no se pudo comprobar /health antes de notificar: $($_.Exception.Message)"
+            Write-Host "Webhook omitido: no se pudo comprobar /health antes de notificar: $($_.Exception.Message)"
             exit 0
           }
 
