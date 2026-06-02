@@ -17,7 +17,9 @@ from rag_service import (  # noqa: E402
     _auto_technical_terms,
     _decode_chunk_corruption,
     _domain_phrase_queries,
+    _EF_VERSION,
     _expected_domains,
+    _rag_index_version_tag,
     _SHIFT31_SOURCE_TOKENS,
     _source_domain_key,
     _source_taxonomy,
@@ -304,6 +306,13 @@ def test_shift31_tokens_derived_from_domains_json():
     assert "rite" in _SHIFT31_SOURCE_TOKENS, (
         "'rite' debería estar en _SHIFT31_SOURCE_TOKENS"
     )
+
+
+def test_rag_index_version_is_part_of_embedding_version():
+    """RAG_INDEX_VERSION forma parte de la version que fuerza reindexado."""
+    assert "-i" in _EF_VERSION
+    assert _rag_index_version_tag("  produccion 2 / textos corruptos ") == "produccion-2-textos-corruptos"
+    assert _rag_index_version_tag("") == "1"
 
 
 def test_decode_corruption_uses_config_not_hardcode():

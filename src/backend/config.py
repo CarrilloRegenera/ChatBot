@@ -145,6 +145,7 @@ APPREGENERA_ALLOWED_MODULES = tuple(
 APPREGENERA_DEV_BYPASS_KEY = os.getenv("APPREGENERA_DEV_BYPASS_KEY", "").strip()
 
 RAG_BACKEND = os.getenv("RAG_BACKEND", "chroma").strip().lower()
+RAG_INDEX_VERSION = os.getenv("RAG_INDEX_VERSION", "1").strip() or "1"
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT", "").strip().rstrip("/")
 AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY", "").strip()
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME", "idx-chatbot-rag").strip()

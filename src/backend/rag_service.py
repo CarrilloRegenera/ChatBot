@@ -25,6 +25,7 @@ from config import (
     MAX_CHUNKS_PER_SOURCE,
     RECURSIVE_PDF_SCAN,
     RAG_BACKEND,
+    RAG_INDEX_VERSION,
     EMBEDDING_FP16,
     EMBEDDING_QUERY_PREFIX,
     EMBEDDING_PASSAGE_PREFIX,
@@ -469,7 +470,14 @@ _model_tag = RERANK_MODEL.split("/")[-1].lower().replace("-", "")
 _prefix_tag = hashlib.md5(
     f"{EMBEDDING_QUERY_PREFIX}|{EMBEDDING_PASSAGE_PREFIX}".encode("utf-8")
 ).hexdigest()[:8]
-_EF_VERSION = f"{_model_tag}-v2-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
+
+
+def _rag_index_version_tag(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "-", value or "").strip("-") or "1"
+
+
+_index_version_tag = _rag_index_version_tag(RAG_INDEX_VERSION)
+_EF_VERSION = f"{_model_tag}-v2-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}-i{_index_version_tag}"
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
