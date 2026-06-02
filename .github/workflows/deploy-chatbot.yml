@@ -323,8 +323,11 @@ jobs:
       - name: Wait for backend health
         if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
         shell: pwsh
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
         run: |
-          $maxAttempts = 120
+          $maxAttempts = 30
           $stableChecks = 0
           Write-Host "Esperando a que el backend sirva la imagen $env:IMAGE_TAG"
           Start-Sleep -Seconds 30
@@ -352,6 +355,17 @@ jobs:
               Write-Host "Backend aun arrancando (intento $attempt/$maxAttempts)"
             }
             Start-Sleep -Seconds 10
+          }
+          Write-Host "Diagnostico App Service tras fallo de health"
+          az webapp show --resource-group $env:RESOURCE_GROUP --name $env:WEBAPP_NAME --query "{state:state, availabilityState:availabilityState, hostNames:hostNames, containerSize:siteConfig.containerSize, linuxFxVersion:siteConfig.linuxFxVersion, appCommandLine:siteConfig.appCommandLine}" -o json
+          az webapp log download --resource-group $env:RESOURCE_GROUP --name $env:WEBAPP_NAME --log-file appservice-logs.zip
+          if (Test-Path appservice-logs.zip) {
+            Expand-Archive -Path appservice-logs.zip -DestinationPath appservice-logs -Force
+            Get-ChildItem -Path appservice-logs -Recurse | Select-Object -First 40 | Format-Table -AutoSize
+            Get-ChildItem -Path appservice-logs -Recurse -File | Where-Object { $_.Name -match 'docker|container|application|default' } | Select-Object -First 8 | ForEach-Object {
+              Write-Host "===== LOG $($_.FullName) ====="
+              Get-Content -LiteralPath $_.FullName -Tail 120
+            }
           }
           throw "El backend no respondió correctamente en /health"
 

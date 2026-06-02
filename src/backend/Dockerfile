@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/python:3.11-bookworm
+FROM mcr.microsoft.com/appsvc/python:3.11_20260504.4.tuxprod
 
 ARG EMBEDDING_MODEL=intfloat/multilingual-e5-small
 ARG RERANK_MODEL=${EMBEDDING_MODEL}
