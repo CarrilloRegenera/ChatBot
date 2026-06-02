@@ -56,14 +56,21 @@ env:
   BLOB_PREFIX: ""
   BLOB_PREFIX_ALTA_TENSION: alta_tension/
   BLOB_PREFIX_BAJA_TENSION: baja_tension/
+  BLOB_PREFIX_FOTOVOLTAICA_OM: fotovoltaica_om/
+  BLOB_PREFIX_GRUPOS_ELECTROGENOS: grupos_electrogenos/
   BLOB_PREFIX_GUIAS_TECNICAS: guias_tecnicas/
   BLOB_PREFIX_RITE: rite/
-  TOP_K_RESULTS: "3"
+  TOP_K_RESULTS: "5"
   ENABLE_RERANK: "true"
-  RERANK_MODEL: paraphrase-multilingual-MiniLM-L12-v2
+  EMBEDDING_MODEL: intfloat/multilingual-e5-small
+  EMBEDDING_FP16: "false"
+  EMBEDDING_QUERY_PREFIX: "query:"
+  EMBEDDING_PASSAGE_PREFIX: "passage:"
+  RERANK_MODEL: intfloat/multilingual-e5-small
   RERANK_MODEL_REVISION: ""
+  RAG_INDEX_VERSION: "2"
   RERANK_WEIGHT: "9.0"
-  MAX_CHUNKS_PER_SOURCE: "6"
+  MAX_CHUNKS_PER_SOURCE: "4"
   MIN_QUERY_LENGTH: "4"
   MEMORY_COLLECTION_NAME: reglamentos_memoria_validada
   MEMORY_MAX_RESULTS: "3"
@@ -143,6 +150,13 @@ jobs:
             --registry $env:ACR_NAME `
             --image "$env:IMAGE_REPO`:$env:IMAGE_TAG" `
             --image "$env:IMAGE_REPO`:latest" `
+            --build-arg "EMBEDDING_MODEL=$env:EMBEDDING_MODEL" `
+            --build-arg "EMBEDDING_FP16=$env:EMBEDDING_FP16" `
+            --build-arg "EMBEDDING_QUERY_PREFIX=$env:EMBEDDING_QUERY_PREFIX" `
+            --build-arg "EMBEDDING_PASSAGE_PREFIX=$env:EMBEDDING_PASSAGE_PREFIX" `
+            --build-arg "RERANK_MODEL=$env:RERANK_MODEL" `
+            --build-arg "RERANK_MODEL_REVISION=$env:RERANK_MODEL_REVISION" `
+            --build-arg "RAG_INDEX_VERSION=$env:RAG_INDEX_VERSION" `
             --build-arg "HF_TOKEN=$env:HF_TOKEN" `
             --build-arg "HUGGINGFACE_HUB_TOKEN=$env:HUGGINGFACE_HUB_TOKEN" `
             --file src/backend/Dockerfile `
@@ -230,12 +244,19 @@ jobs:
             "BLOB_PREFIX=$env:BLOB_PREFIX",
             "BLOB_PREFIX_ALTA_TENSION=$env:BLOB_PREFIX_ALTA_TENSION",
             "BLOB_PREFIX_BAJA_TENSION=$env:BLOB_PREFIX_BAJA_TENSION",
+            "BLOB_PREFIX_FOTOVOLTAICA_OM=$env:BLOB_PREFIX_FOTOVOLTAICA_OM",
+            "BLOB_PREFIX_GRUPOS_ELECTROGENOS=$env:BLOB_PREFIX_GRUPOS_ELECTROGENOS",
             "BLOB_PREFIX_GUIAS_TECNICAS=$env:BLOB_PREFIX_GUIAS_TECNICAS",
             "BLOB_PREFIX_RITE=$env:BLOB_PREFIX_RITE",
             "TOP_K_RESULTS=$env:TOP_K_RESULTS",
             "ENABLE_RERANK=$env:ENABLE_RERANK",
+            "EMBEDDING_MODEL=$env:EMBEDDING_MODEL",
+            "EMBEDDING_FP16=$env:EMBEDDING_FP16",
+            "EMBEDDING_QUERY_PREFIX=$env:EMBEDDING_QUERY_PREFIX",
+            "EMBEDDING_PASSAGE_PREFIX=$env:EMBEDDING_PASSAGE_PREFIX",
             "RERANK_MODEL=$env:RERANK_MODEL",
             "RERANK_MODEL_REVISION=$env:RERANK_MODEL_REVISION",
+            "RAG_INDEX_VERSION=$env:RAG_INDEX_VERSION",
             "RERANK_WEIGHT=$env:RERANK_WEIGHT",
             "MAX_CHUNKS_PER_SOURCE=$env:MAX_CHUNKS_PER_SOURCE",
             "MIN_QUERY_LENGTH=$env:MIN_QUERY_LENGTH",
