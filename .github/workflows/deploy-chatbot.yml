@@ -38,8 +38,6 @@ permissions:
 
 env:
   IMAGE_REPO: chatbot-api
-  BASE_IMAGE_REPO: base/python
-  BASE_IMAGE_TAG: 3.11-bookworm
   WEBSITE_PORT: "8000"
   STATIC_WEB_APP_HOST: https://chatbot.appregenera.com
   STATIC_WEB_APP_API_BASE: https://chatbot.appregenera.com/api
@@ -148,17 +146,10 @@ jobs:
         run: |
           if ([string]::IsNullOrWhiteSpace($env:ACR_NAME)) { throw "Falta repo/environment variable AZURE_ACR_NAME" }
 
-          az acr import `
-            --name $env:ACR_NAME `
-            --source "docker.io/library/python:$env:BASE_IMAGE_TAG" `
-            --image "$env:BASE_IMAGE_REPO`:$env:BASE_IMAGE_TAG" `
-            --force
-
           az acr build `
             --registry $env:ACR_NAME `
             --image "$env:IMAGE_REPO`:$env:IMAGE_TAG" `
             --image "$env:IMAGE_REPO`:latest" `
-            --build-arg "BASE_IMAGE=$env:ACR_NAME.azurecr.io/$env:BASE_IMAGE_REPO`:$env:BASE_IMAGE_TAG" `
             --build-arg "EMBEDDING_MODEL=$env:EMBEDDING_MODEL" `
             --build-arg "EMBEDDING_FP16=$env:EMBEDDING_FP16" `
             --build-arg "EMBEDDING_QUERY_PREFIX=$env:EMBEDDING_QUERY_PREFIX" `
