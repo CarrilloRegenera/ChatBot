@@ -8,16 +8,14 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from business_query_service import answer_business_question, detect_business_route
-from config import ADMIN_API_KEY, ADMIN_PANEL_ALLOWED_EMAILS, ADMIN_PANEL_ALLOWED_NAMES, CONVERSATION_LOCK_TIMEOUT_SECS, DEPLOY_WEBHOOK_SECRET, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
+from config import ADMIN_API_KEY, ADMIN_PANEL_ALLOWED_EMAILS, ADMIN_PANEL_ALLOWED_NAMES, CONVERSATION_LOCK_TIMEOUT_SECS, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
 from database import db_conn
 from deployment_service import (
     DeploymentConfigurationError,
     download_run_logs,
     get_notification_settings,
     list_deployments,
-    notify_run_if_needed,
     register_webhook_run,
-    store_webhook_run,
     sync_recent_deployments,
     trigger_full_deploy,
     update_notification_settings,
@@ -27,7 +25,6 @@ from models import (
     ConversationRequest,
     DeploymentNotificationSettingsRequest,
     DeploymentTriggerRequest,
-    DeploymentWebhookRequest,
     InteractionReviewRequest,
     MessageRequest,
 )
@@ -237,14 +234,6 @@ def _assert_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
     if admin_key and ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Acceso admin denegado")
-
-
-def _assert_deploy_webhook(request: Request) -> None:
-    if not DEPLOY_WEBHOOK_SECRET:
-        raise HTTPException(status_code=503, detail="Webhook de despliegue no configurado")
-    incoming_secret = (request.headers.get("x-deploy-webhook-secret") or "").strip()
-    if incoming_secret != DEPLOY_WEBHOOK_SECRET:
-        raise HTTPException(status_code=403, detail="Webhook de despliegue denegado")
 
 
 def _load_user_by_id(user_id: int) -> tuple | None:
@@ -741,24 +730,6 @@ def admin_download_deployment_logs(run_id: int, request: Request):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-
-@router.post("/admin/deployments/webhook")
-def admin_deployment_webhook(data: DeploymentWebhookRequest, request: Request):
-    _assert_deploy_webhook(request)
-    try:
-        payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
-        saved = store_webhook_run(payload)
-        Thread(
-            target=notify_run_if_needed,
-            args=(int(saved["github_run_id"]),),
-            daemon=True,
-            name=f"deploy-notify-{saved['github_run_id']}",
-        ).start()
-    except Exception as exc:
-        logger.exception("Error procesando webhook de despliegue")
-        raise HTTPException(status_code=500, detail=f"No se pudo registrar el despliegue: {exc}") from exc
-    return {"message": "Webhook de despliegue procesado", "run_id": saved["github_run_id"]}
 
 
 @router.post("/knowledge/{interaction_id}/validate")

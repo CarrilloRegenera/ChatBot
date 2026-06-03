@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
+from routes.deployments_webhook import router as deployments_webhook_router
 from config import ALLOWED_ORIGINS, CHATBOT_FRONTEND_URL, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
 from entra_auth import warm_entra_jwks
 from observability import RequestIdFilter, reset_request_id, set_request_id
@@ -41,12 +42,15 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(auth_router, prefix="/api")
+app.include_router(deployments_webhook_router)
+app.include_router(deployments_webhook_router, prefix="/api")
 
 
 def _is_lightweight_path(path: str) -> bool:
     normalized = path.rstrip("/") or "/"
     return (
         normalized in {"/", "/api", "/health", "/api/health"}
+        or normalized in {"/admin/deployments/webhook", "/api/admin/deployments/webhook"}
         or normalized.startswith("/login")
         or normalized.startswith("/api/login")
         or normalized.startswith("/registro")
