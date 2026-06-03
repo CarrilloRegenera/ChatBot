@@ -410,6 +410,7 @@ const conversationMessagesCache = new Map();
 let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
 let adminActiveView = "deployments";
+let adminPendingUserId = "";
 let deploymentsLoading = false;
 let deploymentsPage = 1;
 const DEPLOYMENTS_PAGE_SIZE = 25;
@@ -1982,16 +1983,22 @@ async function loadAdminPanel() {
     if (!currentUser) return;
     loadDeploymentsPanel();
     try {
-        const [metricsRes, pendingRes] = await Promise.all([
+        const pendingParams = new URLSearchParams({ limit: "30" });
+        if (adminPendingUserId) {
+            pendingParams.set("user_id", adminPendingUserId);
+        }
+        const [metricsRes, pendingUsersRes, pendingRes] = await Promise.all([
             fetch(`${API}/admin/metrics?days=${adminRangeDays}`, { headers: getAdminHeaders() }),
-            fetch(`${API}/admin/knowledge/pending?limit=30`, { headers: getAdminHeaders() }),
+            fetch(`${API}/admin/knowledge/users`, { headers: getAdminHeaders() }),
+            fetch(`${API}/admin/knowledge/pending?${pendingParams.toString()}`, { headers: getAdminHeaders() }),
         ]);
 
-        if (!metricsRes.ok || !pendingRes.ok) {
+        if (!metricsRes.ok || !pendingUsersRes.ok || !pendingRes.ok) {
             throw new Error("No se pudieron cargar datos admin");
         }
 
         const metrics = await metricsRes.json();
+        const pendingUsersData = await pendingUsersRes.json();
         const pendingData = await pendingRes.json();
 
         document.getElementById("metric-total-interactions").textContent = formatNumber(metrics.total_interactions);
@@ -2007,10 +2014,47 @@ async function loadAdminPanel() {
         renderModelComparison(metrics);
         admin503MetricsLoaded = false;
 
+        renderPendingUserFilter(pendingUsersData.users || []);
         renderPendingList(pendingData.pending || []);
     } catch (err) {
         console.error("Error loading admin panel:", err);
     }
+}
+
+function setAdminPendingUser(userId) {
+    adminPendingUserId = String(userId || "");
+    loadAdminPanel();
+}
+
+function renderPendingUserFilter(users) {
+    const select = document.getElementById("admin-pending-user-filter");
+    if (!select) return;
+
+    const normalizedUsers = users.map((item) => ({
+        id: String(item.user_id || ""),
+        label: normalizeMojibakeText(item.user_name || item.user_email || "Usuario"),
+        email: normalizeMojibakeText(item.user_email || ""),
+        count: Number(item.pending_count || 0),
+    })).filter((item) => item.id);
+
+    const selectedStillExists = !adminPendingUserId || normalizedUsers.some((item) => item.id === adminPendingUserId);
+    if (!selectedStillExists) {
+        adminPendingUserId = "";
+    }
+
+    select.innerHTML = "";
+    const allOption = document.createElement("option");
+    allOption.value = "";
+    allOption.textContent = "Todos los usuarios";
+    select.appendChild(allOption);
+
+    normalizedUsers.forEach((item) => {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = `${item.label}${item.email && item.email !== item.label ? ` (${item.email})` : ""} - ${item.count}`;
+        select.appendChild(option);
+    });
+    select.value = adminPendingUserId;
 }
 
 function renderPendingList(items) {
@@ -2018,7 +2062,10 @@ function renderPendingList(items) {
     container.innerHTML = "";
 
     if (!items.length) {
-        container.innerHTML = `<div class="pending-card"><div class="pending-answer">No hay interacciones pendientes.</div></div>`;
+        const emptyText = adminPendingUserId
+            ? "No hay interacciones pendientes para este usuario."
+            : "No hay interacciones pendientes.";
+        container.innerHTML = `<div class="pending-card"><div class="pending-answer">${emptyText}</div></div>`;
         return;
     }
 

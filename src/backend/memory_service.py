@@ -209,14 +209,54 @@ def record_interaction_pending(
     return interaction_id
 
 
-def list_pending_interactions(limit: int = 50) -> List[Dict]:
+def list_pending_users() -> List[Dict]:
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
+            SELECT
+                c.UsuarioId,
+                MAX(u.Nombre) AS Nombre,
+                MAX(u.Email) AS Email,
+                COUNT(*) AS PendingCount,
+                MAX(i.FechaCreacion) AS LastInteractionAt
+            FROM dbo.InteraccionesRAG i
+            LEFT JOIN dbo.Conversaciones c ON c.Id = i.ConversacionId
+            LEFT JOIN dbo.Usuarios u ON u.Id = c.UsuarioId
+            WHERE i.Estado = 'pendiente'
+              AND c.UsuarioId IS NOT NULL
+            GROUP BY c.UsuarioId
+            ORDER BY PendingCount DESC, MAX(i.FechaCreacion) DESC
+            """
+        )
+        rows = cursor.fetchall()
+    return [
+        {
+            "user_id": int(row[0]),
+            "user_name": row[1] or "",
+            "user_email": row[2] or "",
+            "pending_count": int(row[3] or 0),
+            "last_interaction_at": str(row[4]) if row[4] else "",
+        }
+        for row in rows
+    ]
+
+
+def list_pending_interactions(limit: int = 50, user_id: int | None = None) -> List[Dict]:
+    limit = max(1, min(int(limit or 50), 200))
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        params = [limit]
+        user_filter = ""
+        if user_id is not None:
+            user_filter = " AND c.UsuarioId = ?"
+            params.append(int(user_id))
+        cursor.execute(
+            f"""
             SELECT TOP (?)
                 i.Id,
                 i.ConversacionId,
+                c.UsuarioId,
                 i.Pregunta,
                 i.Respuesta,
                 i.Fuentes,
@@ -230,9 +270,10 @@ def list_pending_interactions(limit: int = 50) -> List[Dict]:
             LEFT JOIN dbo.Conversaciones c ON c.Id = i.ConversacionId
             LEFT JOIN dbo.Usuarios u ON u.Id = c.UsuarioId
             WHERE i.Estado = 'pendiente'
+              {user_filter}
             ORDER BY i.FechaCreacion DESC
             """,
-            limit,
+            *params,
         )
         rows = cursor.fetchall()
     items = []
@@ -241,15 +282,16 @@ def list_pending_interactions(limit: int = 50) -> List[Dict]:
             {
                 "id": row[0],
                 "conversation_id": row[1],
-                "question": row[2],
-                "answer": row[3],
-                "sources": _from_json(row[4], []),
-                "created_at": str(row[5]),
-                "confidence": row[6],
-                "total_tokens": row[7] or 0,
-                "model": row[8] or "",
-                "user_name": row[9] or "",
-                "user_email": row[10] or "",
+                "user_id": row[2],
+                "question": row[3],
+                "answer": row[4],
+                "sources": _from_json(row[5], []),
+                "created_at": str(row[6]),
+                "confidence": row[7],
+                "total_tokens": row[8] or 0,
+                "model": row[9] or "",
+                "user_name": row[10] or "",
+                "user_email": row[11] or "",
             }
         )
     return items

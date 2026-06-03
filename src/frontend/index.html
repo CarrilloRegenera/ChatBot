@@ -338,7 +338,12 @@
             <div id="admin-view-pending" class="admin-view-section hidden">
                 <div class="admin-section-header">
                     <h4>Interacciones pendientes</h4>
-                    <button class="admin-refresh-btn" onclick="loadAdminPanel()">Actualizar</button>
+                    <div class="admin-pending-toolbar">
+                        <select id="admin-pending-user-filter" class="admin-user-filter" onchange="setAdminPendingUser(this.value)" aria-label="Filtrar interacciones por usuario">
+                            <option value="">Todos los usuarios</option>
+                        </select>
+                        <button class="admin-refresh-btn" onclick="loadAdminPanel()">Actualizar</button>
+                    </div>
                 </div>
                 <div id="admin-pending-list" class="admin-pending-list"></div>
             </div>

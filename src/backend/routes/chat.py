@@ -668,9 +668,15 @@ def admin_503_metrics(request: Request, hours: int = 24):
 
 
 @router.get("/admin/knowledge/pending")
-def admin_pending(request: Request, limit: int = 50):
+def admin_pending(request: Request, limit: int = 50, user_id: int | None = None):
     _assert_admin(request)
-    return {"pending": _memory_service().list_pending_interactions(limit=limit)}
+    return {"pending": _memory_service().list_pending_interactions(limit=limit, user_id=user_id)}
+
+
+@router.get("/admin/knowledge/users")
+def admin_pending_users(request: Request):
+    _assert_admin(request)
+    return {"users": _memory_service().list_pending_users()}
 
 
 @router.get("/admin/deployments")
