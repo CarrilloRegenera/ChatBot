@@ -19,10 +19,13 @@ from rag_service import (  # noqa: E402
     _domain_phrase_queries,
     _EF_VERSION,
     _expected_domains,
+    _is_normative_intent_query,
+    _normative_application_hit_count,
     _rag_index_version_tag,
     _SHIFT31_SOURCE_TOKENS,
     _source_domain_key,
     _source_taxonomy,
+    _technical_equivalent_phrases,
     detect_hint_domains,
 )
 
@@ -122,6 +125,33 @@ def test_rebt_contact_voltage_phrase_queries_cover_grounding_questions():
     assert "no se puedan producir tensiones" in phrases
     assert "mayores de 24 V" in phrases
     assert "RESISTENCIA DE LAS TOMAS DE TIERRA" in phrases
+
+
+def test_vehicle_charging_grounding_expands_to_normative_terms():
+    phrases = _technical_equivalent_phrases(
+        "Que sistemas de puesta a tierra son validos segun el REBT para carga de vehiculo electrico"
+    )
+    assert "ITC-BT-52" in phrases
+    assert "sistemas de conexion del neutro" in phrases
+    assert "TN-S" in phrases
+    assert "contactos indirectos" in phrases
+
+
+def test_technical_equivalents_are_conceptual_not_global():
+    phrases = _technical_equivalent_phrases("Que documentacion necesito para una instalacion electrica")
+    assert "ITC-BT-52" not in phrases
+    assert "TN-S" not in phrases
+
+
+def test_normative_intent_detects_validity_and_application_questions():
+    assert _is_normative_intent_query("Que sistemas son validos segun el REBT")
+    assert _is_normative_intent_query("Que esquema aplica para una instalacion receptora")
+    assert not _is_normative_intent_query("Cual es la tension nominal de una instalacion")
+
+
+def test_normative_application_hit_count_detects_scope_chunks():
+    text = "1.4 Aplicacion de los tres tipos de esquemas. Red de distribucion publica."
+    assert _normative_application_hit_count(text) >= 2
 
 
 # ---------------------------------------------------------------------------

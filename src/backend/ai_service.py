@@ -85,6 +85,12 @@ GENERALIZATION_ASK_PATTERN = re.compile(
     r"\bobjetivo\b|\bcambios?\b|\bmodifica\b|\bintroduce\b|\bafecta\b|\bimplica\b)",
     re.IGNORECASE,
 )
+NORMATIVE_VALIDITY_ASK_PATTERN = re.compile(
+    r"(?:\bvalid[oa]s?\b|\bpermitid[oa]s?\b|\badmitid[oa]s?\b|\baplica(?:n|ble)?\b|"
+    r"\bcorresponde(?:n)?\b|\bsistemas?\b|\besquemas?\b|\btipos?\b|\bclases?\b|"
+    r"\brequisitos?\b|\bprescripciones?\b)",
+    re.IGNORECASE,
+)
 MOTIVATION_ASK_PATTERN = re.compile(
     r"(?:\bpor\s+que\b|\bpor\s+qué\b|\bmotivo\b|\bjustificacion\b|\bjustificación\b|"
     r"\bexposicion\s+de\s+motivos\b|\bexposición\s+de\s+motivos\b|\bpreambulo\b|\bpreámbulo\b)",
@@ -196,6 +202,7 @@ def _infer_answer_profile(question: str) -> Dict[str, object]:
         "comparison": bool(COMPARISON_ASK_PATTERN.search(q)),
         "procedure": bool(PROCEDURE_ASK_PATTERN.search(q)),
         "generalization": bool(GENERALIZATION_ASK_PATTERN.search(q)),
+        "normative_validity": bool(NORMATIVE_VALIDITY_ASK_PATTERN.search(q)),
         "motivation": bool(MOTIVATION_ASK_PATTERN.search(q)),
         "numeric": bool(NUMERIC_ASK_PATTERN.search(q)),
         "direct_fact": bool(DIRECT_FACT_ASK_PATTERN.search(q)),
@@ -302,6 +309,18 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
                 "- Si la pregunta pide una sintesis, alcance, funcion, criterio, cambio o consecuencia, generaliza solo a partir de hechos repetidos o explicitamente conectados en el contexto.\n"
                 "- Cuando generalices, conserva las condiciones, excepciones y limites que aparezcan; no conviertas un caso particular en regla general.\n"
             )
+        if profile["normative_validity"]:
+            intent_hint += (
+                "- Pregunta normativa de aplicacion: si pide que sistema, esquema, tipo, clase, requisito, proteccion, periodicidad, operacion o condicion es valido, aplicable, permitido, admitido, obligatorio o correspondiente, revisa todos los fragmentos antes de responder.\n"
+                "- Para estas preguntas, identifica en el contexto: regla general de aplicacion, definicion o clasificacion, caso especial, excepcion, limitacion y condicion.\n"
+                "- Los fragmentos cuyo titulo o texto contenga aplicacion, ambito, campo de aplicacion, prescripciones generales, condiciones generales o requisitos generales son prioritarios para decidir que aplica.\n"
+                "- Si existe una regla general y tambien un caso especial, responde ambas. Ordena la respuesta asi: regla general aplicable; caso especial o excepcion; conclusion practica.\n"
+                "- No respondas solo con el caso especial si el contexto tambien contiene una regla general aplicable al supuesto preguntado.\n"
+                "- No respondas solo con una definicion o clasificacion si el contexto tambien contiene una prescripcion aplicable.\n"
+                "- Si el contexto contiene varios sistemas, tipos o esquemas, indica cuales son y bajo que condicion aparece cada uno.\n"
+                "- Si un sistema, tipo o esquema aparece solo como clasificacion general pero no como permitido para el caso preguntado, aclara esa limitacion.\n"
+                "- Solo conecta regla general y caso especial cuando pertenezcan al mismo reglamento o al mismo ambito tecnico recuperado.\n"
+            )
 
         history_section = ""
         if history:
@@ -351,6 +370,8 @@ D) PRECISION TECNICA:
 - No conviertas un requisito de una ITC, tabla, emplazamiento o caso concreto en requisito general de todas las instalaciones.
 - Conserva siempre excepciones, condiciones, limites de ambito y vigencia que aparezcan en el contexto.
 - Generalizacion controlada: puedes sintetizar una regla o criterio comun solo cuando el contexto lo soporte.
+- En preguntas de validez/aplicacion normativa, no omitas reglas generales recuperadas si tambien responden al supuesto preguntado. Integra regla general y caso especial con sus condiciones.
+- En esas preguntas, los apartados de Aplicacion, Ambito, Campo de aplicacion, Prescripciones generales o Condiciones generales prevalecen sobre fragmentos mas estrechos para establecer la regla base.
 - Si el contexto contiene filas "FILA_TABLA", respeta la relacion columna-valor sin mezclar filas distintas.
 - Si la pregunta pide numeros y el contexto no los contiene, indicalo explicitamente.
 {definition_hint}
@@ -662,6 +683,87 @@ def _repair_numeric_comparison_insufficient(question: str, answer: str, context:
         lines.append(f"- {item['value']}: aparece en {item['label']}. {item['sentence']}")
     lines.append("Por tanto, compara siempre el valor junto con su ITC/apartado y el tipo de canalización o instalación al que se aplica.")
     return "\n".join(lines)
+
+
+def _plain_norm(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text or "")
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn").lower()
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _has_term(norm_text: str, term: str) -> bool:
+    escaped = re.escape(term).replace(r"\ ", r"[\s-]+")
+    return bool(re.search(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])", norm_text))
+
+
+def _repair_normative_validity_omission(question: str, answer: str, context: str) -> Optional[str]:
+    if not NORMATIVE_VALIDITY_ASK_PATTERN.search(question or ""):
+        return None
+
+    norm_question = _plain_norm(question)
+    if not any(
+        term in norm_question
+        for term in (
+            "sistema",
+            "sistemas",
+            "esquema",
+            "esquemas",
+            "puesta a tierra",
+            "conexion del neutro",
+            "conexiones del neutro",
+            "neutro",
+        )
+    ):
+        return None
+
+    norm_answer = _plain_norm(answer)
+    norm_context = _plain_norm(context)
+    additions = []
+
+    has_public_tt_rule = (
+        "instalaciones receptoras alimentadas directamente de una red de distribucion publica de baja tension" in norm_context
+        and "es el esquema tt" in norm_context
+    )
+    if has_public_tt_rule and not _has_term(norm_answer, "tt"):
+        additions.append(
+            "Como regla general recuperada, para instalaciones receptoras alimentadas directamente "
+            "de una red de distribucion publica de baja tension, el esquema es TT."
+        )
+
+    has_ct_choice_rule = (
+        "centro de transformacion de abonado" in norm_context
+        and "cualquiera de los tres esquemas citados" in norm_context
+    )
+    answer_mentions_all_three_families = (
+        _has_term(norm_answer, "tt")
+        and _has_term(norm_answer, "tn")
+        and _has_term(norm_answer, "it")
+    )
+    if has_ct_choice_rule and not answer_mentions_all_three_families:
+        additions.append(
+            "Si la alimentacion en baja tension parte de un centro de transformacion de abonado, "
+            "el contexto indica que puede elegirse cualquiera de los tres esquemas citados."
+        )
+
+    has_tn_s_rule = (
+        ("esquema tn" in norm_context or "esquemas tn" in norm_context)
+        and ("tn-s" in norm_context or "tn s" in norm_context)
+        and (
+            "solamente se utilizara en la forma tn-s" in norm_context
+            or "se utilizara solo la variante tn-s" in norm_context
+            or "se utilizara solo la variante tn s" in norm_context
+        )
+    )
+    if has_tn_s_rule and not (_has_term(norm_answer, "tn-s") or _has_term(norm_answer, "tn s")):
+        additions.append("En el caso especial de alimentacion por esquema TN, la forma indicada es TN-S.")
+
+    if not additions:
+        return None
+
+    if _is_insufficient_answer(answer):
+        return " ".join(additions)
+
+    return f"{answer.rstrip()} {' '.join(additions)}"
 
 
 def _infer_document_basis(answer: str) -> str:
@@ -1107,6 +1209,10 @@ def generate_ai_response_with_fallback(
     if repaired_answer:
         result["text"] = repaired_answer
         result["repaired_numeric_comparison"] = True
+    repaired_answer = _repair_normative_validity_omission(question, result.get("text", ""), context)
+    if repaired_answer:
+        result["text"] = repaired_answer
+        result["repaired_normative_validity"] = True
 
     _, confidence = validate_answer(question, result["text"], context, sources)
     table_coverage_ratio = float((retrieval_stats or {}).get("table_coverage_ratio", 1.0) or 0.0)
@@ -1157,6 +1263,10 @@ def generate_ai_response_with_fallback(
         if repaired_answer:
             result_pro["text"] = repaired_answer
             result_pro["repaired_numeric_comparison"] = True
+        repaired_answer = _repair_normative_validity_omission(question, result_pro.get("text", ""), context)
+        if repaired_answer:
+            result_pro["text"] = repaired_answer
+            result_pro["repaired_normative_validity"] = True
 
         result_pro["escalated"] = True
         result_pro["flash_confidence"] = round(confidence, 4)

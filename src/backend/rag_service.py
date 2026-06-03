@@ -363,6 +363,73 @@ PROCEDURE_PRIORITY_BOOST = 5
 TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
 LABELED_CONTEXT_PENALTY = 10
+TECHNICAL_EQUIVALENT_BOOST = 18
+NORMATIVE_INTENT_BOOST = 16
+NORMATIVE_INTENT_PATTERN = re.compile(
+    r"\b(?:valid[oa]s?|permitid[oa]s?|admitid[oa]s?|aplica(?:n|ble)?|corresponde(?:n)?|"
+    r"sistemas?|esquemas?|tipos?|clases?|categorias?|categorias?|requisitos?|prescripciones?)\b",
+    re.IGNORECASE,
+)
+NORMATIVE_APPLICATION_PHRASES = (
+    "aplicacion de los tres tipos de esquemas",
+    "campo de aplicacion",
+    "ambito de aplicacion",
+    "prescripciones generales",
+    "condiciones generales",
+    "requisitos generales",
+    "excepciones",
+    "red de distribucion publica",
+    "instalaciones receptoras alimentadas directamente",
+    "esquema de distribucion para instalaciones receptoras",
+)
+NORMATIVE_CLASSIFICATION_PHRASES = (
+    "tipos de esquemas",
+    "esquemas de distribucion",
+    "clasificacion",
+    "se distinguen",
+    "se establecen en funcion",
+    "definicion",
+)
+TECHNICAL_EQUIVALENT_RULES = (
+    {
+        "if_any": ("vehiculo electrico", "coche electrico", "recarga", "punto de recarga", "estacion de recarga"),
+        "emit": (
+            "ITC-BT-52",
+            "infraestructura para la recarga",
+            "recarga de vehiculos electricos",
+            "sistemas de conexion del neutro",
+            "contactos indirectos",
+        ),
+    },
+    {
+        "if_any": ("puesta a tierra", "toma de tierra", "conductor de proteccion", "masas", "neutro"),
+        "emit": (
+            "sistemas de conexion del neutro",
+            "esquema TT",
+            "esquema TN",
+            "esquema IT",
+            "TN-S",
+            "contactos indirectos",
+        ),
+    },
+    {
+        "if_any": ("proteccion diferencial", "diferencial", "contactos indirectos", "contacto indirecto"),
+        "emit": (
+            "dispositivo de proteccion diferencial",
+            "dispositivos de proteccion diferencial",
+            "corriente diferencial-residual",
+            "contactos indirectos",
+        ),
+    },
+    {
+        "if_any": ("mantenimiento", "periodicidad", "cada cuanto", "revision", "limpieza"),
+        "emit": (
+            "operaciones de mantenimiento preventivo",
+            "periodicidad",
+            "tabla 3.1",
+        ),
+    },
+)
 # Configuración de dominios cargada desde domains.json.
 # Para añadir un dominio nuevo edita ese fichero — no este código.
 DOMAIN_FILENAME_OVERRIDES: dict = _DOMAIN_CFG.get("filename_overrides", {})
@@ -1000,6 +1067,58 @@ def _domain_phrase_queries(clean_question: str) -> List[str]:
 
 
 # Palabras funcionales largas que no son términos técnicos (8+ chars pero genéricas).
+def _technical_equivalent_phrases(clean_question: str) -> List[str]:
+    """Expande lenguaje humano a frases normativas usadas en los documentos."""
+    normalized = _normalize_text(clean_question)
+    phrases: List[str] = []
+    seen: set = set()
+    for rule in TECHNICAL_EQUIVALENT_RULES:
+        if any(trigger in normalized for trigger in rule["if_any"]):
+            for phrase in rule["emit"]:
+                if phrase not in seen:
+                    seen.add(phrase)
+                    phrases.append(phrase)
+    return phrases
+
+
+def _query_phrase_queries(clean_question: str) -> List[str]:
+    phrases: List[str] = []
+    seen: set = set()
+    extra_phrases = []
+    if _is_normative_intent_query(clean_question):
+        extra_phrases = list(NORMATIVE_APPLICATION_PHRASES) + list(NORMATIVE_CLASSIFICATION_PHRASES)
+    for phrase in list(_domain_phrase_queries(clean_question)) + list(_technical_equivalent_phrases(clean_question)) + extra_phrases:
+        if phrase not in seen:
+            seen.add(phrase)
+            phrases.append(phrase)
+    return phrases
+
+
+def _is_normative_intent_query(clean_question: str) -> bool:
+    normalized = _normalize_text(clean_question)
+    return bool(NORMATIVE_INTENT_PATTERN.search(normalized))
+
+
+def _normative_application_hit_count(text: str) -> int:
+    normalized = _normalize_text(text)
+    return sum(1 for phrase in NORMATIVE_APPLICATION_PHRASES if phrase in normalized)
+
+
+def _normative_classification_hit_count(text: str) -> int:
+    normalized = _normalize_text(text)
+    return sum(1 for phrase in NORMATIVE_CLASSIFICATION_PHRASES if phrase in normalized)
+
+
+def _normative_complement_kind(item: Tuple[float, str, str, Dict[str, object]]) -> str:
+    _, _, document, metadata = item
+    text = f"{metadata.get('content_intent', '')} {metadata.get('section', '')} {document}"
+    if _normative_application_hit_count(text):
+        return "application"
+    if _normative_classification_hit_count(text):
+        return "classification"
+    return ""
+
+
 _GENERIC_LONG_WORDS: frozenset[str] = frozenset([
     "instalaciones", "instalacion", "articulos", "documento", "documentos",
     "reglamento", "informacion", "descripcion", "diferencia", "relacionado",
@@ -1167,7 +1286,9 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "exact_refs": _extract_exact_refs(clean_question),
         "page_refs": _extract_page_refs(clean_question),
         "location_target": _extract_location_target(clean_question),
-        "phrase_queries": _domain_phrase_queries(clean_question),
+        "phrase_queries": _query_phrase_queries(clean_question),
+        "technical_equivalent_phrases": _technical_equivalent_phrases(clean_question),
+        "normative_intent_query": _is_normative_intent_query(clean_question),
         "intent": _query_intent(clean_question),
         "labeled_terms": _extract_labeled_terms(clean_question),
         "disambiguation_terms": _extract_disambiguation_terms(clean_question),
@@ -2303,6 +2424,22 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         if query_profile["phrase_queries"]:
             phrase_hits = sum(1 for phrase in query_profile["phrase_queries"] if _normalize_text(phrase) in doc_norm)
             score += phrase_hits * 80
+            technical_hits = sum(
+                1 for phrase in query_profile.get("technical_equivalent_phrases", [])
+                if _normalize_text(phrase) in doc_norm or _normalize_text(phrase) in metadata_norm
+            )
+            if technical_hits >= 2:
+                score += technical_hits * TECHNICAL_EQUIVALENT_BOOST
+            if technical_hits and any(ref in metadata_norm or ref in doc_norm for ref in ("itc-bt-52", "itc-bt-18", "itc-bt-24", "itc-bt-08")):
+                score += TECHNICAL_EQUIVALENT_BOOST
+        if query_profile.get("normative_intent_query"):
+            normative_text = f"{metadata.get('content_intent', '')} {metadata.get('section', '')} {document}"
+            application_hits = _normative_application_hit_count(normative_text)
+            classification_hits = _normative_classification_hit_count(normative_text)
+            if application_hits:
+                score += application_hits * NORMATIVE_INTENT_BOOST
+            if classification_hits:
+                score += classification_hits * (NORMATIVE_INTENT_BOOST - 4)
         if target_itc_refs:
             if query_profile["comparison"] and len(query_profile["numeric_value_groups"]) >= 2:
                 if (inferred_itcs & target_itc_refs) and numeric_group_hits:
@@ -2508,6 +2645,22 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                     lexical_score -= 30
             if query_profile["phrase_queries"]:
                 lexical_score += sum(1 for phrase in query_profile["phrase_queries"] if _normalize_text(phrase) in doc_norm) * 70
+                technical_hits = sum(
+                    1 for phrase in query_profile.get("technical_equivalent_phrases", [])
+                    if _normalize_text(phrase) in doc_norm or _normalize_text(phrase) in metadata_norm
+                )
+                if technical_hits >= 2:
+                    lexical_score += technical_hits * TECHNICAL_EQUIVALENT_BOOST
+                if technical_hits and any(ref in metadata_norm or ref in doc_norm for ref in ("itc-bt-52", "itc-bt-18", "itc-bt-24", "itc-bt-08")):
+                    lexical_score += TECHNICAL_EQUIVALENT_BOOST
+            if query_profile.get("normative_intent_query"):
+                normative_text = f"{metadata.get('content_intent', '')} {metadata.get('section', '')} {document}"
+                application_hits = _normative_application_hit_count(normative_text)
+                classification_hits = _normative_classification_hit_count(normative_text)
+                if application_hits:
+                    lexical_score += application_hits * NORMATIVE_INTENT_BOOST
+                if classification_hits:
+                    lexical_score += classification_hits * (NORMATIVE_INTENT_BOOST - 4)
             if target_itc_refs:
                 if inferred_itcs & target_itc_refs:
                     lexical_score += 55 + (8 * len(inferred_itcs & target_itc_refs))
@@ -2687,6 +2840,42 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             selected_ids.add(doc_id)
             if len(selected) >= n_results:
                 break
+
+    if query_profile.get("normative_intent_query") and selected:
+        def _has_complement(kind: str) -> bool:
+            return any(_normative_complement_kind(item) == kind for item in selected)
+
+        def _best_complement(kind: str):
+            for item in ranked_items:
+                if item[1] in selected_ids:
+                    continue
+                if expected_domains and _source_domain_key(str(item[3].get("source", "")), item[3]) not in expected_domains:
+                    continue
+                if _normative_complement_kind(item) == kind:
+                    return item
+            return None
+
+        for complement_kind in ("application", "classification"):
+            if _has_complement(complement_kind):
+                continue
+            complement = _best_complement(complement_kind)
+            if complement is None:
+                continue
+            if len(selected) < n_results:
+                selected.append(complement)
+            else:
+                replace_index = len(selected) - 1
+                for idx in range(len(selected) - 1, -1, -1):
+                    item = selected[idx]
+                    if not _normative_complement_kind(item) and not any(
+                        _normalize_text(phrase) in _normalize_text(f"{item[3].get('section', '')} {item[2]}")
+                        for phrase in query_profile.get("technical_equivalent_phrases", [])
+                    ):
+                        replace_index = idx
+                        break
+                selected_ids.discard(selected[replace_index][1])
+                selected[replace_index] = complement
+            selected_ids.add(complement[1])
 
     # Focus pass: prioritize chunks that directly contain core terms.
     if core_terms and selected:
