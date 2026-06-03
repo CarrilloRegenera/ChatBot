@@ -1,5 +1,4 @@
 import logging
-from threading import Thread
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -26,12 +25,7 @@ def admin_deployment_webhook(data: DeploymentWebhookRequest, request: Request):
     try:
         payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
         saved = store_webhook_run(payload)
-        Thread(
-            target=notify_run_if_needed,
-            args=(int(saved["github_run_id"]),),
-            daemon=True,
-            name=f"deploy-notify-{saved['github_run_id']}",
-        ).start()
+        notify_run_if_needed(int(saved["github_run_id"]))
     except Exception as exc:
         logger.exception("Error procesando webhook de despliegue")
         raise HTTPException(status_code=500, detail=f"No se pudo registrar el despliegue: {exc}") from exc
