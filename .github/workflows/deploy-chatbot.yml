@@ -423,7 +423,7 @@ jobs:
             exit 0
           }
 
-          $webhookUrl = "$env:BACKEND_URL/admin/deployments/webhook"
+          $webhookUrl = "$env:STATIC_WEB_APP_API_BASE/admin/deployments/webhook"
           try {
             $health = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/health" -TimeoutSec 20
             if (-not ($health.status -eq "ok" -and $health.runtime_ready -eq $true -and $health.deployment_image_tag -eq $env:IMAGE_TAG)) {
