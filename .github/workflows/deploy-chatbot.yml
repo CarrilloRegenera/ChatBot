@@ -316,15 +316,15 @@ jobs:
             Write-Host "AuthV2 enabled=$enabled unauthenticatedClientAction=$unauthenticatedAction"
 
             if ($enabled -and $unauthenticatedAction -ne "AllowAnonymous") {
-              $payload = @{
-                properties = @{
-                  globalValidation = @{
-                    unauthenticatedClientAction = "AllowAnonymous"
-                  }
-                }
-              } | ConvertTo-Json -Depth 8
+              $auth.properties.globalValidation.unauthenticatedClientAction = "AllowAnonymous"
+              $payload = $auth | ConvertTo-Json -Depth 30
+              $payloadPath = Join-Path $env:RUNNER_TEMP "authsettingsV2.json"
+              Set-Content -LiteralPath $payloadPath -Value $payload -Encoding UTF8
 
-              az rest --method patch --uri $authV2Uri --body $payload --headers "Content-Type=application/json" | Out-Null
+              az rest --method put --uri $authV2Uri --body "@$payloadPath" --headers "Content-Type=application/json" | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                throw "No se pudo actualizar authsettingsV2 con az rest"
+              }
               Write-Host "Easy Auth actualizado a AllowAnonymous; la autenticacion queda gestionada por FastAPI."
             }
           } catch {
