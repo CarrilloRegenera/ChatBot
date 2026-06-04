@@ -63,6 +63,15 @@ _SHIFT31_SOURCE_TOKENS: frozenset[str] = frozenset(
     if cfg.get("encoding", {}).get("type") == "shift31"
     for token in cfg.get("source_tokens", [])
 )
+# Subconjunto con strategy=full_text: todo el cuerpo del chunk está codificado
+# (a diferencia de RITE donde solo las filas de tabla están codificadas).
+_SHIFT31_FULLTEXT_SOURCE_TOKENS: frozenset[str] = frozenset(
+    token
+    for cfg in _DOMAIN_CFG.get("domains", {}).values()
+    if cfg.get("encoding", {}).get("type") == "shift31"
+    and cfg.get("encoding", {}).get("strategy") == "full_text"
+    for token in cfg.get("source_tokens", [])
+)
 
 # OCR opcional para PDFs escaneados. Activar con RAG_OCR_ENABLED=1.
 # Requiere Tesseract instalado en el sistema y `pytesseract` + `Pillow` en pip.
@@ -194,15 +203,45 @@ def _normalize_rite_table31_text(text: str) -> str:
 def _decode_chunk_corruption(text: str, source: str = "") -> str:
     """Decodifica corrupción de desplazamiento +31 bytes en PDFs con fuentes mal embebidas.
 
-    Solo actúa sobre fuentes RITE (a35931 en nombre de fichero).  Detecta
-    líneas con la firma de corrupción (guion o dígito + 3+ mayúsculas ASCII) y
-    aplica el decode +31 a la parte del nombre de operación, preservando los
-    códigos de periodicidad al final de cada fila (ej. 'U U', 'T').
-    Devuelve el texto original sin cambios si no hay firma o si la fuente no es RITE.
+    Para fuentes con strategy=full_text (ej. alta_tension): decodifica todas las
+    secuencias de mayúsculas ASCII de longitud ≥4 en el cuerpo completo del chunk.
+    Secuencias cortas (≤3 chars: BOE, ITC, LAT…) se preservan sin decodificar.
+
+    Para RITE: detecta líneas con la firma de corrupción (guion o dígito + 3+ mayúsculas)
+    y aplica el decode +31 solo a la parte del nombre de operación.
+
+    Devuelve el texto original si la fuente no tiene encoding shift31 en domains.json.
     """
     src = source.lower().replace("\\", "/")
     if not any(token in src for token in _SHIFT31_SOURCE_TOKENS):
         return text
+
+    if any(token in src for token in _SHIFT31_FULLTEXT_SOURCE_TOKENS):
+        def _decode_fulltext_line(line: str) -> str:
+            out: list[str] = []
+            i = 0
+            while i < len(line):
+                c = line[i]
+                if "A" <= c <= "Z":
+                    j = i
+                    while j < len(line) and "A" <= line[j] <= "Z":
+                        j += 1
+                    run = line[i:j]
+                    if len(run) >= 4:
+                        out.append("".join(
+                            chr(ord(ch) + 31) if 32 <= ord(ch) + 31 <= 126 else ch
+                            for ch in run
+                        ))
+                    else:
+                        out.append(run)
+                    i = j
+                else:
+                    out.append(c)
+                    i += 1
+            return "".join(out)
+
+        return "\n".join(_decode_fulltext_line(line) for line in text.split("\n"))
+
     lines = text.split("\n")
     changed = False
     result = []
@@ -1603,9 +1642,12 @@ def _query_mentions_bt_generators(question: str) -> bool:
     normalized = _normalize_text(question or "")
     return (
         "instalaciones generadoras" in normalized
+        or "instalacion generadora" in normalized
         or "generadoras de baja tension" in normalized
         or ("generadoras" in normalized and "baja tension" in normalized)
-        or any(term in normalized for term in ("aisladas", "asistidas", "interconectadas"))
+        or ("generador" in normalized and "baja tension" in normalized)
+        or ("generador" in normalized and "conexion" in normalized and "red" in normalized)
+        or any(term in normalized for term in ("aisladas", "asistidas", "interconectadas", "anti-isla", "acoplamiento a red"))
     )
 
 
@@ -1983,7 +2025,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         expected_domains.append("guias_tecnicas")
     if target_itc_refs and "baja_tension" not in expected_domains:
         expected_domains.insert(0, "baja_tension")
-    if mentions_bt_generators and not expected_domains:
+    if mentions_bt_generators and "guias_tecnicas" not in expected_domains:
         for domain in ("baja_tension", "guias_tecnicas"):
             if domain not in expected_domains:
                 expected_domains.append(domain)

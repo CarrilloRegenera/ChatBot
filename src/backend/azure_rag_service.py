@@ -1,12 +1,24 @@
 import hashlib
-import html
 import logging
+import unicodedata
 import re
 from typing import Dict, List, Tuple
 
 import fitz
 from azure.core.credentials import AzureKeyCredential
+from azure.core.exceptions import ResourceNotFoundError
 from azure.search.documents import SearchClient
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.models import (
+    HnswAlgorithmConfiguration,
+    SearchField,
+    SearchFieldDataType,
+    SearchIndex,
+    SearchableField,
+    SimpleField,
+    VectorSearch,
+    VectorSearchProfile,
+)
 from azure.search.documents.models import VectorizedQuery
 from azure.storage.blob import BlobServiceClient
 from blob_scope_config import configured_blob_scopes
@@ -31,11 +43,15 @@ from config import (
 from rag_service import (
     OCR_MIN_TEXT_CHARS_PER_PAGE,
     RERANK_MODEL,
+    _clean_question,
     _embedding_fn,
     _encode_passage,
     _encode_query,
     _EF_VERSION,
+    _expected_domains,
     _decode_chunk_corruption,
+    _extract_exact_refs,
+    _extract_itc_refs,
     _extract_text_blocks,
     _extract_topic_terms,
     _normalize_text,
@@ -47,6 +63,8 @@ from rag_service import (
     _table_signal_count,
     _looks_like_table_block,
 )
+
+_VECTOR_DIMS = 384  # multilingual-e5-small
 
 
 logger = logging.getLogger(__name__)
@@ -101,6 +119,83 @@ def _category_for_blob(blob_name: str, configured_category: str) -> str:
     return _source_domain_key(blob_name)
 
 
+def _build_index_fields() -> List:
+    """Schema completo del índice. Añadir campos nuevos aquí; nunca quitar los existentes."""
+    vector_field = SearchField(
+        name=AZURE_SEARCH_VECTOR_FIELD,
+        type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+        searchable=True,
+        vector_search_dimensions=_VECTOR_DIMS,
+        vector_search_profile_name="hnsw-profile",
+    )
+    return [
+        SimpleField(name="chunk_id", type=SearchFieldDataType.String, key=True, filterable=True),
+        SimpleField(name="document_id", type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name="document_name", type=SearchFieldDataType.String),
+        SearchableField(name="file_name", type=SearchFieldDataType.String),
+        SimpleField(name="source_path", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="blob_path", type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name="content", type=SearchFieldDataType.String),
+        vector_field,
+        SimpleField(name="page_number", type=SearchFieldDataType.Int32, filterable=True),
+        SimpleField(name="page", type=SearchFieldDataType.Int32, filterable=True),
+        SimpleField(name="chunk_number", type=SearchFieldDataType.Int32),
+        SimpleField(name="domain", type=SearchFieldDataType.String, filterable=True, facetable=True),
+        SimpleField(name="category", type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name="section", type=SearchFieldDataType.String),
+        SearchableField(name="topics", type=SearchFieldDataType.String),
+        SimpleField(name="chunk_kind", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="table_signal_count", type=SearchFieldDataType.Int32),
+        SimpleField(name="file_hash", type=SearchFieldDataType.String, filterable=True),
+        # Campos enriquecidos (schema v4+)
+        SearchableField(name="itc_refs", type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name="article_ref", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="section_level", type=SearchFieldDataType.Int32, filterable=True),
+    ]
+
+
+def ensure_azure_index() -> None:
+    """Crea o actualiza el índice de Azure AI Search con el schema actual.
+
+    Si el índice ya existe, añade únicamente los campos que falten (nunca modifica
+    ni elimina campos existentes, lo que garantiza compatibilidad con datos en vuelo).
+    Si no existe, lo crea completo con configuración HNSW para búsqueda vectorial.
+    """
+    _require_azure_config()
+    index_client = SearchIndexClient(
+        endpoint=AZURE_SEARCH_ENDPOINT,
+        credential=AzureKeyCredential(AZURE_SEARCH_KEY),
+    )
+    all_fields = _build_index_fields()
+    try:
+        existing = index_client.get_index(AZURE_SEARCH_INDEX_NAME)
+        existing_names = {f.name for f in existing.fields}
+        new_fields = [f for f in all_fields if f.name not in existing_names]
+        if new_fields:
+            existing.fields.extend(new_fields)
+            index_client.create_or_update_index(existing)
+            logger.info(
+                "Índice '%s': %d campos nuevos añadidos: %s",
+                AZURE_SEARCH_INDEX_NAME,
+                len(new_fields),
+                [f.name for f in new_fields],
+            )
+        else:
+            logger.info("Índice '%s': schema ya actualizado", AZURE_SEARCH_INDEX_NAME)
+    except ResourceNotFoundError:
+        vector_search = VectorSearch(
+            algorithms=[HnswAlgorithmConfiguration(name="hnsw-config")],
+            profiles=[VectorSearchProfile(name="hnsw-profile", algorithm_configuration_name="hnsw-config")],
+        )
+        index = SearchIndex(
+            name=AZURE_SEARCH_INDEX_NAME,
+            fields=all_fields,
+            vector_search=vector_search,
+        )
+        index_client.create_index(index)
+        logger.info("Índice '%s' creado desde cero", AZURE_SEARCH_INDEX_NAME)
+
+
 def _file_hash(content: bytes) -> str:
     return hashlib.md5(content).hexdigest()
 
@@ -119,24 +214,36 @@ def _chunk_id(source_path: str, page_number: int, chunk_number: int) -> str:
 
 
 def _extract_page_text(page) -> str:
-    raw_html = page.get_text("html")
-    paragraph_pattern = re.compile(
-        r'<p style="top:([\d.]+)pt[^"]*line-height:([\d.]+)pt[^"]*"[^>]*>(.*?)</p>',
-        re.DOTALL,
-    )
-    lines = []
-    prev_top = None
-    prev_lh = 10.0
-    for top_s, lh_s, content in paragraph_pattern.findall(raw_html):
-        top, lh = float(top_s), float(lh_s)
-        text = html.unescape(re.sub(r"<[^>]+>", "", content)).strip()
-        if text:
-            if prev_top is not None and (top - prev_top) > prev_lh + 3.0:
-                lines.append("")
-            lines.append(text)
-            prev_top = top
-            prev_lh = lh
-    text = "\n".join(lines)
+    """Extrae texto usando coordenadas de palabras (bbox).
+
+    Reconstruye espacios entre palabras a partir de las posiciones reales en el PDF,
+    evitando palabras pegadas en documentos con fuentes mal embebidas. Inserta líneas
+    en blanco entre bloques de texto distintos para preservar la estructura de párrafo.
+    """
+    words = page.get_text("words", sort=True)
+    if words:
+        lines: List[str] = []
+        current_block: int = words[0][5]
+        current_line: int = words[0][6]
+        current_words: List[str] = []
+        for _x0, _y0, _x1, _y1, word, block_no, line_no, _word_no in words:
+            word = unicodedata.normalize("NFC", word)
+            if block_no != current_block or line_no != current_line:
+                if current_words:
+                    lines.append(" ".join(current_words))
+                if block_no != current_block:
+                    lines.append("")
+                current_words = [word]
+                current_block = block_no
+                current_line = line_no
+            else:
+                current_words.append(word)
+        if current_words:
+            lines.append(" ".join(current_words))
+        text = "\n".join(lines)
+    else:
+        text = ""
+
     if len(text.strip()) < OCR_MIN_TEXT_CHARS_PER_PAGE:
         ocr_text = _ocr_page_text(page)
         if ocr_text and len(ocr_text.strip()) > len(text.strip()):
@@ -171,6 +278,10 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
                     chunk_kind = "numeric"
                 else:
                     chunk_kind = "text"
+                chunk_context = f"{blob_name} {section_name} {chunk}"
+                itc_refs_str = _extract_itc_refs(chunk_context)
+                exact_refs_str = ", ".join(_extract_exact_refs(chunk_context))
+                section_level = 1 if itc_refs_str else (2 if section_name else 3)
                 docs.append({
                     "chunk_id": _chunk_id(blob_name, page_number, chunk_index),
                     "document_id": document_id,
@@ -190,6 +301,9 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
                     "chunk_kind": chunk_kind,
                     "table_signal_count": _table_signal_count(chunk),
                     "file_hash": file_hash,
+                    "itc_refs": itc_refs_str or exact_refs_str,
+                    "article_ref": itc_refs_str,
+                    "section_level": section_level,
                 })
     finally:
         pdf.close()
@@ -233,6 +347,7 @@ def _delete_source_chunks(client: SearchClient, source_path: str) -> int:
 
 def sync_documents_from_blob() -> Dict[str, int]:
     _require_azure_config()
+    ensure_azure_index()
     search_client = _search_client()
     container = _container_client()
 
@@ -318,9 +433,15 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         k_nearest_neighbors=max(n_results * 4, 20),
         fields=AZURE_SEARCH_VECTOR_FIELD,
     )
+    domains = _expected_domains(_clean_question(question))
+    domain_filter = (
+        "(" + " or ".join(f"domain eq '{_odata_escape(d)}'" for d in domains) + ")"
+        if domains else None
+    )
     results = _search_client().search(
         search_text=question,
         vector_queries=[vector_query],
+        filter=domain_filter,
         top=max(n_results * 2, 12),
         select=[
             "chunk_id",

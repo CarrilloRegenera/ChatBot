@@ -5,6 +5,7 @@
       "department": "ingenieria",
       "document_type": "reglamento",
       "confidentiality": "internal",
+      "encoding": {"type": "shift31", "strategy": "full_text"},
       "trigger_terms": [
         "alta tension", "itc-lat", "lineas electricas de alta",
         "linea de at", "lineas de at", "instalacion at", "instalaciones at",
@@ -27,6 +28,18 @@
         {
           "if_contains": ["sector electrico", "procedimientos"],
           "emit": ["sector eléctrico", "adaptar todos los procedimientos", "agentes intervinientes"]
+        },
+        {
+          "if_contains": ["contactos", "personas"],
+          "emit": ["contactos directos", "contactos indirectos", "proteccion de las personas", "tensiones de paso", "tensiones de contacto", "aislamientos", "cerramientos"]
+        },
+        {
+          "if_contains": ["contactos", "medidas"],
+          "emit": ["contactos directos", "contactos indirectos", "tensiones de paso", "tensiones de contacto", "cerramientos", "enclavamientos"]
+        },
+        {
+          "if_contains": ["proteccion", "personas"],
+          "emit": ["proteccion de las personas", "contactos directos", "contactos indirectos", "tensiones de paso", "tensiones de contacto", "puesta a tierra"]
         }
       ],
       "scoring": {}
@@ -139,7 +152,8 @@
       "confidentiality": "internal",
       "trigger_terms": [
         "bt-40", "guia bt 40", "guia-bt-40",
-        "instalaciones generadoras", "generadoras de baja tension",
+        "instalaciones generadoras", "instalacion generadora", "generadoras de baja tension",
+        "generador conectado", "acoplamiento a red", "anti-isla", "funcionamiento en isla",
         "une 12464", "12464"
       ],
       "trigger_regex": [],
@@ -150,6 +164,18 @@
         {
           "if_contains": ["tecnologias", "generacion"],
           "emit": ["El presente documento aplica a todas las instalaciones generadoras", "Generadores fotovoltaicos", "Turbinas"]
+        },
+        {
+          "if_contains": ["generador", "baja tension"],
+          "emit": ["instalaciones generadoras", "condiciones de conexion a red", "conexion a red", "Generadores fotovoltaicos", "aisladas asistidas interconectadas"]
+        },
+        {
+          "if_contains": ["generador", "red"],
+          "emit": ["instalaciones generadoras", "condiciones de conexion a red", "funcionamiento en isla", "anti-isla"]
+        },
+        {
+          "if_contains": ["legalizar", "generador"],
+          "emit": ["instalaciones generadoras", "condiciones de conexion a red", "documentacion tecnica"]
         }
       ],
       "scoring": {
