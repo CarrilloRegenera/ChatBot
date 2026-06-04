@@ -378,14 +378,16 @@ jobs:
           $headers = @{ "x-admin-key" = $env:ADMIN_API_KEY }
           Write-Host "Lanzando sync de documentos en $env:BACKEND_URL/admin/sync ..."
           try {
-            $result = Invoke-RestMethod -Method Post -Uri "$env:BACKEND_URL/admin/sync" -Headers $headers -TimeoutSec 600
+            $result = Invoke-RestMethod -Method Post -Uri "$env:BACKEND_URL/admin/sync" -Headers $headers -ContentType "application/json" -TimeoutSec 600
             Write-Host "Sync completado: $($result | ConvertTo-Json -Compress)"
           } catch {
-            $detail = ""
-            try {
-              $stream = $_.Exception.Response.GetResponseStream()
-              if ($stream) { $detail = [System.IO.StreamReader]::new($stream).ReadToEnd() }
-            } catch {}
+            $detail = $_.ErrorDetails.Message
+            if (-not $detail) {
+              try {
+                $content = $_.Exception.Response.Content
+                if ($content) { $detail = $content.ReadAsStringAsync().Result }
+              } catch {}
+            }
             Write-Warning "Sync fallido (no bloquea el despliegue): $($_.Exception.Message). Detalle: $detail"
           }
 

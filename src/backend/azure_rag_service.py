@@ -22,6 +22,7 @@ from azure.search.documents.indexes.models import (
 from azure.search.documents.models import VectorizedQuery
 from azure.storage.blob import BlobServiceClient
 from blob_scope_config import configured_blob_scopes
+from sentence_transformers.util import cos_sim
 
 from config import (
     AZURE_SEARCH_ENDPOINT,
@@ -37,6 +38,7 @@ from config import (
     BLOB_PREFIX_GUIAS_TECNICAS,
     BLOB_PREFIX_RITE,
     BLOB_STORAGE_CONNECTION_STRING,
+    ENABLE_RERANK,
     MAX_CHUNKS_PER_SOURCE,
     TOP_K_RESULTS,
 )
@@ -433,7 +435,8 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         k_nearest_neighbors=max(n_results * 4, 20),
         fields=AZURE_SEARCH_VECTOR_FIELD,
     )
-    domains = _expected_domains(_clean_question(question))
+    clean_question = _clean_question(question)
+    domains = _expected_domains(clean_question)
     domain_filter = (
         "(" + " or ".join(f"domain eq '{_odata_escape(d)}'" for d in domains) + ")"
         if domains else None
@@ -459,9 +462,22 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         ],
     )
 
+    candidates = list(results)
+    if ENABLE_RERANK and _st_model is not None and candidates:
+        query_emb = _st_model.encode(clean_question, convert_to_tensor=True)
+        candidate_texts = [
+            _decode_chunk_corruption(item.get("content", ""), item.get("source_path", ""))
+            for item in candidates
+        ]
+        candidate_embs = _st_model.encode(candidate_texts, convert_to_tensor=True)
+        scores = cos_sim(query_emb, candidate_embs)[0].tolist()
+        candidates = [
+            item for _, item in sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
+        ]
+
     selected = []
     source_counts: Dict[str, int] = {}
-    for item in results:
+    for item in candidates:
         source = item.get("source_path", "unknown")
         if source_counts.get(source, 0) >= MAX_CHUNKS_PER_SOURCE:
             continue
