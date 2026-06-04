@@ -444,7 +444,7 @@ jobs:
               if ($attempt -ge $maxAttempts) {
                 throw "No se pudo consultar/completar el sync documental: $($_.Exception.Message)"
               }
-              Write-Warning "No se pudo consultar estado del sync en el intento $attempt/$maxAttempts: $($_.Exception.Message)"
+              Write-Warning "No se pudo consultar estado del sync en el intento ${attempt}/${maxAttempts}: $($_.Exception.Message)"
             }
           }
 
