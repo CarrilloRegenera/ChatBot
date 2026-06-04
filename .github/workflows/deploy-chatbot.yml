@@ -412,10 +412,10 @@ jobs:
           ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
         run: |
           $headers = @{ "x-admin-key" = $env:ADMIN_API_KEY }
-          Write-Host "Lanzando sync de documentos en $env:BACKEND_URL/admin/sync ..."
+          Write-Host "Lanzando sync de documentos en segundo plano en $env:BACKEND_URL/admin/sync ..."
           try {
-            $result = Invoke-RestMethod -Method Post -Uri "$env:BACKEND_URL/admin/sync" -Headers $headers -ContentType "application/json" -TimeoutSec 600
-            Write-Host "Sync completado: $($result | ConvertTo-Json -Compress)"
+            $start = Invoke-RestMethod -Method Post -Uri "$env:BACKEND_URL/admin/sync?background=true" -Headers $headers -ContentType "application/json" -TimeoutSec 60
+            Write-Host "Sync iniciado: $($start | ConvertTo-Json -Compress)"
           } catch {
             $detail = $_.ErrorDetails.Message
             if (-not $detail) {
@@ -424,8 +424,31 @@ jobs:
                 if ($content) { $detail = $content.ReadAsStringAsync().Result }
               } catch {}
             }
-            Write-Warning "Sync fallido (no bloquea el despliegue): $($_.Exception.Message). Detalle: $detail"
+            throw "No se pudo iniciar el sync documental: $($_.Exception.Message). Detalle: $detail"
           }
+
+          $maxAttempts = 90
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Start-Sleep -Seconds 20
+            try {
+              $status = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/admin/sync/status" -Headers $headers -TimeoutSec 30
+              Write-Host "Estado sync ($attempt/$maxAttempts): $($status | ConvertTo-Json -Compress)"
+              if ($status.state -eq "completed") {
+                Write-Host "Sync completado correctamente: $($status.result | ConvertTo-Json -Compress)"
+                exit 0
+              }
+              if ($status.state -eq "failed") {
+                throw "Sync documental fallido: $($status.error)"
+              }
+            } catch {
+              if ($attempt -ge $maxAttempts) {
+                throw "No se pudo consultar/completar el sync documental: $($_.Exception.Message)"
+              }
+              Write-Warning "No se pudo consultar estado del sync en el intento $attempt/$maxAttempts: $($_.Exception.Message)"
+            }
+          }
+
+          throw "Timeout esperando a que termine el sync documental"
 
       - name: Generate frontend config.js
         if: ${{ inputs.action == 'full' || inputs.action == 'frontend' }}

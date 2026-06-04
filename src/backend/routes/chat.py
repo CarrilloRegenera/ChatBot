@@ -39,6 +39,15 @@ _lock_last_used: Dict[int, float] = {}
 _last_lock_cleanup: float = 0.0
 _deploy_sync_lock = Lock()
 _deploy_sync_inflight = False
+_document_sync_lock = Lock()
+_document_sync_inflight = False
+_document_sync_status = {
+    "state": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "result": None,
+    "error": "",
+}
 _LOCK_TTL = 1800
 _LOCK_CLEANUP_INTERVAL = 300
 
@@ -71,6 +80,49 @@ def _sync_recent_deployments_background(limit: int, page: int) -> None:
         daemon=True,
         name=f"deploy-history-sync-p{page}",
     ).start()
+
+
+def _start_document_sync_background() -> Dict[str, object]:
+    global _document_sync_inflight, _document_sync_status
+    with _document_sync_lock:
+        if _document_sync_inflight:
+            return dict(_document_sync_status)
+        _document_sync_inflight = True
+        _document_sync_status = {
+            "state": "running",
+            "started_at": time.time(),
+            "finished_at": None,
+            "result": None,
+            "error": "",
+        }
+
+    def _worker() -> None:
+        global _document_sync_inflight, _document_sync_status
+        try:
+            result = _rag_service().sync_documents()
+            with _document_sync_lock:
+                _document_sync_status = {
+                    **_document_sync_status,
+                    "state": "completed",
+                    "finished_at": time.time(),
+                    "result": result,
+                    "error": "",
+                }
+        except Exception as exc:
+            logger.exception("Error durante sync documental en segundo plano")
+            with _document_sync_lock:
+                _document_sync_status = {
+                    **_document_sync_status,
+                    "state": "failed",
+                    "finished_at": time.time(),
+                    "error": str(exc),
+                }
+        finally:
+            with _document_sync_lock:
+                _document_sync_inflight = False
+
+    Thread(target=_worker, daemon=True, name="document-sync").start()
+    return dict(_document_sync_status)
 
 
 def _rag_service():
@@ -636,10 +688,19 @@ def send_message(data: MessageRequest, request: Request):
 
 
 @router.post("/admin/sync")
-def admin_sync(request: Request):
+def admin_sync(request: Request, background: bool = False):
     _assert_admin(request)
+    if background:
+        return _start_document_sync_background()
     result = _rag_service().sync_documents()
     return result
+
+
+@router.get("/admin/sync/status")
+def admin_sync_status(request: Request):
+    _assert_admin(request)
+    with _document_sync_lock:
+        return dict(_document_sync_status)
 
 
 @router.get("/knowledge/pending")
