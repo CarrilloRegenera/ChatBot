@@ -427,7 +427,7 @@ jobs:
             throw "No se pudo iniciar el sync documental: $($_.Exception.Message). Detalle: $detail"
           }
 
-          $maxAttempts = 90
+          $maxAttempts = 270
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Start-Sleep -Seconds 20
             try {
