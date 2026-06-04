@@ -296,6 +296,42 @@ jobs:
 
           az @args
 
+      - name: Ensure backend public routing is app-managed
+        if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
+        shell: pwsh
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          $siteId = az webapp show --resource-group $env:RESOURCE_GROUP --name $env:WEBAPP_NAME --query id -o tsv
+          if ([string]::IsNullOrWhiteSpace($siteId)) {
+            throw "No se pudo resolver el id del App Service"
+          }
+
+          $authV2Uri = "https://management.azure.com$siteId/config/authsettingsV2?api-version=2022-03-01"
+          try {
+            $auth = az rest --method get --uri $authV2Uri | ConvertFrom-Json
+            $enabled = [bool]($auth.properties.platform.enabled)
+            $unauthenticatedAction = [string]($auth.properties.globalValidation.unauthenticatedClientAction)
+            Write-Host "AuthV2 enabled=$enabled unauthenticatedClientAction=$unauthenticatedAction"
+
+            if ($enabled -and $unauthenticatedAction -ne "AllowAnonymous") {
+              $payload = @{
+                properties = @{
+                  globalValidation = @{
+                    unauthenticatedClientAction = "AllowAnonymous"
+                  }
+                }
+              } | ConvertTo-Json -Depth 8
+
+              az rest --method patch --uri $authV2Uri --body $payload --headers "Content-Type=application/json" | Out-Null
+              Write-Host "Easy Auth actualizado a AllowAnonymous; la autenticacion queda gestionada por FastAPI."
+            }
+          } catch {
+            Write-Warning "No se pudo comprobar AuthV2 con ARM; intentando fallback con az webapp auth update. Detalle: $($_.Exception.Message)"
+            az webapp auth update --resource-group $env:RESOURCE_GROUP --name $env:WEBAPP_NAME --action AllowAnonymous | Out-Null
+          }
+
       - name: Restart backend
         if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
         shell: pwsh
