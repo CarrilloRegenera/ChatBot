@@ -223,6 +223,9 @@ def _assert_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Acceso solo para administradores de Entra")
 
     admin_key = (request.headers.get("x-admin-key") or "").strip()
+    if admin_key and ADMIN_API_KEY and admin_key == ADMIN_API_KEY:
+        return  # API key válida — auth suficiente para acceso automatizado (CI/scripts)
+
     role = (request.headers.get("x-user-role") or "").strip().lower()
     user_name = (request.headers.get("x-user-name") or "").strip().lower()
     user_email = (request.headers.get("x-user-email") or "").strip().lower()

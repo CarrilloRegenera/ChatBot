@@ -381,7 +381,12 @@ jobs:
             $result = Invoke-RestMethod -Method Post -Uri "$env:BACKEND_URL/admin/sync" -Headers $headers -TimeoutSec 600
             Write-Host "Sync completado: $($result | ConvertTo-Json -Compress)"
           } catch {
-            Write-Warning "Sync fallido (no bloquea el despliegue): $($_.Exception.Message)"
+            $detail = ""
+            try {
+              $stream = $_.Exception.Response.GetResponseStream()
+              if ($stream) { $detail = [System.IO.StreamReader]::new($stream).ReadToEnd() }
+            } catch {}
+            Write-Warning "Sync fallido (no bloquea el despliegue): $($_.Exception.Message). Detalle: $detail"
           }
 
       - name: Generate frontend config.js
