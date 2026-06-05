@@ -732,6 +732,15 @@ def admin_pending_users(request: Request):
     return {"users": _memory_service().list_pending_users()}
 
 
+@router.get("/admin/knowledge/{interaction_id}")
+def admin_interaction_detail(interaction_id: int, request: Request):
+    _assert_admin(request)
+    try:
+        return _memory_service().get_interaction_detail(interaction_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/admin/deployments")
 def admin_list_deployments(request: Request, page: int = 1, page_size: int = 25):
     _assert_admin(request)

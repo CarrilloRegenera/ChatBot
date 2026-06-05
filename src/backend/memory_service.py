@@ -297,6 +297,72 @@ def list_pending_interactions(limit: int = 50, user_id: int | None = None) -> Li
     return items
 
 
+def get_interaction_detail(interaction_id: int) -> Dict:
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                i.Id,
+                i.ConversacionId,
+                c.UsuarioId,
+                i.Pregunta,
+                i.Respuesta,
+                i.Fuentes,
+                i.Contexto,
+                i.Estado,
+                i.FechaCreacion,
+                i.Confianza,
+                i.TotalTokens,
+                i.Modelo,
+                i.ModeloBase,
+                i.ModeloFinal,
+                i.ConfianzaBase,
+                i.ConfianzaFinal,
+                i.Escalado,
+                i.MotivoEscalado,
+                i.Ruta,
+                i.DesdeMemoria,
+                i.TiempoRespuestaMs,
+                u.Nombre,
+                u.Email
+            FROM dbo.InteraccionesRAG i
+            LEFT JOIN dbo.Conversaciones c ON c.Id = i.ConversacionId
+            LEFT JOIN dbo.Usuarios u ON u.Id = c.UsuarioId
+            WHERE i.Id = ?
+            """,
+            interaction_id,
+        )
+        row = cursor.fetchone()
+    if not row:
+        raise ValueError("Interaccion no encontrada")
+    return {
+        "id": row[0],
+        "conversation_id": row[1],
+        "user_id": row[2],
+        "question": row[3],
+        "answer": row[4],
+        "sources": _from_json(row[5], []),
+        "context": row[6] or "",
+        "status": row[7],
+        "created_at": str(row[8]),
+        "confidence": row[9],
+        "total_tokens": row[10] or 0,
+        "model": row[11] or "",
+        "base_model": row[12] or "",
+        "final_model": row[13] or "",
+        "base_confidence": row[14],
+        "final_confidence": row[15],
+        "escalated": bool(row[16]) if row[16] is not None else False,
+        "escalation_reason": row[17] or "",
+        "route": row[18] or "",
+        "from_memory": bool(row[19]) if row[19] is not None else False,
+        "elapsed_ms": row[20] or 0,
+        "user_name": row[21] or "",
+        "user_email": row[22] or "",
+    }
+
+
 def get_admin_metrics(days: int = 30) -> Dict:
     with db_conn() as conn:
         cursor = conn.cursor()
