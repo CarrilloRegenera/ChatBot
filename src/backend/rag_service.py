@@ -1584,6 +1584,55 @@ def _regulation_key(source_name: str, domain: str) -> str:
     return domain or "general"
 
 
+def _document_profile_metadata(
+    source_name: str,
+    domain: str = "",
+    metadata: Dict[str, object] | None = None,
+) -> Dict[str, str]:
+    """Perfil documental estable para filtrar y escalar el RAG por departamentos.
+
+    Mantiene una forma comun para Chroma y Azure Search: al anadir PDFs nuevos,
+    domains.json decide departamento/tipo y el pipeline guarda los mismos campos
+    en cada chunk sin reglas especificas por backend.
+    """
+    resolved_domain = domain or _source_domain_key(source_name, metadata)
+    taxonomy = _source_taxonomy(source_name, {**(metadata or {}), "domain": resolved_domain})
+    return {
+        "department": taxonomy["department"],
+        "domain": resolved_domain,
+        "category": resolved_domain,
+        "document_type": taxonomy["document_type"],
+        "confidentiality": taxonomy["confidentiality"],
+        "regulation": _regulation_key(source_name, resolved_domain),
+    }
+
+
+def _chunk_profile_metadata(
+    source_name: str,
+    section: str,
+    content: str,
+    chunk_kind: str,
+) -> Dict[str, object]:
+    clean_section = _sanitize_section_label(section[:SECTION_LABEL_MAX_LENGTH])
+    chunk_context = f"{source_name} {clean_section} {content}"
+    itc_refs_str = _extract_itc_refs(chunk_context)
+    exact_refs = ", ".join(_extract_exact_refs(chunk_context))
+    table_hint = "tabla" if "tabla" in _normalize_text(f"{clean_section} {content}") else ""
+    return {
+        "section": clean_section,
+        "section_type": _section_type(clean_section),
+        "itc_refs": itc_refs_str,
+        "exact_refs": exact_refs,
+        "topics": ", ".join(_extract_topic_terms(content)),
+        "chunk_kind": chunk_kind,
+        "content_intent": _content_intent(content, clean_section, chunk_kind),
+        "scope_hint": _scope_hint(content, clean_section),
+        "table_hint": table_hint,
+        "table_signal_count": _table_signal_count(content),
+        "section_level": 1 if itc_refs_str else (2 if clean_section else 3),
+    }
+
+
 def _extract_itc_refs(text: str) -> str:
     refs = sorted({
         re.sub(r"\s+", "-", match.group(0).upper().replace(" ", "-"))
@@ -1598,6 +1647,8 @@ def _section_type(section: str) -> str:
         return "article"
     if normalized.startswith("itc-") or normalized.startswith("itc "):
         return "itc"
+    if re.match(r"^it\s+\d+(?:\.\d+)*", normalized):
+        return "technical_instruction"
     if normalized.startswith("anexo"):
         return "annex"
     if normalized.startswith("disposicion"):
@@ -1711,8 +1762,7 @@ def _delete_source_chunks(source_name: str) -> None:
 def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     source_name = str(filepath.relative_to(root_path)).replace("\\", "/")
     domain = _source_domain_key(source_name)
-    taxonomy = _taxonomy_for_domain(domain)
-    regulation = _regulation_key(source_name, domain)
+    document_profile = _document_profile_metadata(source_name, domain)
     documents, metadatas, ids = [], [], []
 
     pdf = fitz.open(str(filepath))
@@ -1770,7 +1820,6 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 if _is_noise_chunk(chunk):
                     continue
                 section_name = ""
-                chunk_topics = _extract_topic_terms(chunk)
                 for block in page_blocks:
                     if block["text"][:60] in chunk:
                         section_name = block["section"]
@@ -1782,16 +1831,13 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     chunk_kind = "numeric"
                 else:
                     chunk_kind = "text"
-                table_hint = "tabla" if "tabla" in _normalize_text(chunk) else ""
-                table_signal_count = _table_signal_count(chunk)
-                chunk_context_str = f"{source_name} {clean_section_name} {chunk}"
-                exact_refs = ", ".join(_extract_exact_refs(chunk_context_str))
-                itc_refs_str = _extract_itc_refs(chunk_context_str)
-                content_intent = _content_intent(chunk, clean_section_name, chunk_kind)
+                chunk_profile = _chunk_profile_metadata(
+                    source_name, clean_section_name, chunk, chunk_kind
+                )
                 # Prefijo de contexto para mejorar embedding y búsqueda léxica
                 context_prefix = ""
-                if itc_refs_str:
-                    context_prefix = f"[{itc_refs_str}] "
+                if chunk_profile["itc_refs"]:
+                    context_prefix = f"[{chunk_profile['itc_refs']}] "
                 elif clean_section_name:
                     context_prefix = f"[{clean_section_name}] "
                 indexed_chunk = f"{context_prefix}{chunk}" if context_prefix else chunk
@@ -1799,24 +1845,11 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 metadatas.append({
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
-                    "department": taxonomy["department"],
-                    "domain": domain,
-                    "document_type": taxonomy["document_type"],
-                    "confidentiality": taxonomy["confidentiality"],
-                    "regulation": regulation,
+                    **document_profile,
                     "page": page_index + 1,
                     "printed_page": printed_page,
                     "chunk": chunk_index,
-                    "section": clean_section_name,
-                    "section_type": _section_type(clean_section_name),
-                    "itc_refs": itc_refs_str,
-                    "exact_refs": exact_refs,
-                    "topics": ", ".join(chunk_topics),
-                    "chunk_kind": chunk_kind,
-                    "content_intent": content_intent,
-                    "scope_hint": _scope_hint(chunk, clean_section_name),
-                    "table_hint": table_hint,
-                    "table_signal_count": table_signal_count,
+                    **chunk_profile,
                     "file_hash": file_hash,
                 })
                 ids.append(f"{source_name}-{page_index + 1}-{chunk_index}")
@@ -1855,11 +1888,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 row_metadata = {
                     "source": source_name,
                     "folder": str(filepath.parent).replace("\\", "/"),
-                    "department": taxonomy["department"],
-                    "domain": domain,
-                    "document_type": taxonomy["document_type"],
-                    "confidentiality": taxonomy["confidentiality"],
-                    "regulation": regulation,
+                    **document_profile,
                     "page": page_index + 1,
                     "printed_page": printed_page,
                     "chunk": row_index,

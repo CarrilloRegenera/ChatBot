@@ -2,11 +2,12 @@ import hashlib
 import logging
 import unicodedata
 import re
+import threading
 from typing import Dict, List, Tuple
 
 import fitz
 from azure.core.credentials import AzureKeyCredential
-from azure.core.exceptions import ResourceNotFoundError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
@@ -52,17 +53,15 @@ from rag_service import (
     _EF_VERSION,
     _expected_domains,
     _decode_chunk_corruption,
-    _extract_exact_refs,
-    _extract_itc_refs,
     _extract_text_blocks,
-    _extract_topic_terms,
+    _chunk_profile_metadata,
+    _document_profile_metadata,
     _normalize_text,
     _ocr_page_text,
     _sanitize_section_label,
     _source_domain_key,
     _split_text,
     _st_model,
-    _table_signal_count,
     _looks_like_table_block,
 )
 
@@ -70,6 +69,8 @@ _VECTOR_DIMS = 384  # multilingual-e5-small
 
 
 logger = logging.getLogger(__name__)
+_index_schema_lock = threading.Lock()
+_index_schema_checked = False
 
 
 def _require_azure_config() -> None:
@@ -144,13 +145,22 @@ def _build_index_fields() -> List:
         SimpleField(name="chunk_number", type=SearchFieldDataType.Int32),
         SimpleField(name="domain", type=SearchFieldDataType.String, filterable=True, facetable=True),
         SimpleField(name="category", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="department", type=SearchFieldDataType.String, filterable=True, facetable=True),
+        SimpleField(name="document_type", type=SearchFieldDataType.String, filterable=True, facetable=True),
+        SimpleField(name="confidentiality", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="regulation", type=SearchFieldDataType.String, filterable=True, facetable=True),
         SearchableField(name="section", type=SearchFieldDataType.String),
+        SimpleField(name="section_type", type=SearchFieldDataType.String, filterable=True, facetable=True),
         SearchableField(name="topics", type=SearchFieldDataType.String),
         SimpleField(name="chunk_kind", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="content_intent", type=SearchFieldDataType.String, filterable=True, facetable=True),
+        SearchableField(name="scope_hint", type=SearchFieldDataType.String),
+        SearchableField(name="table_hint", type=SearchFieldDataType.String),
         SimpleField(name="table_signal_count", type=SearchFieldDataType.Int32),
         SimpleField(name="file_hash", type=SearchFieldDataType.String, filterable=True),
         # Campos enriquecidos (schema v4+)
         SearchableField(name="itc_refs", type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name="exact_refs", type=SearchFieldDataType.String, filterable=True),
         SearchableField(name="article_ref", type=SearchFieldDataType.String, filterable=True),
         SimpleField(name="section_level", type=SearchFieldDataType.Int32, filterable=True),
     ]
@@ -196,6 +206,27 @@ def ensure_azure_index() -> None:
         )
         index_client.create_index(index)
         logger.info("Índice '%s' creado desde cero", AZURE_SEARCH_INDEX_NAME)
+
+
+def _ensure_index_schema_for_search() -> bool:
+    """Asegura una vez por proceso que el indice admite campos enriquecidos.
+
+    Si Azure no permite actualizar el schema en ese momento, la busqueda sigue
+    funcionando con el select legacy para no romper el chat desplegado.
+    """
+    global _index_schema_checked
+    if _index_schema_checked:
+        return True
+    with _index_schema_lock:
+        if _index_schema_checked:
+            return True
+        try:
+            ensure_azure_index()
+        except Exception as exc:
+            logger.warning("No se pudo validar schema enriquecido de Azure Search: %s", exc)
+            return False
+        _index_schema_checked = True
+        return True
 
 
 def _file_hash(content: bytes) -> str:
@@ -257,6 +288,7 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
     docs = []
     document_id = _document_id(blob_name)
     domain = category or _source_domain_key(blob_name)
+    document_profile = _document_profile_metadata(blob_name, domain)
     file_name = blob_name.rsplit("/", 1)[-1]
     pdf = fitz.open(stream=content, filetype="pdf")
     try:
@@ -273,17 +305,15 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
                     if block["text"][:60] in chunk:
                         section_name = block["section"]
                         break
-                chunk_topics = _extract_topic_terms(chunk)
                 if _looks_like_table_block(chunk):
                     chunk_kind = "table"
                 elif re.search(r"\b\d+(?:[.,]\d+)?\b", chunk):
                     chunk_kind = "numeric"
                 else:
                     chunk_kind = "text"
-                chunk_context = f"{blob_name} {section_name} {chunk}"
-                itc_refs_str = _extract_itc_refs(chunk_context)
-                exact_refs_str = ", ".join(_extract_exact_refs(chunk_context))
-                section_level = 1 if itc_refs_str else (2 if section_name else 3)
+                chunk_profile = _chunk_profile_metadata(
+                    blob_name, section_name, chunk, chunk_kind
+                )
                 docs.append({
                     "chunk_id": _chunk_id(blob_name, page_number, chunk_index),
                     "document_id": document_id,
@@ -296,16 +326,10 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
                     "page_number": page_number,
                     "page": page_number,
                     "chunk_number": chunk_index,
-                    "domain": domain,
-                    "category": domain,
-                    "section": _sanitize_section_label(section_name),
-                    "topics": ", ".join(chunk_topics),
-                    "chunk_kind": chunk_kind,
-                    "table_signal_count": _table_signal_count(chunk),
+                    **document_profile,
+                    **chunk_profile,
                     "file_hash": file_hash,
-                    "itc_refs": itc_refs_str or exact_refs_str,
-                    "article_ref": itc_refs_str,
-                    "section_level": section_level,
+                    "article_ref": chunk_profile["itc_refs"],
                 })
     finally:
         pdf.close()
@@ -441,26 +465,50 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         "(" + " or ".join(f"domain eq '{_odata_escape(d)}'" for d in domains) + ")"
         if domains else None
     )
-    results = _search_client().search(
-        search_text=question,
-        vector_queries=[vector_query],
-        filter=domain_filter,
-        top=max(n_results * 2, 12),
-        select=[
-            "chunk_id",
-            "source_path",
-            "blob_path",
-            "file_name",
-            "content",
-            "page_number",
-            "page",
-            "section",
-            "domain",
-            "category",
-            "chunk_kind",
-            "table_signal_count",
-        ],
-    )
+    legacy_select = [
+        "chunk_id",
+        "source_path",
+        "blob_path",
+        "file_name",
+        "content",
+        "page_number",
+        "page",
+        "section",
+        "domain",
+        "category",
+        "chunk_kind",
+        "table_signal_count",
+    ]
+    enriched_select = legacy_select + [
+        "department",
+        "document_type",
+        "regulation",
+        "section_type",
+        "content_intent",
+        "scope_hint",
+        "itc_refs",
+        "exact_refs",
+    ]
+    select_fields = enriched_select if _ensure_index_schema_for_search() else legacy_select
+    try:
+        results = _search_client().search(
+            search_text=question,
+            vector_queries=[vector_query],
+            filter=domain_filter,
+            top=max(n_results * 2, 12),
+            select=select_fields,
+        )
+    except HttpResponseError:
+        if select_fields == legacy_select:
+            raise
+        logger.warning("Azure Search no acepta campos enriquecidos; reintentando con select legacy")
+        results = _search_client().search(
+            search_text=question,
+            vector_queries=[vector_query],
+            filter=domain_filter,
+            top=max(n_results * 2, 12),
+            select=legacy_select,
+        )
 
     candidates = list(results)
     if ENABLE_RERANK and _st_model is not None and candidates:
@@ -495,8 +543,12 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         source = item.get("blob_path") or item.get("source_path", "unknown")
         page = item.get("page") or item.get("page_number", "?")
         section = _sanitize_section_label(str(item.get("section", "") or ""))
+        regulation = str(item.get("regulation", "") or "")
+        regulation_suffix = f", {regulation}" if regulation else ""
         section_suffix = f", {section}" if section else ""
         source_label = f"{source} (pag. {page}{section_suffix})"
+        if regulation_suffix and regulation not in source_label:
+            source_label = f"{source} (pag. {page}{regulation_suffix}{section_suffix})"
         content = item.get("content", "")
         content = _decode_chunk_corruption(content, source)
         context_parts.append(f"[{source_label}]\n{content}")
@@ -516,6 +568,21 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
             _normalize_text(str(item.get("domain") or item.get("category") or ""))
             for item in selected
             if item.get("domain") or item.get("category")
+        }),
+        "selected_departments": sorted({
+            _normalize_text(str(item.get("department") or ""))
+            for item in selected
+            if item.get("department")
+        }),
+        "selected_document_types": sorted({
+            _normalize_text(str(item.get("document_type") or ""))
+            for item in selected
+            if item.get("document_type")
+        }),
+        "selected_regulations": sorted({
+            _normalize_text(str(item.get("regulation") or ""))
+            for item in selected
+            if item.get("regulation")
         }),
         "expected_domains": [],
         "domain_match_ratio": 1.0,

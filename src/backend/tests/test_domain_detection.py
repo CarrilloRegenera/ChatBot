@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rag_service import (  # noqa: E402
     _auto_technical_terms,
     _decode_chunk_corruption,
+    _chunk_profile_metadata,
+    _document_profile_metadata,
     _domain_phrase_queries,
     _EF_VERSION,
     _expected_domains,
@@ -113,6 +115,37 @@ def test_source_taxonomy_allows_explicit_metadata_override():
         "document_type": "procedimiento",
         "confidentiality": "restricted",
     }
+
+
+def test_document_profile_metadata_is_backend_neutral():
+    profile = _document_profile_metadata("fotovoltaica_om/Manual_OM_FV.pdf")
+    assert profile == {
+        "department": "mantenimiento",
+        "domain": "fotovoltaica_om",
+        "category": "fotovoltaica_om",
+        "document_type": "manual",
+        "confidentiality": "internal",
+        "regulation": "fotovoltaica_om",
+    }
+
+
+def test_document_profile_metadata_classifies_regulations():
+    assert _document_profile_metadata("baja_tension/BOE-326_REBT.pdf")["regulation"] == "REBT"
+    assert _document_profile_metadata("rite/A35931-35984.pdf")["regulation"] == "RITE"
+    assert _document_profile_metadata("alta_tension/ITC-LAT-09.pdf")["regulation"] == "LAT"
+
+
+def test_chunk_profile_metadata_detects_table_and_scope():
+    profile = _chunk_profile_metadata(
+        "rite/A35931-35984.pdf",
+        "IT 3.3. Operaciones de mantenimiento preventivo",
+        "Tabla 3.1. Limpieza de los condensadores U U",
+        "table",
+    )
+    assert profile["section_type"] == "technical_instruction"
+    assert profile["content_intent"] == "table"
+    assert profile["table_hint"] == "tabla"
+    assert profile["section_level"] == 2
 
 
 def test_rebt_contact_voltage_phrase_queries_cover_grounding_questions():
