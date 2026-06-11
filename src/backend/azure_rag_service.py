@@ -32,12 +32,6 @@ from config import (
     AZURE_SEARCH_VECTOR_FIELD,
     BLOB_CONTAINER_NAME,
     BLOB_PREFIX,
-    BLOB_PREFIX_ALTA_TENSION,
-    BLOB_PREFIX_BAJA_TENSION,
-    BLOB_PREFIX_FOTOVOLTAICA_OM,
-    BLOB_PREFIX_GRUPOS_ELECTROGENOS,
-    BLOB_PREFIX_GUIAS_TECNICAS,
-    BLOB_PREFIX_RITE,
     BLOB_STORAGE_CONNECTION_STRING,
     ENABLE_RERANK,
     MAX_CHUNKS_PER_SOURCE,
@@ -105,15 +99,7 @@ def _container_client():
 
 
 def _configured_blob_scopes() -> List[Tuple[str, str]]:
-    return configured_blob_scopes(
-        BLOB_PREFIX,
-        BLOB_PREFIX_ALTA_TENSION,
-        BLOB_PREFIX_BAJA_TENSION,
-        BLOB_PREFIX_FOTOVOLTAICA_OM,
-        BLOB_PREFIX_GRUPOS_ELECTROGENOS,
-        BLOB_PREFIX_GUIAS_TECNICAS,
-        BLOB_PREFIX_RITE,
-    )
+    return configured_blob_scopes(BLOB_PREFIX)
 
 
 def _category_for_blob(blob_name: str, configured_category: str) -> str:

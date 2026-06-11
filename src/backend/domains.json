@@ -275,6 +275,7 @@
       "department": "general",
       "document_type": "pendiente_ocr",
       "confidentiality": "internal",
+      "blob_sync": false,
       "trigger_terms": [],
       "trigger_regex": [],
       "source_tokens": [],
