@@ -47,8 +47,15 @@ OUT_OF_SCOPE_HINTS = {
 
 TECHNICAL_HINTS = {
     "rebt", "rite", "ralt", "itc", "instalacion", "instalaciones", "baja tension",
+    "alta tension", "linea", "lineas", "inspeccion", "inspecciones",
     "electrificacion", "conductor", "neutro", "potencia", "proteccion", "diferencial",
     "puesta a tierra", "pararrayos", "documentacion", "memoria tecnica", "certificado",
+    "canalizacion", "canalizaciones", "distancia", "acometida", "acometidas",
+    "tubo", "tubos", "cerca", "cercas", "alimentador", "alimentadores",
+    "circuito", "circuitos", "seccion", "secciones", "vivienda", "viviendas",
+    "generadora", "generadoras", "aislada", "aisladas", "asistida", "asistidas",
+    "interconectada", "interconectadas", "grupo electrogeno", "grupos electrogenos",
+    "iso 8528", "respuesta transitoria",
 }
 
 BUSINESS_LICITACIONES_HINTS = {
