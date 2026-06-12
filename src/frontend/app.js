@@ -560,6 +560,9 @@ function updateAdminVisibility() {
     const adminTools = document.getElementById("admin-tools");
     if (!adminTools) return;
     adminTools.classList.toggle("hidden", !isAdminPanelAllowed());
+    const myTools = document.getElementById("my-interactions-tools");
+    if (!myTools) return;
+    myTools.classList.toggle("hidden", !currentUser);
 }
 
 function setLoadingState(active, message = "Cargando...") {
@@ -2112,6 +2115,87 @@ async function rejectInteraction(interactionId) {
         return;
     }
     loadAdminPanel();
+}
+
+// ===== MIS RESPUESTAS =====
+
+function openMyInteractionsPanel() {
+    if (!currentUser) return;
+    const panel = document.getElementById("my-interactions-panel");
+    if (panel) panel.classList.remove("hidden");
+    loadMyPendingInteractions();
+}
+
+function closeMyInteractionsPanel() {
+    const panel = document.getElementById("my-interactions-panel");
+    if (panel) panel.classList.add("hidden");
+}
+
+async function loadMyPendingInteractions() {
+    if (!currentUser) return;
+    const container = document.getElementById("my-interactions-list");
+    if (!container) return;
+    container.innerHTML = `<div class="pending-card"><div class="pending-answer">Cargando...</div></div>`;
+    try {
+        const res = await fetch(`${API}/knowledge/my-pending?limit=50`, { headers: getUserHeaders() });
+        if (!res.ok) throw new Error("Error al cargar interacciones");
+        const data = await res.json();
+        renderMyPendingList(data.pending || []);
+    } catch (err) {
+        container.innerHTML = `<div class="pending-card"><div class="pending-answer">No se pudieron cargar las interacciones.</div></div>`;
+    }
+}
+
+function renderMyPendingList(items) {
+    const container = document.getElementById("my-interactions-list");
+    if (!container) return;
+    container.innerHTML = "";
+    if (!items.length) {
+        container.innerHTML = `<div class="pending-card"><div class="pending-answer">No tienes respuestas pendientes de revisión.</div></div>`;
+        return;
+    }
+    items.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "pending-card";
+        card.innerHTML = `
+            <div class="pending-meta">#${item.id} - conf=${Number(item.confidence || 0).toFixed(2)} - ${item.created_at}</div>
+            <div class="pending-question">${item.question}</div>
+            <div class="pending-answer">${item.answer}</div>
+            <div class="pending-actions">
+                <button class="approve-btn" onclick="approveMyInteraction(${item.id})">Aprobar</button>
+                <button class="reject-btn" onclick="rejectMyInteraction(${item.id})">Rechazar</button>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+async function approveMyInteraction(interactionId) {
+    if (!currentUser) return;
+    const res = await fetch(`${API}/knowledge/${interactionId}/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getUserHeaders() },
+        body: JSON.stringify({ reviewer: currentUser.nombre || currentUser.email || "usuario" }),
+    });
+    if (!res.ok) {
+        alert("No se pudo aprobar la respuesta.");
+        return;
+    }
+    loadMyPendingInteractions();
+}
+
+async function rejectMyInteraction(interactionId) {
+    if (!currentUser) return;
+    const res = await fetch(`${API}/knowledge/${interactionId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getUserHeaders() },
+        body: JSON.stringify({ reviewer: currentUser.nombre || currentUser.email || "usuario" }),
+    });
+    if (!res.ok) {
+        alert("No se pudo rechazar la respuesta.");
+        return;
+    }
+    loadMyPendingInteractions();
 }
 
 // ===== INIT =====

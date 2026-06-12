@@ -1,0 +1,253 @@
+"""
+Tests para el flujo de auto-revisión de interacciones por usuario.
+
+Cubre:
+- GET /knowledge/my-pending  → solo devuelve las interacciones del usuario autenticado
+- POST /knowledge/{id}/validate → permitido al propietario de la interacción
+- POST /knowledge/{id}/reject  → permitido al propietario de la interacción
+- Acceso denegado cuando el usuario no es propietario ni admin
+"""
+import sys
+import os
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from fastapi.testclient import TestClient
+
+
+# ── helpers para construir el contexto de FastAPI ─────────────────────────────
+
+def _make_user_row(user_id=10, nombre="Pepe Garcia", email="pepe@regeneraenergy.es", rol="Usuario", provider="local"):
+    return (user_id, nombre, email, rol, provider)
+
+
+def _user_headers(user_id=10, nombre="Pepe Garcia", email="pepe@regeneraenergy.es"):
+    return {
+        "x-user-id": str(user_id),
+        "x-user-name": nombre,
+        "x-user-email": email,
+        "x-auth-provider": "local",
+    }
+
+
+def _admin_headers():
+    return {"x-admin-key": "test-admin-key"}
+
+
+PENDING_ITEM = {
+    "id": 99,
+    "conversation_id": 5,
+    "user_id": 10,
+    "question": "¿Qué es el RITE?",
+    "answer": "El RITE es el Reglamento de Instalaciones Térmicas en Edificios.",
+    "sources": [],
+    "created_at": "2026-06-12T10:00:00",
+    "confidence": 0.85,
+    "total_tokens": 300,
+    "model": "gpt-5.4-nano",
+    "user_name": "Pepe Garcia",
+    "user_email": "pepe@regeneraenergy.es",
+}
+
+
+class TestMyPendingEndpoint(unittest.TestCase):
+
+    def _make_client(self):
+        import config as cfg
+        cfg.ADMIN_API_KEY = "test-admin-key"
+        cfg.ENTRA_ENABLED = False
+
+        from main import app
+        return TestClient(app, raise_server_exceptions=True)
+
+    def test_my_pending_returns_own_interactions(self):
+        """GET /knowledge/my-pending devuelve solo las interacciones del usuario."""
+        client = self._make_client()
+        with (
+            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row()),
+            mock.patch("routes.chat._memory_service") as ms,
+        ):
+            ms.return_value.list_pending_interactions.return_value = [PENDING_ITEM]
+            resp = client.get("/knowledge/my-pending", headers=_user_headers())
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("pending", data)
+        self.assertEqual(len(data["pending"]), 1)
+        self.assertEqual(data["pending"][0]["id"], 99)
+        # Verifica que se llamó con el user_id del usuario autenticado
+        ms.return_value.list_pending_interactions.assert_called_once_with(limit=50, user_id=10)
+
+    def test_my_pending_requires_auth(self):
+        """GET /knowledge/my-pending sin cabeceras de usuario devuelve 401."""
+        client = self._make_client()
+        resp = client.get("/knowledge/my-pending")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_my_pending_user_not_found_returns_401(self):
+        """GET /knowledge/my-pending con user_id inválido devuelve 401."""
+        client = self._make_client()
+        with mock.patch("routes.chat._load_user_by_id", return_value=None):
+            resp = client.get("/knowledge/my-pending", headers=_user_headers(user_id=999))
+        self.assertEqual(resp.status_code, 401)
+
+
+class TestValidateOwnership(unittest.TestCase):
+
+    def _make_client(self):
+        import config as cfg
+        cfg.ADMIN_API_KEY = "test-admin-key"
+        cfg.ENTRA_ENABLED = False
+
+        from main import app
+        return TestClient(app, raise_server_exceptions=True)
+
+    def test_owner_can_validate_own_interaction(self):
+        """El propietario de la interacción puede aprobarla."""
+        client = self._make_client()
+        with (
+            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row(user_id=10)),
+            mock.patch("routes.chat._memory_service") as ms,
+        ):
+            ms.return_value.get_interaction_owner_user_id.return_value = 10
+            ms.return_value.validate_interaction.return_value = {"status": "validated", "interaction_id": 99}
+            resp = client.post(
+                "/knowledge/99/validate",
+                json={"reviewer": "Pepe Garcia"},
+                headers=_user_headers(user_id=10),
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"], "validated")
+
+    def test_owner_can_reject_own_interaction(self):
+        """El propietario de la interacción puede rechazarla."""
+        client = self._make_client()
+        with (
+            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row(user_id=10)),
+            mock.patch("routes.chat._memory_service") as ms,
+        ):
+            ms.return_value.get_interaction_owner_user_id.return_value = 10
+            ms.return_value.reject_interaction.return_value = {"status": "rejected", "interaction_id": 99}
+            resp = client.post(
+                "/knowledge/99/reject",
+                json={"reviewer": "Pepe Garcia"},
+                headers=_user_headers(user_id=10),
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"], "rejected")
+
+    def test_non_owner_cannot_validate(self):
+        """Un usuario que no es propietario recibe 403 al intentar aprobar."""
+        client = self._make_client()
+        with (
+            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row(user_id=20)),
+            mock.patch("routes.chat._memory_service") as ms,
+        ):
+            ms.return_value.get_interaction_owner_user_id.return_value = 10  # propietario es usuario 10
+            resp = client.post(
+                "/knowledge/99/validate",
+                json={"reviewer": "Otro Usuario"},
+                headers=_user_headers(user_id=20, nombre="Otro Usuario", email="otro@regeneraenergy.es"),
+            )
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_non_owner_cannot_reject(self):
+        """Un usuario que no es propietario recibe 403 al intentar rechazar."""
+        client = self._make_client()
+        with (
+            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row(user_id=20)),
+            mock.patch("routes.chat._memory_service") as ms,
+        ):
+            ms.return_value.get_interaction_owner_user_id.return_value = 10
+            resp = client.post(
+                "/knowledge/99/reject",
+                json={"reviewer": "Otro Usuario"},
+                headers=_user_headers(user_id=20, nombre="Otro Usuario", email="otro@regeneraenergy.es"),
+            )
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_can_validate_any_interaction(self):
+        """El admin puede aprobar cualquier interacción independientemente del propietario."""
+        client = self._make_client()
+        with mock.patch("routes.chat._memory_service") as ms:
+            ms.return_value.validate_interaction.return_value = {"status": "validated", "interaction_id": 99}
+            resp = client.post(
+                "/knowledge/99/validate",
+                json={"reviewer": "admin"},
+                headers=_admin_headers(),
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        # El admin NO debe llamar a get_interaction_owner_user_id
+        ms.return_value.get_interaction_owner_user_id.assert_not_called()
+
+    def test_admin_can_reject_any_interaction(self):
+        """El admin puede rechazar cualquier interacción."""
+        client = self._make_client()
+        with mock.patch("routes.chat._memory_service") as ms:
+            ms.return_value.reject_interaction.return_value = {"status": "rejected", "interaction_id": 99}
+            resp = client.post(
+                "/knowledge/99/reject",
+                json={"reviewer": "admin"},
+                headers=_admin_headers(),
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        ms.return_value.get_interaction_owner_user_id.assert_not_called()
+
+    def test_unauthenticated_cannot_validate(self):
+        """Sin cabeceras de auth devuelve 401 o 403."""
+        client = self._make_client()
+        with mock.patch("routes.chat._memory_service") as ms:
+            ms.return_value.get_interaction_owner_user_id.return_value = 10
+            resp = client.post("/knowledge/99/validate", json={"reviewer": "anonimo"})
+
+        self.assertIn(resp.status_code, (401, 403))
+
+
+class TestGetInteractionOwner(unittest.TestCase):
+    """Tests unitarios para memory_service.get_interaction_owner_user_id."""
+
+    def test_returns_user_id_when_found(self):
+        import memory_service
+        mock_row = (42,)
+        with mock.patch("memory_service.db_conn") as mock_conn:
+            mock_cursor = mock.MagicMock()
+            mock_cursor.fetchone.return_value = mock_row
+            mock_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+
+            result = memory_service.get_interaction_owner_user_id(99)
+
+        self.assertEqual(result, 42)
+
+    def test_returns_none_when_not_found(self):
+        import memory_service
+        with mock.patch("memory_service.db_conn") as mock_conn:
+            mock_cursor = mock.MagicMock()
+            mock_cursor.fetchone.return_value = None
+            mock_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+
+            result = memory_service.get_interaction_owner_user_id(999)
+
+        self.assertIsNone(result)
+
+    def test_returns_none_when_user_id_is_null(self):
+        import memory_service
+        with mock.patch("memory_service.db_conn") as mock_conn:
+            mock_cursor = mock.MagicMock()
+            mock_cursor.fetchone.return_value = (None,)
+            mock_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+
+            result = memory_service.get_interaction_owner_user_id(99)
+
+        self.assertIsNone(result)
+
+
+if __name__ == "__main__":
+    unittest.main()

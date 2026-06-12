@@ -20,6 +20,7 @@ from rag_service import (  # noqa: E402
     _document_profile_metadata,
     _domain_phrase_queries,
     _EF_VERSION,
+    _extract_exact_refs,
     _expected_domains,
     _is_normative_intent_query,
     _normative_application_hit_count,
@@ -115,6 +116,20 @@ def test_source_taxonomy_allows_explicit_metadata_override():
         "document_type": "procedimiento",
         "confidentiality": "restricted",
     }
+
+
+def test_expected_domains_uses_configured_reference_patterns():
+    """Referencias normativas deben enrutar por domains.json, no por ifs del codigo."""
+    assert "baja_tension" in _expected_domains("Que es la ITC BT 40?")
+    assert "guias_tecnicas" in _expected_domains("Que es la ITC BT 40?")
+    assert "alta_tension" in _expected_domains("Resumen de la ITC LAT 09")
+    assert "guias_tecnicas" in _expected_domains("Que exige UNE 12464-1?")
+
+
+def test_exact_refs_preserve_itc_family_prefix():
+    assert "itc-lat-09" in _extract_exact_refs("Resumen de la ITC LAT 09")
+    assert "itc-bt-40" in _extract_exact_refs("Que es la ITC BT 40?")
+    assert "itc-bt-09" not in _extract_exact_refs("Resumen de la ITC LAT 09")
 
 
 def test_document_profile_metadata_is_backend_neutral():
