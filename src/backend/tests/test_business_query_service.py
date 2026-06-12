@@ -147,6 +147,19 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["year"], 2026)
         self.assertEqual(parsed["fields"], ["importeContratado2026"])
 
+    def test_follow_up_can_reuse_reference_from_previous_response_text(self):
+        parsed = business._parse_question(
+            "Que tipologia tiene?",
+            module="estudios",
+            history=[
+                {"question": "y 2026?", "response": "Licitacion 26018 Concesion OPS (2026): importe contratado 2026 = 12.312.500,00."},
+                {"question": "Que N Oferta tiene este proyecto?", "response": "Licitacion 26018 Concesion OPS: numero de oferta = EST-084-2026."},
+            ],
+        )
+
+        self.assertEqual(parsed["reference"], "EST-084-2026")
+        self.assertEqual(parsed["fields"], ["tipologiaObra"])
+
     def test_numeric_reference_does_not_force_produccion_module(self):
         self.assertIsNone(business._detect_reference_module("26001"))
         self.assertEqual(business._detect_reference_module("EST-26001-2026"), "estudios")
