@@ -25,6 +25,9 @@
       "trigger_regex": [
         "\\blat\\b"
       ],
+      "reference_patterns": [
+        "\\bitc[-\\s]*lat[-\\s]*\\d{1,2}\\b"
+      ],
       "source_tokens": [
         "itc-lat",
         "lat",
@@ -339,6 +342,9 @@
         "itc-bt-25"
       ],
       "trigger_regex": [],
+      "reference_patterns": [
+        "\\bitc[-\\s]*bt[-\\s]*\\d{1,2}\\b"
+      ],
       "source_tokens": [
         "rebt",
         "itc-bt",
@@ -455,6 +461,10 @@
         "12464"
       ],
       "trigger_regex": [],
+      "reference_patterns": [
+        "\\b(?:itc[-\\s]*)?bt[-\\s]*40\\b",
+        "\\bune[-\\s]*12464(?:[-\\s]*\\d+)?\\b"
+      ],
       "source_tokens": [
         "guia",
         "guias",

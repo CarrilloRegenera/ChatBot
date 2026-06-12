@@ -287,7 +287,7 @@ NORMATIVE_HEADING_PATTERN = re.compile(
     r")$",
     re.IGNORECASE,
 )
-REFERENCE_PATTERN = re.compile(r"\b(?:itc[-\s]*bt[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b", re.IGNORECASE)
+REFERENCE_PATTERN = re.compile(r"\b(?:itc[-\s]*(?:bt|lat|rat)[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b", re.IGNORECASE)
 NUMERIC_PATTERN = re.compile(
     r"\b\d+(?:[.,]\d+)?\s*(?:a/mm2|a/mm²|mm2|mm²|m2|m²|kva|kw|ma|kv|cm|mm|m|bar|hz|ohmios?|ohm|w|v|a|%)?\b",
     re.IGNORECASE,
@@ -317,7 +317,7 @@ TABLE_QUERY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 PAGE_REFERENCE_PATTERN = re.compile(r"\b(?:pag(?:ina)?|p[áa]g(?:ina)?|page)\.?\s*(\d{1,4})\b", re.IGNORECASE)
-ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[ií]a)[-\s]*(?:bt|lat|rat)?[-\s]*(\d{1,2})\b", re.IGNORECASE)
+ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[ií]a)[-\s]*(bt|lat|rat)?[-\s]*(\d{1,2})\b", re.IGNORECASE)
 TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3})\b", re.IGNORECASE)
 LOCATION_QUERY_PATTERN = re.compile(
     r"\b(?:pagina|pag|page|donde\s+(?:aparece|esta|se\s+encuentra)|ubicacion|apartado\s+de)\b",
@@ -1194,11 +1194,12 @@ def _extract_reference_terms(text: str) -> List[str]:
 def _extract_exact_refs(text: str) -> List[str]:
     refs = set()
     raw = text or ""
-    for value in ITC_REFERENCE_PATTERN.findall(raw):
+    for prefix, value in ITC_REFERENCE_PATTERN.findall(raw):
         number = str(value).zfill(2)
-        refs.add(f"itc-bt-{number}")
-        refs.add(f"itc bt {number}")
-        refs.add(f"bt-{number}")
+        normalized_prefix = (prefix or "bt").lower()
+        refs.add(f"itc-{normalized_prefix}-{number}")
+        refs.add(f"itc {normalized_prefix} {number}")
+        refs.add(f"{normalized_prefix}-{number}")
     for value in TABLE_REFERENCE_PATTERN.findall(raw):
         refs.add(f"tabla {int(value)}")
     return sorted(refs)
@@ -1664,14 +1665,36 @@ def _expected_domains(question: str) -> List[str]:
     normalized = _normalize_text(question or "")
     domains = []
     for name, cfg in _DOMAIN_CFG["domains"].items():
-        if not cfg.get("trigger_terms") and not cfg.get("trigger_regex"):
+        if not cfg.get("trigger_terms") and not cfg.get("trigger_regex") and not cfg.get("reference_patterns"):
             continue
         matched = any(t in normalized for t in cfg.get("trigger_terms", []))
         if not matched:
             matched = any(re.search(p, normalized) for p in cfg.get("trigger_regex", []))
+        if not matched:
+            matched = any(re.search(p, normalized) for p in cfg.get("reference_patterns", []))
         if matched and name not in domains:
             domains.append(name)
     return domains
+
+
+def _matched_domain_query_terms(question: str, domain: str) -> List[str]:
+    normalized = _normalize_text(question or "")
+    cfg = _DOMAIN_CFG["domains"].get(domain, {})
+    terms = [
+        term for term in cfg.get("trigger_terms", [])
+        if term and _normalize_text(term) in normalized
+    ]
+    for pattern in cfg.get("reference_patterns", []):
+        for match in re.finditer(pattern, normalized):
+            terms.append(match.group(0))
+    seen = set()
+    result = []
+    for term in terms:
+        clean = _normalize_text(term)
+        if clean and clean not in seen:
+            seen.add(clean)
+            result.append(clean)
+    return result
 
 
 def detect_hint_domains(text: str) -> List[str]:
@@ -2269,13 +2292,13 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
 
     if expected_domains:
         existing_ids = set(ids)
-        for domain in expected_domains:
+        for expected_domain in expected_domains:
             try:
                 forced_n = min(n_results + 6, 14)
                 domain_results = collection.query(
                     query_embeddings=[_encode_query(clean_question)],
                     n_results=forced_n,
-                    where={"domain": domain},
+                    where={"domain": expected_domain},
                 )
                 for doc, meta, fid in zip(
                     domain_results.get("documents", [[]])[0],
@@ -2288,7 +2311,34 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                         ids.append(fid)
                         existing_ids.add(fid)
             except Exception as exc:
-                logger.warning("Domain-forced retrieval failed for %s: %s", domain, exc)
+                logger.warning("Domain-forced retrieval failed for %s: %s", expected_domain, exc)
+
+            for term in _matched_domain_query_terms(clean_question, expected_domain)[:4]:
+                for search_term in (term, term.upper()):
+                    try:
+                        lexical_domain_results = collection.get(
+                            where={"domain": expected_domain},
+                            where_document={"$contains": search_term},
+                            include=["documents", "metadatas"],
+                            limit=min(n_results + 4, 12),
+                        )
+                        for doc, meta, fid in zip(
+                            lexical_domain_results.get("documents", []) or [],
+                            lexical_domain_results.get("metadatas", []) or [],
+                            lexical_domain_results.get("ids", []) or [],
+                        ):
+                            if fid not in existing_ids:
+                                documents.append(doc)
+                                metadatas.append(meta)
+                                ids.append(fid)
+                                existing_ids.add(fid)
+                    except Exception as exc:
+                        logger.warning(
+                            "Domain lexical retrieval failed for %s/%s: %s",
+                            expected_domain,
+                            search_term,
+                            exc,
+                        )
 
     if query_profile["table_query"]:
         existing_ids = set(ids)
@@ -2655,8 +2705,10 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         except Exception:
             return None
 
-    with ThreadPoolExecutor(max_workers=min(len(core_terms), 4)) as executor:
-        lexical_results = list(executor.map(_fetch_lexical, core_terms))
+    lexical_results = []
+    if core_terms:
+        with ThreadPoolExecutor(max_workers=min(len(core_terms), 4)) as executor:
+            lexical_results = list(executor.map(_fetch_lexical, core_terms))
 
     for lexical_hits in lexical_results:
         if not lexical_hits:
@@ -2823,7 +2875,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             item for item in ranked_items
             if _source_domain_key(str(item[3].get("source", "")), item[3]) not in expected_domains
         ]
-        if len(preferred_items) >= 3:
+        if preferred_items:
             ranked_items = preferred_items + other_items
 
     if query_profile["phrase_queries"]:
@@ -2877,7 +2929,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             item for item in ranked_items
             if _source_domain_key(str(item[3].get("source", "")), item[3]) not in expected_domains
         ]
-        if len(preferred_selection_items) >= 3:
+        if preferred_selection_items:
             selection_items = preferred_selection_items
     for item in selection_items:
         _, doc_id, _, metadata = item
@@ -2897,7 +2949,8 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             break
 
     if len(selected) < n_results:
-        for item in ranked_items:
+        fallback_items = selection_items if expected_domains and selection_items else ranked_items
+        for item in fallback_items:
             _, doc_id, _, _ = item
             if doc_id in selected_ids:
                 continue
