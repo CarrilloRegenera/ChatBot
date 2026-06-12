@@ -3,7 +3,12 @@
     "allow": [
       "Bash(python -m py_compile src/backend/rag_service.py)",
       "Bash(python -m py_compile src/backend/ai_service.py)",
-      "Bash(python -m py_compile src/backend/tests/test_eval_rag.py)"
+      "Bash(python -m py_compile src/backend/tests/test_eval_rag.py)",
+      "Bash(ls \"C:\\\\Users\\\\acarrillo\\\\REGENERA\\\\Regenera Ficheros - Servidor\\\\13 Informática\\\\07_Plan Digitalizacion\\\\Documentacion_Aplicaciones\\\\Chatbot\\\\rite\" 2>/dev/null || echo \"PATH_NOT_FOUND\")",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(m, p\\) for p,ops in d.get\\('paths',{}\\).items\\(\\) for m in ops]\")",
+      "Bash(python tests/eval_rite.py)"
     ]
   }
 }

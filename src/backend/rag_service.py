@@ -2619,7 +2619,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             if source_domain in expected_domains:
                 score += 12
             else:
-                score -= 10
+                score -= 30
         if query_profile["comparison"] and len(doc_tokens.intersection(question_tokens)) >= 2:
             score += COMPARISON_PRIORITY_BOOST
         if core_terms and core_hits == 0:
@@ -2823,7 +2823,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             item for item in ranked_items
             if _source_domain_key(str(item[3].get("source", "")), item[3]) not in expected_domains
         ]
-        if len(preferred_items) >= max(3, min(n_results, 6)):
+        if len(preferred_items) >= 3:
             ranked_items = preferred_items + other_items
 
     if query_profile["phrase_queries"]:
@@ -2877,8 +2877,8 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             item for item in ranked_items
             if _source_domain_key(str(item[3].get("source", "")), item[3]) not in expected_domains
         ]
-        if len(preferred_selection_items) >= max(3, min(n_results, 6)):
-            selection_items = preferred_selection_items + other_selection_items
+        if len(preferred_selection_items) >= 3:
+            selection_items = preferred_selection_items
     for item in selection_items:
         _, doc_id, _, metadata = item
         source_name = metadata.get("source", "unknown")
@@ -2897,13 +2897,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             break
 
     if len(selected) < n_results:
-        fallback_pools = [selection_items]
-        if expected_domains:
-            fallback_pools.insert(0, [
-                item for item in selection_items
-                if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
-            ])
-        for item in [item for pool in fallback_pools for item in pool]:
+        for item in ranked_items:
             _, doc_id, _, _ = item
             if doc_id in selected_ids:
                 continue

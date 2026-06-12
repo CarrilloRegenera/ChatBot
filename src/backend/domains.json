@@ -5,41 +5,115 @@
       "department": "ingenieria",
       "document_type": "reglamento",
       "confidentiality": "internal",
-      "encoding": {"type": "shift31", "strategy": "full_text"},
+      "encoding": {
+        "type": "shift31",
+        "strategy": "full_text"
+      },
       "trigger_terms": [
-        "alta tension", "itc-lat", "lineas electricas de alta",
-        "linea de at", "lineas de at", "instalacion at", "instalaciones at",
+        "alta tension",
+        "itc-lat",
+        "lineas electricas de alta",
+        "linea de at",
+        "lineas de at",
+        "instalacion at",
+        "instalaciones at",
         "avance del sector electrico",
-        "a16436-16554", "a16436", "a16554"
+        "a16436-16554",
+        "a16436",
+        "a16554"
       ],
-      "trigger_regex": ["\\blat\\b"],
-      "source_tokens": ["itc-lat", "lat", "a16436", "a16554", "alta_tension", "alta-tension"],
-      "source_phrases": ["alta tension"],
-      "folder_prefixes": ["alta_tension", "lineas_alta_tension"],
+      "trigger_regex": [
+        "\\blat\\b"
+      ],
+      "source_tokens": [
+        "itc-lat",
+        "lat",
+        "a16436",
+        "a16554",
+        "alta_tension",
+        "alta-tension"
+      ],
+      "source_phrases": [
+        "alta tension"
+      ],
+      "folder_prefixes": [
+        "alta_tension",
+        "lineas_alta_tension"
+      ],
       "phrase_queries": [
         {
-          "if_contains": ["real decreto", "alta tension"],
-          "emit": ["Reglamento sobre condiciones técnicas y garantías de seguridad", "instrucciones técnicas complementarias ITC-LAT"]
+          "if_contains": [
+            "real decreto",
+            "alta tension"
+          ],
+          "emit": [
+            "Reglamento sobre condiciones técnicas y garantías de seguridad",
+            "instrucciones técnicas complementarias ITC-LAT"
+          ]
         },
         {
-          "if_contains": ["lineas electricas", "alta tension"],
-          "emit": ["Reglamento sobre condiciones técnicas y garantías de seguridad", "instrucciones técnicas complementarias ITC-LAT"]
+          "if_contains": [
+            "lineas electricas",
+            "alta tension"
+          ],
+          "emit": [
+            "Reglamento sobre condiciones técnicas y garantías de seguridad",
+            "instrucciones técnicas complementarias ITC-LAT"
+          ]
         },
         {
-          "if_contains": ["sector electrico", "procedimientos"],
-          "emit": ["sector eléctrico", "adaptar todos los procedimientos", "agentes intervinientes"]
+          "if_contains": [
+            "sector electrico",
+            "procedimientos"
+          ],
+          "emit": [
+            "sector eléctrico",
+            "adaptar todos los procedimientos",
+            "agentes intervinientes"
+          ]
         },
         {
-          "if_contains": ["contactos", "personas"],
-          "emit": ["contactos directos", "contactos indirectos", "proteccion de las personas", "tensiones de paso", "tensiones de contacto", "aislamientos", "cerramientos"]
+          "if_contains": [
+            "contactos",
+            "personas"
+          ],
+          "emit": [
+            "contactos directos",
+            "contactos indirectos",
+            "proteccion de las personas",
+            "tensiones de paso",
+            "tensiones de contacto",
+            "aislamientos",
+            "cerramientos"
+          ]
         },
         {
-          "if_contains": ["contactos", "medidas"],
-          "emit": ["contactos directos", "contactos indirectos", "tensiones de paso", "tensiones de contacto", "cerramientos", "enclavamientos"]
+          "if_contains": [
+            "contactos",
+            "medidas"
+          ],
+          "emit": [
+            "contactos directos",
+            "contactos indirectos",
+            "tensiones de paso",
+            "tensiones de contacto",
+            "cerramientos",
+            "enclavamientos"
+          ]
         },
         {
-          "if_contains": ["proteccion", "personas"],
-          "emit": ["proteccion de las personas", "contactos directos", "contactos indirectos", "tensiones de paso", "tensiones de contacto", "puesta a tierra"]
+          "if_contains": [
+            "proteccion",
+            "personas"
+          ],
+          "emit": [
+            "proteccion de las personas",
+            "contactos directos",
+            "contactos indirectos",
+            "tensiones de paso",
+            "tensiones de contacto",
+            "puesta a tierra"
+          ]
         }
       ],
       "scoring": {}
@@ -49,41 +123,200 @@
       "document_type": "reglamento",
       "confidentiality": "internal",
       "trigger_terms": [
-        "rite", "instalaciones termicas", "termicas", "climatizacion", "calefaccion",
-        "tabla 3.1", "operaciones de mantenimiento", "mantenimiento preventivo",
-        "caldera de gas", "calderas de gas", "limpieza de condensadores",
-        "limpieza de evaporadores", "condensadores", "evaporadores",
-        "a35931-35984", "a35931", "a35984"
+        "rite",
+        "instalaciones termicas",
+        "termicas",
+        "climatizacion",
+        "calefaccion",
+        "tabla 3.1",
+        "operaciones de mantenimiento",
+        "mantenimiento preventivo",
+        "caldera de gas",
+        "calderas de gas",
+        "limpieza de condensadores",
+        "limpieza de evaporadores",
+        "condensadores",
+        "evaporadores",
+        "a35931-35984",
+        "a35931",
+        "a35984",
+        "boe-a-2007-15820",
+        "1027/2007",
+        "rite it3",
+        "it 3",
+        "boe-a-2021-4572",
+        "real decreto 178/2021",
+        "rd 178/2021",
+        "178/2021",
+        "bacs",
+        "automatizacion y control de edificios",
+        "sistemas de automatizacion",
+        "instalacion termica"
       ],
       "trigger_regex": [],
-      "source_tokens": ["rite", "a35931", "a35984", "termicas", "instalaciones_termicas"],
-      "source_phrases": ["instalaciones termicas"],
-      "folder_prefixes": ["rite", "instalaciones_termicas", "termicas"],
-      "encoding": {"type": "shift31"},
+      "source_tokens": [
+        "rite",
+        "a35931",
+        "a35984",
+        "boe-a-2007-15820",
+        "boe-a-2021-4572",
+        "it3",
+        "termicas",
+        "instalaciones_termicas"
+      ],
+      "source_phrases": [
+        "instalaciones termicas"
+      ],
+      "folder_prefixes": [
+        "rite",
+        "instalaciones_termicas",
+        "termicas"
+      ],
+      "encoding": {
+        "type": "shift31"
+      },
       "phrase_queries": [
         {
-          "if_contains": ["condensadores"],
-          "emit": ["-JNQJF[BEFMPTDPOEFOTBEPSFT", "una vez por temporada"]
+          "if_contains": [
+            "condensadores"
+          ],
+          "emit": [
+            "-JNQJF[BEFMPTDPOEFOTBEPSFT",
+            "Limpieza de los condensadores",
+            "Tabla 3.1",
+            "IT 3.3",
+            "Periodicidad",
+            "una vez por temporada"
+          ]
         },
         {
-          "if_contains": ["evaporadores"],
-          "emit": ["-JNQJF[BEFMPTFWBQPSBEPSFT", "una vez por temporada"]
+          "if_contains": [
+            "evaporadores"
+          ],
+          "emit": [
+            "-JNQJF[BEFMPTFWBQPSBEPSFT",
+            "Limpieza de los evaporadores",
+            "Tabla 3.1",
+            "IT 3.3",
+            "Periodicidad",
+            "una vez por temporada"
+          ]
         },
         {
-          "if_contains": ["caldera", "gas"],
-          "emit": ["3FWJTJÓOHFOFSBMEFDBMEFSBTEFHBT", "3FWJTJÓOHFOFSBMEFDBMFSBTEFHBT", "DBMEFSBT", "HBT", "1FSJPEJDJEBE: U", "una vez por temporada"]
+          "if_contains": [
+            "caldera",
+            "gas"
+          ],
+          "emit": [
+            "3FWJTJÓOHFOFSBMEFDBMEFSBTEFHBT",
+            "3FWJTJÓOHFOFSBMEFDBMFSBTEFHBT",
+            "DBMEFSBT",
+            "HBT",
+            "1FSJPEJDJEBE: U",
+            "Revision general de calderas de gas",
+            "Revisi?n general de calderas de gas",
+            "Tabla 3.1",
+            "IT 3.3",
+            "Periodicidad",
+            "una vez por temporada"
+          ]
         },
         {
-          "if_contains": ["tabla", "mantenimiento"],
-          "emit": ["una vez por temporada", "IT 3.3"]
+          "if_contains": [
+            "tabla",
+            "mantenimiento"
+          ],
+          "emit": [
+            "Tabla 3.1",
+            "operaciones de mantenimiento preventivo",
+            "IT 3.3",
+            "Periodicidad",
+            "una vez por temporada"
+          ]
         },
         {
-          "if_contains": ["indice", "rite"],
-          "emit": ["rticulo 1", "NDICE"]
+          "if_contains": [
+            "indice",
+            "rite"
+          ],
+          "emit": [
+            "rticulo 1",
+            "NDICE",
+            "Articulo 1",
+            "?NDICE",
+            "Reglamento de instalaciones termicas en los edificios"
+          ]
         },
         {
-          "if_contains": ["indice", "articulos"],
-          "emit": ["rticulo 1", "NDICE"]
+          "if_contains": [
+            "indice",
+            "articulos"
+          ],
+          "emit": [
+            "rticulo 1",
+            "NDICE",
+            "Articulo 1",
+            "?NDICE",
+            "Reglamento de instalaciones termicas en los edificios"
+          ]
+        },
+        {
+          "if_contains": [
+            "directiva",
+            "transpone"
+          ],
+          "emit": [
+            "2018/844",
+            "transposicion de la Directiva",
+            "Directiva UE 2018"
+          ]
+        },
+        {
+          "if_contains": [
+            "178/2021",
+            "directiva"
+          ],
+          "emit": [
+            "2018/844",
+            "transposicion de la Directiva",
+            "necesidad a cubrir con la norma"
+          ]
+        },
+        {
+          "if_contains": [
+            "servicio",
+            "documentacion"
+          ],
+          "emit": [
+            "puesta en servicio de instalaciones termicas",
+            "Para la puesta en servicio",
+            "documentacion de las instalaciones termicas"
+          ]
+        },
+        {
+          "if_contains": [
+            "instrucciones tecnicas",
+            "cuantas"
+          ],
+          "emit": [
+            "IT 1. Dis",
+            "IT 2. Mont",
+            "IT 3. Man",
+            "IT 4. Ins",
+            "DISPONGO"
+          ]
+        },
+        {
+          "if_contains": [
+            "instrucciones tecnicas",
+            "rite"
+          ],
+          "emit": [
+            "IT 1. Dis",
+            "IT 2. Mont",
+            "IT 3. Man",
+            "IT 4. Ins"
+          ]
         }
       ],
       "scoring": {}
@@ -93,40 +326,94 @@
       "document_type": "reglamento",
       "confidentiality": "internal",
       "trigger_terms": [
-        "rebt", "baja tension", "itc-bt", "boe-326", "reglamento electrotecnico", "boe326",
-        "electrificacion basica", "electrificacion elevada", "circuitos minimos", "circuito c1", "itc-bt-25"
+        "rebt",
+        "baja tension",
+        "itc-bt",
+        "boe-326",
+        "reglamento electrotecnico",
+        "boe326",
+        "electrificacion basica",
+        "electrificacion elevada",
+        "circuitos minimos",
+        "circuito c1",
+        "itc-bt-25"
       ],
       "trigger_regex": [],
-      "source_tokens": ["rebt", "itc-bt", "baja_tension", "baja-tension", "boe-326"],
-      "source_phrases": ["baja tension"],
-      "folder_prefixes": ["baja_tension", "rebt"],
+      "source_tokens": [
+        "rebt",
+        "itc-bt",
+        "baja_tension",
+        "baja-tension",
+        "boe-326"
+      ],
+      "source_phrases": [
+        "baja tension"
+      ],
+      "folder_prefixes": [
+        "baja_tension",
+        "rebt"
+      ],
       "phrase_queries": [
         {
-          "if_contains": ["electrificacion basica"],
-          "emit": ["electrificacion basica"]
+          "if_contains": [
+            "electrificacion basica"
+          ],
+          "emit": [
+            "electrificacion basica"
+          ]
         },
         {
-          "if_contains": ["electrificacion basica", "c1"],
-          "emit": ["C1 Iluminación", "Tabla 1. Características eléctricas de los circuitos"]
+          "if_contains": [
+            "electrificacion basica",
+            "c1"
+          ],
+          "emit": [
+            "C1 Iluminación",
+            "Tabla 1. Características eléctricas de los circuitos"
+          ]
         },
         {
-          "if_contains": ["c1", "iluminacion"],
-          "emit": ["C Iluminación", "Interruptor automático – A: 10", "Tabla 1. Características eléctricas de los circuitos"]
+          "if_contains": [
+            "c1",
+            "iluminacion"
+          ],
+          "emit": [
+            "C Iluminación",
+            "Interruptor automático – A: 10",
+            "Tabla 1. Características eléctricas de los circuitos"
+          ]
         },
         {
-          "if_contains": ["electrificacion elevada"],
-          "emit": ["electrificacion elevada"]
+          "if_contains": [
+            "electrificacion elevada"
+          ],
+          "emit": [
+            "electrificacion elevada"
+          ]
         },
         {
-          "if_contains": ["tension de contacto"],
-          "emit": ["tension de contacto", "tension limite convencional"]
+          "if_contains": [
+            "tension de contacto"
+          ],
+          "emit": [
+            "tension de contacto",
+            "tension limite convencional"
+          ]
         },
         {
-          "if_contains": ["puestas a tierra", "tension"],
-          "emit": ["puesta a tierra"]
+          "if_contains": [
+            "puestas a tierra",
+            "tension"
+          ],
+          "emit": [
+            "puesta a tierra"
+          ]
         },
         {
-          "if_contains": ["vida", "contacto"],
+          "if_contains": [
+            "vida",
+            "contacto"
+          ],
           "emit": [
             "ITC-BT-09. INSTALACIONES DE ALUMBRADO EXTERIOR",
             "ITC-BT-52. INSTALACIONES CON FINES ESPECIALES",
@@ -136,7 +423,10 @@
           ]
         },
         {
-          "if_contains": ["puesta", "contacto"],
+          "if_contains": [
+            "puesta",
+            "contacto"
+          ],
           "emit": [
             "ITC-BT-18",
             "RESISTENCIA DE LAS TOMAS DE TIERRA",
@@ -151,31 +441,82 @@
       "document_type": "guia_tecnica",
       "confidentiality": "internal",
       "trigger_terms": [
-        "bt-40", "guia bt 40", "guia-bt-40",
-        "instalaciones generadoras", "instalacion generadora", "generadoras de baja tension",
-        "generador conectado", "acoplamiento a red", "anti-isla", "funcionamiento en isla",
-        "une 12464", "12464"
+        "bt-40",
+        "guia bt 40",
+        "guia-bt-40",
+        "instalaciones generadoras",
+        "instalacion generadora",
+        "generadoras de baja tension",
+        "generador conectado",
+        "acoplamiento a red",
+        "anti-isla",
+        "funcionamiento en isla",
+        "une 12464",
+        "12464"
       ],
       "trigger_regex": [],
-      "source_tokens": ["guia", "guias", "guia_bt", "bt-40", "iluminacion", "une-12464", "12464"],
+      "source_tokens": [
+        "guia",
+        "guias",
+        "guia_bt",
+        "bt-40",
+        "iluminacion",
+        "une-12464",
+        "12464"
+      ],
       "source_phrases": [],
-      "folder_prefixes": ["guias_tecnicas", "guias", "iluminacion"],
+      "folder_prefixes": [
+        "guias_tecnicas",
+        "guias",
+        "iluminacion"
+      ],
       "phrase_queries": [
         {
-          "if_contains": ["tecnologias", "generacion"],
-          "emit": ["El presente documento aplica a todas las instalaciones generadoras", "Generadores fotovoltaicos", "Turbinas"]
+          "if_contains": [
+            "tecnologias",
+            "generacion"
+          ],
+          "emit": [
+            "El presente documento aplica a todas las instalaciones generadoras",
+            "Generadores fotovoltaicos",
+            "Turbinas"
+          ]
         },
         {
-          "if_contains": ["generador", "baja tension"],
-          "emit": ["instalaciones generadoras", "condiciones de conexion a red", "conexion a red", "Generadores fotovoltaicos", "aisladas asistidas interconectadas"]
+          "if_contains": [
+            "generador",
+            "baja tension"
+          ],
+          "emit": [
+            "instalaciones generadoras",
+            "condiciones de conexion a red",
+            "conexion a red",
+            "Generadores fotovoltaicos",
+            "aisladas asistidas interconectadas"
+          ]
         },
         {
-          "if_contains": ["generador", "red"],
-          "emit": ["instalaciones generadoras", "condiciones de conexion a red", "funcionamiento en isla", "anti-isla"]
+          "if_contains": [
+            "generador",
+            "red"
+          ],
+          "emit": [
+            "instalaciones generadoras",
+            "condiciones de conexion a red",
+            "funcionamiento en isla",
+            "anti-isla"
+          ]
         },
         {
-          "if_contains": ["legalizar", "generador"],
-          "emit": ["instalaciones generadoras", "condiciones de conexion a red", "documentacion tecnica"]
+          "if_contains": [
+            "legalizar",
+            "generador"
+          ],
+          "emit": [
+            "instalaciones generadoras",
+            "condiciones de conexion a red",
+            "documentacion tecnica"
+          ]
         }
       ],
       "scoring": {
@@ -195,31 +536,77 @@
       "document_type": "manual",
       "confidentiality": "internal",
       "trigger_terms": [
-        "fotovoltaica", "fotovoltaico", "paneles solares", "planta solar",
-        "operacion y mantenimiento", "mantenimiento fv", "planta fv",
-        "modulos solares", "sistema de monitorizacion", "paneles fotovoltaicos", "o&m",
-        "cajas de campo", "ssm"
+        "fotovoltaica",
+        "fotovoltaico",
+        "paneles solares",
+        "planta solar",
+        "operacion y mantenimiento",
+        "mantenimiento fv",
+        "planta fv",
+        "modulos solares",
+        "sistema de monitorizacion",
+        "paneles fotovoltaicos",
+        "o&m",
+        "cajas de campo",
+        "ssm"
       ],
       "trigger_regex": [],
-      "source_tokens": ["fotovoltaica", "fotovoltaico", "fv", "om-fv", "o&m"],
-      "source_phrases": ["operacion y mantenimiento"],
-      "folder_prefixes": ["fotovoltaica_om", "fotovoltaica", "fv", "operacion_mantenimiento"],
+      "source_tokens": [
+        "fotovoltaica",
+        "fotovoltaico",
+        "fv",
+        "om-fv",
+        "o&m"
+      ],
+      "source_phrases": [
+        "operacion y mantenimiento"
+      ],
+      "folder_prefixes": [
+        "fotovoltaica_om",
+        "fotovoltaica",
+        "fv",
+        "operacion_mantenimiento"
+      ],
       "phrase_queries": [
         {
-          "if_contains": ["limpiar", "panel"],
-          "emit": ["limpieza de los paneles se realizarán mensualmente", "La limpieza se realizará con agua"]
+          "if_contains": [
+            "limpiar",
+            "panel"
+          ],
+          "emit": [
+            "limpieza de los paneles se realizarán mensualmente",
+            "La limpieza se realizará con agua"
+          ]
         },
         {
-          "if_contains": ["inversores", "mantenimiento"],
-          "emit": ["4.1.5. Inversores", "Lectura de los datos archivados"]
+          "if_contains": [
+            "inversores",
+            "mantenimiento"
+          ],
+          "emit": [
+            "4.1.5. Inversores",
+            "Lectura de los datos archivados"
+          ]
         },
         {
-          "if_contains": ["cajas de campo"],
-          "emit": ["cajas de campo", "riesgo eléctrico", "desconectadas y sin tensión"]
+          "if_contains": [
+            "cajas de campo"
+          ],
+          "emit": [
+            "cajas de campo",
+            "riesgo eléctrico",
+            "desconectadas y sin tensión"
+          ]
         },
         {
-          "if_contains": ["aviso de alarmas"],
-          "emit": ["Comprobación del sistema de aviso de alarmas", "mensaje", "de prueba"]
+          "if_contains": [
+            "aviso de alarmas"
+          ],
+          "emit": [
+            "Comprobación del sistema de aviso de alarmas",
+            "mensaje",
+            "de prueba"
+          ]
         }
       ],
       "scoring": {}
@@ -229,44 +616,98 @@
       "document_type": "norma",
       "confidentiality": "internal",
       "trigger_terms": [
-        "grupo electrogeno", "grupos electrogenos", "generador diesel", "iso 8528", "8528"
+        "grupo electrogeno",
+        "grupos electrogenos",
+        "generador diesel",
+        "iso 8528",
+        "8528"
       ],
       "trigger_regex": [],
       "source_tokens": [
-        "grupo_electrogeno", "grupos_electrogenos", "iso-8528", "8528", "electrogenos"
+        "grupo_electrogeno",
+        "grupos_electrogenos",
+        "iso-8528",
+        "8528",
+        "electrogenos"
       ],
       "source_phrases": [
-        "grupo electrogeno", "grupos electrogenos", "generating sets"
+        "grupo electrogeno",
+        "grupos electrogenos",
+        "generating sets"
       ],
-      "folder_prefixes": ["grupos_electrogenos", "grupos", "electrogenos"],
+      "folder_prefixes": [
+        "grupos_electrogenos",
+        "grupos",
+        "electrogenos"
+      ],
       "phrase_queries": [
         {
-          "if_contains": ["load pick-up", "readiness"],
-          "emit": ["3.19 load pick-up readiness time", "load pick-up readiness time"]
+          "if_contains": [
+            "load pick-up",
+            "readiness"
+          ],
+          "emit": [
+            "3.19 load pick-up readiness time",
+            "load pick-up readiness time"
+          ]
         },
         {
-          "if_contains": ["off-load", "run-on"],
-          "emit": ["3.20 off-load run-on time", "cooling run-on time"]
+          "if_contains": [
+            "off-load",
+            "run-on"
+          ],
+          "emit": [
+            "3.20 off-load run-on time",
+            "cooling run-on time"
+          ]
         },
         {
-          "if_contains": ["cooling", "run-on"],
-          "emit": ["3.20 off-load run-on time", "cooling run-on time"]
+          "if_contains": [
+            "cooling",
+            "run-on"
+          ],
+          "emit": [
+            "3.20 off-load run-on time",
+            "cooling run-on time"
+          ]
         },
         {
-          "if_contains": ["declared frequency"],
-          "emit": ["declared frequency rated frequency", "frequency at which the generating set is designed to operate"]
+          "if_contains": [
+            "declared frequency"
+          ],
+          "emit": [
+            "declared frequency rated frequency",
+            "frequency at which the generating set is designed to operate"
+          ]
         },
         {
-          "if_contains": ["rated frequency"],
-          "emit": ["declared frequency rated frequency", "frequency at which the generating set is designed to operate"]
+          "if_contains": [
+            "rated frequency"
+          ],
+          "emit": [
+            "declared frequency rated frequency",
+            "frequency at which the generating set is designed to operate"
+          ]
         },
         {
-          "if_contains": ["iso 8528-2", "table 1"],
-          "emit": ["ISO 8528-2:2005, Table 1", "below maximum safety frequency"]
+          "if_contains": [
+            "iso 8528-2",
+            "table 1"
+          ],
+          "emit": [
+            "ISO 8528-2:2005, Table 1",
+            "below maximum safety frequency"
+          ]
         },
         {
-          "if_contains": ["iso 8528-2", "tabla"],
-          "emit": ["ISO 8528-2:2005, Table 1", "below maximum safety frequency"]
+          "if_contains": [
+            "iso 8528-2",
+            "tabla"
+          ],
+          "emit": [
+            "ISO 8528-2:2005, Table 1",
+            "below maximum safety frequency"
+          ]
         }
       ],
       "scoring": {}
@@ -280,11 +721,13 @@
       "trigger_regex": [],
       "source_tokens": [],
       "source_phrases": [],
-      "folder_prefixes": ["pendiente_ocr", "ocr"],
+      "folder_prefixes": [
+        "pendiente_ocr",
+        "ocr"
+      ],
       "phrase_queries": [],
       "scoring": {}
     }
   },
-  "filename_overrides": {
-  }
+  "filename_overrides": {}
 }
