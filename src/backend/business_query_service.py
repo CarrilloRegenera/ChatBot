@@ -444,7 +444,7 @@ def detect_business_route(question: str) -> str | None:
         return "business_licitaciones"
     if any(hint in text for hint in ("cliente", "estado", "numero proyecto", "numero oferta", "tipo obra", "concurso")):
         return "business_licitaciones"
-    if any(hint in text for hint in ("importe medio", "importe promedio", "importe contratado", "importe adjudicado", "probabilidad de adjudicacion", "situacion oferta", "periodo de ejecucion", "tipologia de obra")):
+    if any(hint in text for hint in ("importe medio", "importe promedio", "importe contratado", "importe adjudicado", "probabilidad de adjudicacion", "situacion oferta", "periodo de ejecucion", "tipologia de obra", "tipologia")):
         return "business_licitaciones"
     return None
 

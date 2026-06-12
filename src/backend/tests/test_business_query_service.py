@@ -26,6 +26,10 @@ class BusinessQueryServiceTests(unittest.TestCase):
             business.detect_business_route("Cual es el imorte medio de las 10 liictaciones que nos hemos adjudicado"),
             "business_licitaciones",
         )
+        self.assertEqual(
+            business.detect_business_route("Que tipologia tiene?"),
+            "business_licitaciones",
+        )
 
     def test_business_schema_loads_fields_and_relationships(self):
         self.assertIn("estudios.importecontratado", business.BUSINESS_SCHEMA["fields"])
