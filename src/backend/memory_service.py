@@ -242,6 +242,22 @@ def list_pending_users() -> List[Dict]:
     ]
 
 
+def get_interaction_owner_user_id(interaction_id: int) -> int | None:
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT c.UsuarioId
+            FROM dbo.InteraccionesRAG i
+            LEFT JOIN dbo.Conversaciones c ON c.Id = i.ConversacionId
+            WHERE i.Id = ?
+            """,
+            interaction_id,
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def list_pending_interactions(limit: int = 50, user_id: int | None = None) -> List[Dict]:
     limit = max(1, min(int(limit or 50), 200))
     with db_conn() as conn:

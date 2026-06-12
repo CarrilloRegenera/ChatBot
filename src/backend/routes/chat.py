@@ -708,6 +708,12 @@ def get_pending_knowledge(limit: int = 50):
     return {"pending": _memory_service().list_pending_interactions(limit=limit)}
 
 
+@router.get("/knowledge/my-pending")
+def get_my_pending_knowledge(request: Request, limit: int = 50):
+    request_user_id = _resolve_request_user_id(request)
+    return {"pending": _memory_service().list_pending_interactions(limit=limit, user_id=request_user_id)}
+
+
 @router.get("/admin/metrics")
 def admin_metrics(request: Request, days: int = 30):
     _assert_admin(request)
@@ -805,9 +811,21 @@ def admin_download_deployment_logs(run_id: int, request: Request):
     )
 
 
+def _assert_admin_or_interaction_owner(request: Request, interaction_id: int) -> None:
+    try:
+        _assert_admin(request)
+        return
+    except HTTPException:
+        pass
+    request_user_id = _resolve_request_user_id(request)
+    owner_user_id = _memory_service().get_interaction_owner_user_id(interaction_id)
+    if owner_user_id is None or owner_user_id != request_user_id:
+        raise HTTPException(status_code=403, detail="Solo puedes revisar tus propias interacciones")
+
+
 @router.post("/knowledge/{interaction_id}/validate")
 def approve_interaction(interaction_id: int, data: InteractionReviewRequest, request: Request):
-    _assert_admin(request)
+    _assert_admin_or_interaction_owner(request, interaction_id)
     try:
         result = _memory_service().validate_interaction(interaction_id=interaction_id, reviewer=data.reviewer)
         return result
@@ -817,7 +835,7 @@ def approve_interaction(interaction_id: int, data: InteractionReviewRequest, req
 
 @router.post("/knowledge/{interaction_id}/reject")
 def reject_interaction_endpoint(interaction_id: int, data: InteractionReviewRequest, request: Request):
-    _assert_admin(request)
+    _assert_admin_or_interaction_owner(request, interaction_id)
     return _memory_service().reject_interaction(interaction_id=interaction_id, reviewer=data.reviewer)
 
 

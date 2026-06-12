@@ -646,6 +646,10 @@ html, body {
     display: none;
 }
 
+.my-interactions-floating {
+    right: 96px;
+}
+
 .admin-panel-btn {
     width: 100%;
     padding: 10px 12px;
@@ -2248,6 +2252,10 @@ body.app-loading {
     .admin-tools-floating {
         top: 16px;
         right: 16px;
+    }
+
+    .my-interactions-floating {
+        right: 84px;
     }
 
     .deploy-admin-card-header,

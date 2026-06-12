@@ -216,6 +216,11 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 14 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 8c.2.49.58.84 1.1 1H21a2 2 0 1 1 0 4h-.5c-.52.16-.9.51-1.1 1z"></path></svg>
                 </button>
             </div>
+            <div id="my-interactions-tools" class="admin-tools admin-tools-floating my-interactions-floating hidden">
+                <button class="admin-panel-btn admin-panel-floating-btn" type="button" onclick="openMyInteractionsPanel()" title="Mis respuestas pendientes">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </button>
+            </div>
             <div class="mobile-mode-toolbar">
                 <button class="mobile-mode-back-btn" type="button" onclick="goToChatSelector()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
@@ -347,6 +352,24 @@
                 </div>
                 <div id="admin-pending-list" class="admin-pending-list"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- ==================== MIS RESPUESTAS PANEL ==================== -->
+    <div id="my-interactions-panel" class="admin-panel hidden">
+        <div class="admin-panel-overlay" onclick="closeMyInteractionsPanel()"></div>
+        <div class="admin-panel-content">
+            <div class="admin-panel-header">
+                <h3>Mis respuestas pendientes</h3>
+                <button class="admin-close-btn" onclick="closeMyInteractionsPanel()">Cerrar</button>
+            </div>
+            <div class="admin-pending-header" style="padding: 12px 20px 0;">
+                <p style="margin:0; font-size:13px; color:var(--text-secondary);">Aprueba o rechaza las respuestas que el chatbot te ha dado. Las aprobadas ayudan a mejorar futuras respuestas.</p>
+            </div>
+            <div style="padding: 8px 20px 4px; display:flex; justify-content:flex-end;">
+                <button class="admin-refresh-btn" onclick="loadMyPendingInteractions()">Actualizar</button>
+            </div>
+            <div id="my-interactions-list" class="admin-pending-list"></div>
         </div>
     </div>
 
