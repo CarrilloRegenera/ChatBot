@@ -103,6 +103,46 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["year"], 2026)
         self.assertEqual(parsed["month"], 4)
 
+    def test_follow_up_with_possessive_pronoun_reuses_reference(self):
+        parsed = business._parse_question(
+            "dime su fecha de presentacion",
+            module="estudios",
+            history=[{"question": "quiero que me digas el importe y la produccion total de la licitacion 26018"}],
+        )
+
+        self.assertEqual(parsed["reference"], "26018")
+        self.assertEqual(parsed["fields"], ["fechaPresentacion"])
+
+    def test_context_question_without_marker_can_reuse_last_reference(self):
+        parsed = business._parse_question(
+            "Cuanto importe contratado tiene en 2025, 2026 y 2027?",
+            module="estudios",
+            history=[{"question": "Licitacion 26018 Concesion OPS: cliente = REGENERA OPS."}],
+        )
+
+        self.assertEqual(parsed["reference"], "26018")
+        self.assertEqual(
+            parsed["fields"],
+            ["importeContratado2025", "importeContratado2026", "importeContratado2027"],
+        )
+        self.assertEqual(parsed["years"], [2025, 2026, 2027])
+        self.assertTrue(parsed["per_year"])
+        self.assertIsNone(parsed["aggregate"])
+
+    def test_year_only_follow_up_reuses_previous_metric(self):
+        parsed = business._parse_question(
+            "y 2026?",
+            module="estudios",
+            history=[
+                {"question": "quiero que me digas el importe y la produccion total de la licitacion 26018"},
+                {"question": "Cuanto importe contratado tiene en 2025, 2026 y 2027?"},
+            ],
+        )
+
+        self.assertEqual(parsed["reference"], "26018")
+        self.assertEqual(parsed["year"], 2026)
+        self.assertEqual(parsed["fields"], ["importeContratado2026"])
+
     def test_numeric_reference_does_not_force_produccion_module(self):
         self.assertIsNone(business._detect_reference_module("26001"))
         self.assertEqual(business._detect_reference_module("EST-26001-2026"), "estudios")
@@ -609,6 +649,16 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["reference"], "24036")
         self.assertEqual(parsed["fields"], ["tipoObra"])
 
+    def test_tipologia_follow_up_reuses_reference_and_specific_field(self):
+        parsed = business._parse_question(
+            "Que tipologia tiene?",
+            module="estudios",
+            history=[{"question": "Que N Oferta tiene este proyecto 26018"}],
+        )
+
+        self.assertEqual(parsed["reference"], "26018")
+        self.assertEqual(parsed["fields"], ["tipologiaObra"])
+
     def test_est_reference_with_produccion_field_stays_in_estudios(self):
         with patch.object(
             business,
@@ -690,6 +740,28 @@ class BusinessQueryServiceTests(unittest.TestCase):
 
         self.assertIn("Top 2 por importe contratado 2027", result["response"])
         self.assertNotIn("00000", result["response"])
+
+    def test_plural_top_question_without_top_keyword_is_structured(self):
+        parsed = business._parse_question(
+            "Cuales son las 3 licitaciones con mas importe?",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "top")
+        self.assertEqual(parsed["aggregate"]["top_n"], 3)
+        self.assertEqual(parsed["aggregate"]["metric"], "importecontratado")
+
+    def test_singular_top_licitacion_question_is_structured(self):
+        parsed = business._parse_question(
+            "cual es la licitacion con mas produccion total?",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["aggregate"]["kind"], "top")
+        self.assertEqual(parsed["aggregate"]["top_n"], 1)
+        self.assertEqual(parsed["aggregate"]["metric"], "produccion")
 
     def test_auth_required_response_is_traced(self):
         with patch.object(business, "APPREGENERA_DEV_BYPASS_KEY", ""):
