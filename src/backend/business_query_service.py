@@ -212,6 +212,31 @@ PRODUCCION_FIELD_SPECS = [
     ("ultimaSincronizacionExcelUtc", "ultima sincronizacion excel", ("ultima sincronizacion excel", "ultima sincronizacion")),
 ]
 
+PRODUCCION_ONLY_FALLBACK_BLOCK_FIELDS = {
+    "rentabilidadPrevista2026",
+    "cartera2026",
+    "pendiente2026",
+    "produccionTotal",
+    "periodosMensuales",
+    "produccionEnero",
+    "produccionFebrero",
+    "produccionMarzo",
+    "produccionAbril",
+    "produccionMayo",
+    "produccionJunio",
+    "produccionJulio",
+    "produccionAgosto",
+    "produccionSeptiembre",
+    "produccionOctubre",
+    "produccionNoviembre",
+    "produccionEstimadaDiciembre",
+    "produccionPrimerCuatrimestre",
+    "produccionSegundoCuatrimestre",
+    "produccionEstimadaTercerCuatrimestre",
+    "produccionPrimerSegundoCuatrimestre",
+    "produccionEstimadaPendiente",
+}
+
 FIELD_LABELS = {key: label for key, label, _ in LICITACION_FIELD_SPECS + PRODUCCION_FIELD_SPECS}
 FIELD_LABELS.update(
     {
@@ -771,6 +796,7 @@ def _answer_business_question_sql(
                 explicit_scope is None
                 and index < len(modules_to_try) - 1
                 and not detail_result.get("has_data", True)
+                and not _should_block_cross_module_detail_fallback(module, parsed)
             ):
                 continue
             return _with_business_trace(
@@ -1847,6 +1873,13 @@ def _field_label(field_name: str) -> str:
         }
         return f"{base_labels.get(base, base)} {year}"
     return field_name
+
+
+def _should_block_cross_module_detail_fallback(module: str, parsed: Dict[str, Any]) -> bool:
+    if module != "produccion":
+        return False
+    fields = set(parsed.get("fields") or [])
+    return bool(fields & PRODUCCION_ONLY_FALLBACK_BLOCK_FIELDS)
 
 
 def _pick_best_licitacion_match(matches: List[Dict[str, Any]], reference: str) -> Dict[str, Any] | str | None:

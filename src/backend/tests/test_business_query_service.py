@@ -770,6 +770,35 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertIn("Top 2 por importe contratado 2027", result["response"])
         self.assertNotIn("00000", result["response"])
 
+    def test_produccion_only_field_without_data_does_not_fallback_to_estudios(self):
+        with patch.object(
+            business,
+            "sql_search_produccion",
+            return_value=[{"Id": "1", "CodigoObra": "26001", "NombreObra": "Automatizacion y SCADAs"}],
+        ), patch.object(
+            business,
+            "sql_get_produccion_detail",
+            return_value={
+                "CodigoObra": "26001",
+                "NombreObra": "Automatizacion y SCADAs",
+                "RentabilidadPrevista2026": None,
+            },
+        ), patch.object(
+            business,
+            "sql_search_licitaciones",
+            side_effect=AssertionError("no debe consultar estudios para un campo exclusivo de produccion"),
+        ):
+            result = business._answer_business_question_sql(
+                "Cual es el margen previsto de la obra 26001",
+                preferred_route="business_produccion",
+                history=[],
+            )
+
+        self.assertEqual(result["route"], "business_produccion")
+        self.assertEqual(result["trace"]["module"], "produccion")
+        self.assertFalse(result["has_data"])
+        self.assertIn("rentabilidad prevista 2026", result["response"])
+
     def test_plural_top_question_without_top_keyword_is_structured(self):
         parsed = business._parse_question(
             "Cuales son las 3 licitaciones con mas importe?",
