@@ -73,6 +73,9 @@ BUSINESS_COMMON_HINTS = {
     "numero proyecto", "numero oferta", "tipo obra",
 }
 
+LICITACION_REFERENCE_PATTERN = re.compile(r"\b(?:est[-\s]?\d{1,4}[-\s]?20\d{2}|[a-z]{2,6}-\d{1,5}-20\d{2})\b")
+PRODUCCION_CODE_PATTERN = re.compile(r"\b\d{5}\b")
+
 
 def _normalize(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
@@ -126,6 +129,13 @@ def classify_question(question: str) -> Dict[str, str]:
             "route": "out_of_scope",
             "message": "Esa pregunta parece fuera del alcance documental actual. Haz una consulta tecnica sobre la documentacion cargada.",
         }
+
+    has_licitacion_reference = bool(LICITACION_REFERENCE_PATTERN.search(normalized))
+    has_produccion_code = bool(PRODUCCION_CODE_PATTERN.search(normalized))
+    if has_licitacion_reference:
+        return {"route": "business_licitaciones", "message": ""}
+    if has_produccion_code and not any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):
+        return {"route": "business_produccion", "message": ""}
 
     if any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):
         return {"route": "business_licitaciones", "message": ""}
