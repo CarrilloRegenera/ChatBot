@@ -148,6 +148,8 @@ def _build_index_fields() -> List:
         # Campos enriquecidos (schema v4+)
         SearchableField(name="itc_refs", type=SearchFieldDataType.String, filterable=True),
         SearchableField(name="exact_refs", type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name="article_refs", type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name="it_section_refs", type=SearchFieldDataType.String, filterable=True),
         SearchableField(name="article_ref", type=SearchFieldDataType.String, filterable=True),
         SimpleField(name="section_level", type=SearchFieldDataType.Int32, filterable=True),
     ]
@@ -316,7 +318,8 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
                     **document_profile,
                     **chunk_profile,
                     "file_hash": file_hash,
-                    "article_ref": chunk_profile["itc_refs"],
+                    # Legacy field kept for compatibility with older indexes/queries.
+                    "article_ref": chunk_profile["article_refs"],
                 })
     finally:
         pdf.close()
@@ -476,6 +479,8 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         "scope_hint",
         "itc_refs",
         "exact_refs",
+        "article_refs",
+        "it_section_refs",
     ]
     select_fields = enriched_select if _ensure_index_schema_for_search() else legacy_select
     try:
