@@ -125,6 +125,32 @@
       "department": "ingenieria",
       "document_type": "reglamento",
       "confidentiality": "internal",
+      "document_variants": [
+        {
+          "variant_key": "it3",
+          "filename_patterns": ["it3", "it 3"],
+          "query_triggers": [
+            "it 3", "it3", "instruccion tecnica 3", "it 3.3", "it3.3",
+            "operaciones de mantenimiento", "mantenimiento preventivo", "tabla 3.1"
+          ]
+        },
+        {
+          "variant_key": "2021",
+          "filename_patterns": ["2021", "boe-a-2021-4572"],
+          "query_triggers": [
+            "2021", "178/2021", "rd 178", "real decreto 178", "bacs",
+            "automatizacion y control de edificios", "sistemas de automatizacion",
+            "directiva 2018", "directiva ue 2018"
+          ]
+        },
+        {
+          "variant_key": "consolidado",
+          "filename_patterns": ["consolidado", "boe-a-2007-15820", "a35931"],
+          "query_triggers": [
+            "consolidado", "boe 2007", "1027/2007", "boe-a-2007"
+          ]
+        }
+      ],
       "trigger_terms": [
         "rite",
         "instalaciones termicas",

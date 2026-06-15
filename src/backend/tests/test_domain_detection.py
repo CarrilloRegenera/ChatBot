@@ -18,10 +18,13 @@ from rag_service import (  # noqa: E402
     _decode_chunk_corruption,
     _chunk_profile_metadata,
     _document_profile_metadata,
+    _document_variant_from_source,
     _domain_phrase_queries,
     _EF_VERSION,
-    _extract_exact_refs,
+    _expected_document_variants,
     _expected_domains,
+    _extract_exact_refs,
+    _extract_it_section_refs,
     _is_normative_intent_query,
     _normative_application_hit_count,
     _rag_index_version_tag,
@@ -29,6 +32,7 @@ from rag_service import (  # noqa: E402
     _source_domain_key,
     _source_taxonomy,
     _technical_equivalent_phrases,
+    detect_hint_document_variants,
     detect_hint_domains,
 )
 
@@ -141,6 +145,7 @@ def test_document_profile_metadata_is_backend_neutral():
         "document_type": "manual",
         "confidentiality": "internal",
         "regulation": "fotovoltaica_om",
+        "document_variant": "",
     }
 
 
@@ -497,6 +502,133 @@ def test_auto_terms_empty_input():
     """Entrada vacía o corta devuelve lista vacía sin error."""
     assert _auto_technical_terms("") == []
     assert _auto_technical_terms("que es") == []
+
+
+# ---------------------------------------------------------------------------
+# Variante documental — _document_variant_from_source
+# ---------------------------------------------------------------------------
+
+VARIANT_SOURCE_CASES = [
+    ("rite/RITE IT3.pdf", "it3"),
+    ("rite/RITE-2021-BOE-A-2021-4572.pdf", "2021"),
+    ("rite/RITE-BOE-A-2007-15820-consolidado.pdf", "consolidado"),
+    # Fuentes sin variante configurada
+    ("baja_tension/BOE-326_REBT.pdf", ""),
+    ("alta_tension/ITC-LAT-09.pdf", ""),
+    ("guias_tecnicas/Guia_BT_40.pdf", ""),
+    ("rite/RITE-desconocido.pdf", ""),
+]
+
+
+def test_document_variant_from_rite_sources():
+    """Las variantes del dominio RITE se derivan correctamente del nombre de fichero."""
+    failures = []
+    for source, expected in VARIANT_SOURCE_CASES:
+        actual = _document_variant_from_source(source)
+        if actual != expected:
+            failures.append(f"  {source!r}: esperado={expected!r}, obtenido={actual!r}")
+    assert not failures, (
+        f"\nVariante incorrecta en {len(failures)} caso(s):\n" + "\n".join(failures)
+    )
+
+
+def test_document_variant_in_profile_metadata():
+    """_document_profile_metadata incluye document_variant derivado del fichero."""
+    profile = _document_profile_metadata("rite/RITE IT3.pdf")
+    assert profile["document_variant"] == "it3"
+
+    profile2021 = _document_profile_metadata("rite/RITE-2021-BOE-A-2021-4572.pdf")
+    assert profile2021["document_variant"] == "2021"
+
+    profile_bt = _document_profile_metadata("baja_tension/BOE-326_REBT.pdf")
+    assert profile_bt["document_variant"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Variante documental — _expected_document_variants
+# ---------------------------------------------------------------------------
+
+def test_expected_variants_rite_it3_from_query():
+    """Preguntas que mencionan IT 3 o la Tabla 3.1 deben apuntar a la variante it3."""
+    assert "it3" in _expected_document_variants("según la IT 3.3 cuál es la periodicidad de revisión", ["rite"])
+    assert "it3" in _expected_document_variants("operaciones de mantenimiento preventivo RITE", ["rite"])
+    assert "it3" in _expected_document_variants("tabla 3.1 del RITE", ["rite"])
+
+
+def test_expected_variants_rite_2021_from_query():
+    """Preguntas sobre la modificación 2021 o BACS deben apuntar a la variante 2021."""
+    assert "2021" in _expected_document_variants("qué cambió en el RITE en 2021", ["rite"])
+    assert "2021" in _expected_document_variants("sistemas BACS según el RITE", ["rite"])
+    assert "2021" in _expected_document_variants("RD 178/2021 automatizacion y control de edificios", ["rite"])
+
+
+def test_expected_variants_rite_consolidado_from_query():
+    """Preguntas que citan el texto consolidado apuntan a la variante consolidado."""
+    assert "consolidado" in _expected_document_variants("según el RITE consolidado cuál es el artículo 1", ["rite"])
+
+
+def test_expected_variants_empty_when_no_trigger():
+    """Sin triggers de variante la lista es vacía."""
+    assert _expected_document_variants("cuál es el objeto del RITE", ["rite"]) == []
+    assert _expected_document_variants("cuáles son las ITC del REBT", ["baja_tension"]) == []
+
+
+def test_expected_variants_ignores_other_domains():
+    """Los triggers de variante de un dominio no afectan a otros dominios."""
+    # "it3" solo está configurado en rite, no en baja_tension
+    variants = _expected_document_variants("IT 3.3 del REBT", ["baja_tension"])
+    assert "it3" not in variants
+
+
+# ---------------------------------------------------------------------------
+# Variante documental — detect_hint_document_variants
+# ---------------------------------------------------------------------------
+
+def test_detect_hint_variants_from_it3_history():
+    """Historial con IT 3 propaga variante it3."""
+    hints = detect_hint_document_variants("según la IT 3.3 del RITE cuál es la periodicidad", ["rite"])
+    assert "it3" in hints
+
+
+def test_detect_hint_variants_from_2021_history():
+    """Historial con 2021 propaga variante 2021."""
+    hints = detect_hint_document_variants("el RITE 2021 modificó los sistemas BACS", ["rite"])
+    assert "2021" in hints
+
+
+def test_detect_hint_variants_infers_domain_if_no_hint_domains():
+    """Sin hint_domains el dominio se infiere del texto."""
+    hints = detect_hint_document_variants("según el RITE 2021 cuáles son los sistemas BACS")
+    assert "2021" in hints
+
+
+def test_detect_hint_variants_empty_input():
+    """Texto vacío devuelve lista vacía sin error."""
+    assert detect_hint_document_variants("") == []
+    assert detect_hint_document_variants("   ") == []
+
+
+# ---------------------------------------------------------------------------
+# IT section references — _extract_it_section_refs
+# ---------------------------------------------------------------------------
+
+def test_extract_it_section_refs_basic():
+    assert "it 3" in _extract_it_section_refs("según la IT 3 del RITE")
+    assert "it 3.3" in _extract_it_section_refs("IT 3.3. Operaciones de mantenimiento")
+    assert "it 1" in _extract_it_section_refs("IT 1 y IT 2 del RITE")
+    assert "it 2" in _extract_it_section_refs("IT 1 y IT 2 del RITE")
+
+
+def test_extract_it_section_refs_no_false_positives():
+    """'unit', 'kit' etc. no deben generar refs IT."""
+    assert _extract_it_section_refs("unidad 3 del kit") == []
+    assert _extract_it_section_refs("información técnica general") == []
+    assert _extract_it_section_refs("") == []
+
+
+def test_extract_it_section_refs_deduplicates():
+    refs = _extract_it_section_refs("IT 3 de IT 3 según IT 3")
+    assert refs.count("it 3") == 1
 
 
 if __name__ == "__main__":

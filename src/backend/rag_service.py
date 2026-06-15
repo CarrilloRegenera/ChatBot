@@ -318,6 +318,8 @@ TABLE_QUERY_PATTERN = re.compile(
 )
 PAGE_REFERENCE_PATTERN = re.compile(r"\b(?:pag(?:ina)?|p[áa]g(?:ina)?|page)\.?\s*(\d{1,4})\b", re.IGNORECASE)
 ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[ií]a)[-\s]*(bt|lat|rat)?[-\s]*(\d{1,2})\b", re.IGNORECASE)
+# Refs a instrucciones técnicas numeradas del RITE: "IT 3", "IT 3.3", "IT 1.1.1"
+IT_SECTION_REFERENCE_PATTERN = re.compile(r"\bit\s+(\d+(?:\.\d+){0,2})\b", re.IGNORECASE)
 TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3})\b", re.IGNORECASE)
 LOCATION_QUERY_PATTERN = re.compile(
     r"\b(?:pagina|pag|page|donde\s+(?:aparece|esta|se\s+encuentra)|ubicacion|apartado\s+de)\b",
@@ -401,6 +403,9 @@ COMPARISON_PRIORITY_BOOST_INTENT = 6
 PROCEDURE_PRIORITY_BOOST = 5
 TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
+DOCUMENT_VARIANT_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_BOOST", "18"))
+DOCUMENT_VARIANT_MISMATCH_PENALTY = int(os.getenv("RAG_DOCUMENT_VARIANT_MISMATCH_PENALTY", "10"))
+IT_SECTION_BOOST = 20
 LABELED_CONTEXT_PENALTY = 10
 TECHNICAL_EQUIVALENT_BOOST = 18
 NORMATIVE_INTENT_BOOST = 16
@@ -514,13 +519,14 @@ class _QueryCache:
         self._ttl = ttl
         self._lock = threading.Lock()
 
-    def _key(self, question: str, n_results: int, domain: str = "", hint_domains: List[str] | None = None) -> str:
+    def _key(self, question: str, n_results: int, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None) -> str:
         normalized = _normalize_text(question.strip())
         hints = ",".join(sorted(hint_domains)) if hint_domains else ""
-        return f"{normalized}::{n_results}::{_normalize_text(domain)}::{hints}"
+        variant_hints = ",".join(sorted(hint_document_variants)) if hint_document_variants else ""
+        return f"{normalized}::{n_results}::{_normalize_text(domain)}::{hints}::{variant_hints}"
 
-    def get(self, question: str, n_results: int, domain: str = "", hint_domains: List[str] | None = None):
-        key = self._key(question, n_results, domain, hint_domains)
+    def get(self, question: str, n_results: int, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None):
+        key = self._key(question, n_results, domain, hint_domains, hint_document_variants)
         with self._lock:
             entry = self._cache.get(key)
             if entry is None:
@@ -532,8 +538,8 @@ class _QueryCache:
             self._cache.move_to_end(key)
             return value
 
-    def put(self, question: str, n_results: int, value: object, domain: str = "", hint_domains: List[str] | None = None) -> None:
-        key = self._key(question, n_results, domain, hint_domains)
+    def put(self, question: str, n_results: int, value: object, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None) -> None:
+        key = self._key(question, n_results, domain, hint_domains, hint_document_variants)
         with self._lock:
             self._cache[key] = (time.monotonic(), value)
             self._cache.move_to_end(key)
@@ -1191,6 +1197,18 @@ def _extract_reference_terms(text: str) -> List[str]:
     return [match.group(0).strip().lower() for match in REFERENCE_PATTERN.finditer(text or "")]
 
 
+def _extract_it_section_refs(text: str) -> List[str]:
+    """Extrae referencias a instrucciones técnicas RITE: 'IT 3', 'IT 3.3', etc."""
+    seen: set = set()
+    result = []
+    for m in IT_SECTION_REFERENCE_PATTERN.finditer(text or ""):
+        ref = f"it {m.group(1)}"
+        if ref not in seen:
+            seen.add(ref)
+            result.append(ref)
+    return result
+
+
 def _extract_exact_refs(text: str) -> List[str]:
     refs = set()
     raw = text or ""
@@ -1346,6 +1364,7 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "temporal_query": bool(TEMPORAL_QUERY_PATTERN.search(normalized)),
         "question_keywords": question_keywords,
         "section_terms": _extract_topic_terms(clean_question, limit=MAX_TOPIC_TOKENS),
+        "it_section_refs": _extract_it_section_refs(clean_question),
     }
 
 
@@ -1441,7 +1460,7 @@ def _metadata_text(metadata: Dict[str, object]) -> str:
             str(metadata.get(key, ""))
             for key in (
                 "source", "folder", "department", "domain", "document_type", "confidentiality",
-                "regulation", "itc_refs", "section",
+                "regulation", "document_variant", "itc_refs", "section",
                 "section_type", "topics", "table_hint", "table_title", "content_intent",
                 "scope_hint", "exact_refs", "chunk_kind",
             )
@@ -1605,6 +1624,7 @@ def _document_profile_metadata(
         "document_type": taxonomy["document_type"],
         "confidentiality": taxonomy["confidentiality"],
         "regulation": _regulation_key(source_name, resolved_domain),
+        "document_variant": _document_variant_from_source(source_name),
     }
 
 
@@ -1661,6 +1681,40 @@ def _section_type(section: str) -> str:
     return "section" if section else ""
 
 
+def _document_variant_from_source(source_name: str) -> str:
+    """Infiere la variante documental del nombre de fichero usando document_variants en domains.json.
+
+    Ej: 'rite/RITE-2021-BOE-A-2021-4572.pdf' → '2021'
+        'rite/RITE IT3.pdf'                  → 'it3'
+    """
+    if not source_name:
+        return ""
+    tokens = _filename_tokens(source_name)
+    for cfg in _DOMAIN_CFG.get("domains", {}).values():
+        for variant in cfg.get("document_variants", []):
+            patterns = {_normalize_text(p) for p in variant.get("filename_patterns", [])}
+            if tokens & patterns:
+                return variant["variant_key"]
+    return ""
+
+
+def _expected_document_variants(question: str, expected_domains: List[str]) -> List[str]:
+    """Infiere variantes documentales esperadas de la pregunta según query_triggers en domains.json."""
+    normalized = _normalize_text(question or "")
+    variants: List[str] = []
+    seen: set = set()
+    for domain_name in expected_domains:
+        cfg = _DOMAIN_CFG["domains"].get(domain_name, {})
+        for variant in cfg.get("document_variants", []):
+            vk = variant["variant_key"]
+            if vk in seen:
+                continue
+            if any(_normalize_text(t) in normalized for t in variant.get("query_triggers", [])):
+                variants.append(vk)
+                seen.add(vk)
+    return variants
+
+
 def _expected_domains(question: str) -> List[str]:
     normalized = _normalize_text(question or "")
     domains = []
@@ -1704,6 +1758,19 @@ def detect_hint_domains(text: str) -> List[str]:
     de seguimiento cortas que no contienen trigger_terms explícitos.
     """
     return _expected_domains(_clean_question(text)) if text and text.strip() else []
+
+
+def detect_hint_document_variants(text: str, hint_domains: List[str] | None = None) -> List[str]:
+    """Extrae variantes documentales del historial de conversación para preguntas de seguimiento.
+
+    Si la conversación previa menciona 'IT 3' o '2021', las preguntas cortas
+    posteriores heredan ese foco documental.
+    """
+    if not text or not text.strip():
+        return []
+    clean = _clean_question(text)
+    domains = hint_domains if hint_domains else _expected_domains(clean)
+    return _expected_document_variants(clean, domains)
 
 
 def _query_mentions_bt40(question: str) -> bool:
@@ -2019,7 +2086,7 @@ def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> in
     return collection.count()
 
 
-def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESULTS, domain: str = "", hint_domains: List[str] | None = None) -> Tuple[str, List[str], Dict[str, object]]:
+def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESULTS, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None) -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
         return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
     if _embedding_fn is None:
@@ -2081,6 +2148,10 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         for domain in ("baja_tension", "guias_tecnicas"):
             if domain not in expected_domains:
                 expected_domains.append(domain)
+    expected_document_variants = _expected_document_variants(clean_question, expected_domains)
+    if not expected_document_variants and hint_document_variants:
+        expected_document_variants = [v for v in hint_document_variants if v]
+        logger.debug("hint_document_variants aplicados como fallback: %s", expected_document_variants)
     if expected_domains:
         auto_terms = _auto_technical_terms(clean_question)
         existing = set(query_profile["phrase_queries"])
@@ -2670,6 +2741,19 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 score += 12
             else:
                 score -= 30
+        if expected_document_variants:
+            source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
+            if source_document_variant and source_document_variant in expected_document_variants:
+                score += DOCUMENT_VARIANT_BOOST
+            elif source_document_variant and source_document_variant not in expected_document_variants:
+                score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
+        if query_profile["it_section_refs"]:
+            it_ref_hits = sum(
+                1 for ref in query_profile["it_section_refs"]
+                if ref in section_title or ref in doc_norm
+            )
+            if it_ref_hits:
+                score += it_ref_hits * IT_SECTION_BOOST
         if query_profile["comparison"] and len(doc_tokens.intersection(question_tokens)) >= 2:
             score += COMPARISON_PRIORITY_BOOST
         if core_terms and core_hits == 0:
@@ -2821,6 +2905,19 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                     lexical_score += GENERATORS_LEXICAL_DOMAIN
                 if any(term in doc_norm or term in metadata_norm or term in section_title for term in ("aisladas", "asistidas", "interconectadas", "itc-bt-40", "bt-40")):
                     lexical_score += GENERATORS_LEXICAL_TERM
+            if expected_document_variants:
+                source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
+                if source_document_variant and source_document_variant in expected_document_variants:
+                    lexical_score += DOCUMENT_VARIANT_BOOST
+                elif source_document_variant and source_document_variant not in expected_document_variants:
+                    lexical_score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
+            if query_profile["it_section_refs"]:
+                it_ref_hits_lex = sum(
+                    1 for ref in query_profile["it_section_refs"]
+                    if ref in section_title or ref in doc_norm
+                )
+                if it_ref_hits_lex:
+                    lexical_score += it_ref_hits_lex * IT_SECTION_BOOST
             document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
             doc_norm = _normalize_text(document)
             labeled_match_hits = 0
@@ -3291,6 +3388,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         "top_sources": unique_source_names[:5],
         "selected_domains": selected_domains,
         "expected_domains": expected_domains,
+        "expected_document_variants": expected_document_variants,
         "domain_match_ratio": round(matched_domains / max(len(selected), 1), 4) if expected_domains else 1.0,
         "selected_departments": selected_departments,
         "expected_departments": expected_departments,
@@ -3315,8 +3413,8 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     return "\n\n".join(context_parts), sources, retrieval_stats
 
 
-def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, domain: str = "", hint_domains: List[str] | None = None) -> Tuple[str, List[str], Dict[str, object]]:
-    cached = _query_cache.get(question, n_results, domain, hint_domains)
+def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None) -> Tuple[str, List[str], Dict[str, object]]:
+    cached = _query_cache.get(question, n_results, domain, hint_domains, hint_document_variants)
     if cached is not None:
         logger.debug("Cache hit para query: %s", question[:60])
         return cached
@@ -3324,8 +3422,8 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, dom
         from azure_rag_service import search_documents_detailed_azure
         result = search_documents_detailed_azure(question, n_results=n_results)
     else:
-        result = _search_documents_detailed_chroma(question, n_results=n_results, domain=domain, hint_domains=hint_domains)
-    _query_cache.put(question, n_results, result, domain, hint_domains)
+        result = _search_documents_detailed_chroma(question, n_results=n_results, domain=domain, hint_domains=hint_domains, hint_document_variants=hint_document_variants)
+    _query_cache.put(question, n_results, result, domain, hint_domains, hint_document_variants)
     return result
 
 
