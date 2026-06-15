@@ -20,9 +20,11 @@ from sentence_transformers.util import cos_sim
 from chroma_client import get_chroma_client
 from config import (
     COLLECTION_NAME,
+    CROSS_DOMAIN_MIN_SCORE,
     DOCUMENTS_PATH,
     ENABLE_RERANK,
     MAX_CHUNKS_PER_SOURCE,
+    MIN_CHUNK_SCORE,
     RECURSIVE_PDF_SCAN,
     RAG_BACKEND,
     RAG_INDEX_VERSION,
@@ -31,6 +33,7 @@ from config import (
     EMBEDDING_PASSAGE_PREFIX,
     RERANK_MODEL,
     RERANK_MODEL_REVISION,
+    RERANK_BM25_WEIGHT,
     RERANK_WEIGHT,
     STOPWORDS,
     TABLE_COLLECTION_NAME,
@@ -145,6 +148,30 @@ def _decode_chunk_corruption(text: str, source: str = "") -> str:
         shift31_source_tokens=_SHIFT31_SOURCE_TOKENS,
         shift31_fulltext_source_tokens=_SHIFT31_FULLTEXT_SOURCE_TOKENS,
     )
+
+
+import math as _math
+
+
+def _bm25_score(query_tokens: set, doc_text: str, avg_doc_len: float, k1: float = 1.5, b: float = 0.75) -> float:
+    doc_norm = _normalize_text(doc_text)
+    doc_tokens_list = doc_norm.split()
+    doc_len = len(doc_tokens_list)
+    if doc_len == 0 or avg_doc_len == 0:
+        return 0.0
+    tf_map: Dict[str, int] = {}
+    for t in doc_tokens_list:
+        tf_map[t] = tf_map.get(t, 0) + 1
+    score = 0.0
+    for qt in query_tokens:
+        qt_norm = _normalize_text(qt)
+        tf = tf_map.get(qt_norm, 0)
+        if tf == 0:
+            continue
+        numerator = tf * (k1 + 1)
+        denominator = tf + k1 * (1 - b + b * (doc_len / avg_doc_len))
+        score += numerator / denominator
+    return score
 
 
 MAX_TOPIC_TOKENS = 6
@@ -3001,6 +3028,10 @@ def _search_documents_detailed_chroma(
             "domain_match_ratio": 0.0,
         }
 
+    # --- Reranking: embedding similarity + BM25 léxico complementario ---
+    avg_doc_len = sum(len(item[2].split()) for item in ranked_items) / max(len(ranked_items), 1)
+    query_tokens_for_bm25 = question_keywords or question_tokens
+
     if rerank_model:
         query_embedding = rerank_model.encode(clean_question, convert_to_tensor=True)
         candidate_texts = [item[2] for item in ranked_items]
@@ -3010,11 +3041,39 @@ def _search_documents_detailed_chroma(
         reranked = []
         for item, sem_score in zip(ranked_items, similarities):
             base_score, doc_id, document, metadata = item
-            final_score = base_score + (float(sem_score) * RERANK_WEIGHT)
+            bm25 = _bm25_score(query_tokens_for_bm25, document, avg_doc_len)
+            final_score = base_score + (float(sem_score) * RERANK_WEIGHT) + (bm25 * RERANK_BM25_WEIGHT)
+            reranked.append((final_score, doc_id, document, metadata))
+        ranked_items = reranked
+    else:
+        reranked = []
+        for item in ranked_items:
+            base_score, doc_id, document, metadata = item
+            bm25 = _bm25_score(query_tokens_for_bm25, document, avg_doc_len)
+            final_score = base_score + (bm25 * RERANK_BM25_WEIGHT)
             reranked.append((final_score, doc_id, document, metadata))
         ranked_items = reranked
 
     ranked_items.sort(key=lambda item: item[0], reverse=True)
+
+    # --- Umbral mínimo de relevancia ---
+    if MIN_CHUNK_SCORE > 0:
+        above_threshold = [item for item in ranked_items if item[0] >= MIN_CHUNK_SCORE]
+        if above_threshold:
+            ranked_items = above_threshold
+
+    # --- Filtro duro de dominio cruzado ---
+    if expected_domains:
+        filtered = []
+        for item in ranked_items:
+            source_domain = _source_domain_key(str(item[3].get("source", "")), item[3])
+            if source_domain in expected_domains:
+                filtered.append(item)
+            elif item[0] >= CROSS_DOMAIN_MIN_SCORE:
+                filtered.append(item)
+        if filtered:
+            ranked_items = filtered
+
     if expected_domains:
         preferred_items = [
             item for item in ranked_items
@@ -3488,6 +3547,8 @@ def _search_documents_detailed_chroma(
         "table_selected_signal_count": table_selected_signal_count,
         "table_candidate_signal_count": table_candidate_signal_count,
         "table_coverage_ratio": table_coverage_ratio,
+        "score_top": round(selected[0][0], 2) if selected else 0.0,
+        "score_bottom": round(selected[-1][0], 2) if selected else 0.0,
     }
     if logger.isEnabledFor(logging.DEBUG):
         for rank, item in enumerate(selected, 1):
