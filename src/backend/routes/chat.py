@@ -233,43 +233,6 @@ def _get_recent_history(conversation_id: int, limit: int = 2) -> List[Dict]:
     return [{"question": row[0], "response": format_answer_for_user(row[1], None, question=row[0])} for row in rows]
 
 
-def _looks_like_business_follow_up(question: str) -> bool:
-    normalized = " ".join((question or "").strip().lower().split())
-    if not normalized:
-        return False
-    if normalized.startswith(("y ", "tambien", "dime ", "que ", "cual ", "cuanto ", "cuanta ")):
-        return True
-    if len(normalized.split()) <= 4:
-        return True
-    return any(
-        marker in normalized
-        for marker in (
-            "tipologia",
-            "n oferta",
-            "numero oferta",
-            "numero de oferta",
-            "fecha",
-            "cliente",
-            "concurso",
-            "importe",
-            "produccion",
-            "backlog",
-            "pipeline",
-            "estado",
-        )
-    )
-
-
-def _fallback_business_route_from_history(question: str, history: List[Dict]) -> str | None:
-    if not _looks_like_business_follow_up(question):
-        return None
-    for item in reversed(history or []):
-        route = detect_business_route(str(item.get("question") or ""))
-        if route in {"business_licitaciones", "business_produccion"}:
-            return route
-    return None
-
-
 def _save_chat_message(conversation_id: int, question: str, response: str, elapsed_ms: int) -> int:
     start = time.time()
     with db_conn() as conn:
@@ -459,17 +422,12 @@ def send_message(data: MessageRequest, request: Request):
     try:
         start = time.time()
         chat_mode = _get_conversation_chat_mode(data.conversation_id)
-        recent_history = _get_recent_history(data.conversation_id, limit=6)
         stage_router_start = time.time()
         route_info = classify_question(data.question)
         route = route_info["route"]
         business_route_hint = detect_business_route(data.question)
         if business_route_hint:
             route = business_route_hint
-        elif chat_mode == "business":
-            fallback_business_route = _fallback_business_route_from_history(data.question, recent_history)
-            if fallback_business_route:
-                route = fallback_business_route
         router_ms = int((time.time() - stage_router_start) * 1000)
 
         if chat_mode == "business":
@@ -549,7 +507,7 @@ def send_message(data: MessageRequest, request: Request):
                 data.question,
                 user_token=user_token,
                 preferred_route=route,
-                history=recent_history,
+                history=_get_recent_history(data.conversation_id, limit=6),
             )
             business_route = business_result.get("route", route)
             response = business_result["response"]
@@ -607,7 +565,7 @@ def send_message(data: MessageRequest, request: Request):
                     extra=f"distance={float(memory_hit.get('distance', 0.0)):.4f}",
                 )
             else:
-                history = recent_history[:2]
+                history = _get_recent_history(data.conversation_id, limit=2)
                 recent_text = " ".join(h.get("question", "") for h in history)
                 hint_domains = _rag_service().detect_hint_domains(recent_text) if recent_text.strip() else []
                 hint_document_variants = _rag_service().detect_hint_document_variants(recent_text, hint_domains) if recent_text.strip() else []
