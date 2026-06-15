@@ -321,6 +321,10 @@ ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[ií]a)[-\s]*(bt|lat|rat)?[
 # Refs a instrucciones técnicas numeradas del RITE: "IT 3", "IT 3.3", "IT 1.1.1"
 IT_SECTION_REFERENCE_PATTERN = re.compile(r"\bit\s+(\d+(?:\.\d+){0,2})\b", re.IGNORECASE)
 TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3})\b", re.IGNORECASE)
+ARTICLE_REFERENCE_PATTERN = re.compile(
+    r"\bart(?:(?:iculo)|(?:[^\da-z\s]{1,4}culo)|(?:\.))?\s*(\d{1,3})\b",
+    re.IGNORECASE,
+)
 LOCATION_QUERY_PATTERN = re.compile(
     r"\b(?:pagina|pag|page|donde\s+(?:aparece|esta|se\s+encuentra)|ubicacion|apartado\s+de)\b",
     re.IGNORECASE,
@@ -406,6 +410,7 @@ LABELED_MATCH_PRIORITY_BOOST = 12
 DOCUMENT_VARIANT_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_BOOST", "18"))
 DOCUMENT_VARIANT_MISMATCH_PENALTY = int(os.getenv("RAG_DOCUMENT_VARIANT_MISMATCH_PENALTY", "10"))
 IT_SECTION_BOOST = 20
+ARTICLE_REF_BOOST = int(os.getenv("RAG_ARTICLE_REF_BOOST", "26"))
 LABELED_CONTEXT_PENALTY = 10
 TECHNICAL_EQUIVALENT_BOOST = 18
 NORMATIVE_INTENT_BOOST = 16
@@ -519,14 +524,42 @@ class _QueryCache:
         self._ttl = ttl
         self._lock = threading.Lock()
 
-    def _key(self, question: str, n_results: int, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None) -> str:
+    def _key(
+        self,
+        question: str,
+        n_results: int,
+        domain: str = "",
+        hint_domains: List[str] | None = None,
+        hint_document_variants: List[str] | None = None,
+        hint_article_refs: List[str] | None = None,
+        hint_it_section_refs: List[str] | None = None,
+    ) -> str:
         normalized = _normalize_text(question.strip())
         hints = ",".join(sorted(hint_domains)) if hint_domains else ""
         variant_hints = ",".join(sorted(hint_document_variants)) if hint_document_variants else ""
-        return f"{normalized}::{n_results}::{_normalize_text(domain)}::{hints}::{variant_hints}"
+        article_hints = ",".join(sorted(hint_article_refs)) if hint_article_refs else ""
+        it_hints = ",".join(sorted(hint_it_section_refs)) if hint_it_section_refs else ""
+        return f"{normalized}::{n_results}::{_normalize_text(domain)}::{hints}::{variant_hints}::{article_hints}::{it_hints}"
 
-    def get(self, question: str, n_results: int, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None):
-        key = self._key(question, n_results, domain, hint_domains, hint_document_variants)
+    def get(
+        self,
+        question: str,
+        n_results: int,
+        domain: str = "",
+        hint_domains: List[str] | None = None,
+        hint_document_variants: List[str] | None = None,
+        hint_article_refs: List[str] | None = None,
+        hint_it_section_refs: List[str] | None = None,
+    ):
+        key = self._key(
+            question,
+            n_results,
+            domain,
+            hint_domains,
+            hint_document_variants,
+            hint_article_refs,
+            hint_it_section_refs,
+        )
         with self._lock:
             entry = self._cache.get(key)
             if entry is None:
@@ -538,8 +571,26 @@ class _QueryCache:
             self._cache.move_to_end(key)
             return value
 
-    def put(self, question: str, n_results: int, value: object, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None) -> None:
-        key = self._key(question, n_results, domain, hint_domains, hint_document_variants)
+    def put(
+        self,
+        question: str,
+        n_results: int,
+        value: object,
+        domain: str = "",
+        hint_domains: List[str] | None = None,
+        hint_document_variants: List[str] | None = None,
+        hint_article_refs: List[str] | None = None,
+        hint_it_section_refs: List[str] | None = None,
+    ) -> None:
+        key = self._key(
+            question,
+            n_results,
+            domain,
+            hint_domains,
+            hint_document_variants,
+            hint_article_refs,
+            hint_it_section_refs,
+        )
         with self._lock:
             self._cache[key] = (time.monotonic(), value)
             self._cache.move_to_end(key)
@@ -1209,6 +1260,19 @@ def _extract_it_section_refs(text: str) -> List[str]:
     return result
 
 
+def _extract_article_refs(text: str) -> List[str]:
+    """Extrae referencias a articulos: 'articulo 12', 'art. 37', etc."""
+    seen: set = set()
+    result = []
+    normalized = _normalize_text(text or "")
+    for value in ARTICLE_REFERENCE_PATTERN.findall(normalized):
+        ref = f"articulo {int(value)}"
+        if ref not in seen:
+            seen.add(ref)
+            result.append(ref)
+    return result
+
+
 def _extract_exact_refs(text: str) -> List[str]:
     refs = set()
     raw = text or ""
@@ -1364,6 +1428,7 @@ def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Di
         "temporal_query": bool(TEMPORAL_QUERY_PATTERN.search(normalized)),
         "question_keywords": question_keywords,
         "section_terms": _extract_topic_terms(clean_question, limit=MAX_TOPIC_TOKENS),
+        "article_refs": _extract_article_refs(clean_question),
         "it_section_refs": _extract_it_section_refs(clean_question),
     }
 
@@ -1496,6 +1561,17 @@ def _filename_tokens(source_name: str) -> set:
             for j in range(i + 1, len(sub) + 1):
                 tokens.add("-".join(sub[i:j]))
     return tokens
+
+
+def _source_pdf_path(source_name: str) -> str:
+    """Extrae la ruta real del PDF desde un source enriquecido con pagina/snippet."""
+    clean = (source_name or "").strip().replace("\\", "/")
+    if not clean:
+        return ""
+    pdf_match = re.search(r"(?i)^(.+?\.pdf)\b", clean)
+    if pdf_match:
+        return pdf_match.group(1)
+    return clean.split(" (", 1)[0].strip()
 
 
 def _domain_from_source(source_name: str) -> str:
@@ -1638,10 +1714,14 @@ def _chunk_profile_metadata(
     chunk_context = f"{source_name} {clean_section} {content}"
     itc_refs_str = _extract_itc_refs(chunk_context)
     exact_refs = ", ".join(_extract_exact_refs(chunk_context))
+    article_refs = ", ".join(_extract_article_refs(chunk_context))
+    it_section_refs = ", ".join(_extract_it_section_refs(chunk_context))
     table_hint = "tabla" if "tabla" in _normalize_text(f"{clean_section} {content}") else ""
     return {
         "section": clean_section,
         "section_type": _section_type(clean_section),
+        "article_refs": article_refs,
+        "it_section_refs": it_section_refs,
         "itc_refs": itc_refs_str,
         "exact_refs": exact_refs,
         "topics": ", ".join(_extract_topic_terms(content)),
@@ -1689,7 +1769,7 @@ def _document_variant_from_source(source_name: str) -> str:
     """
     if not source_name:
         return ""
-    tokens = _filename_tokens(source_name)
+    tokens = _filename_tokens(_source_pdf_path(source_name))
     for cfg in _DOMAIN_CFG.get("domains", {}).values():
         for variant in cfg.get("document_variants", []):
             patterns = {_normalize_text(p) for p in variant.get("filename_patterns", [])}
@@ -1771,6 +1851,20 @@ def detect_hint_document_variants(text: str, hint_domains: List[str] | None = No
     clean = _clean_question(text)
     domains = hint_domains if hint_domains else _expected_domains(clean)
     return _expected_document_variants(clean, domains)
+
+
+def detect_hint_article_refs(text: str) -> List[str]:
+    """Extrae referencias a articulos del historial reciente para preguntas de seguimiento."""
+    if not text or not text.strip():
+        return []
+    return _extract_article_refs(_clean_question(text))
+
+
+def detect_hint_it_section_refs(text: str) -> List[str]:
+    """Extrae referencias IT del historial reciente para preguntas de seguimiento."""
+    if not text or not text.strip():
+        return []
+    return _extract_it_section_refs(_clean_question(text))
 
 
 def _query_mentions_bt40(question: str) -> bool:
@@ -1984,6 +2078,8 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     "chunk": row_index,
                     "section": _sanitize_section_label(table_title[:SECTION_LABEL_MAX_LENGTH]),
                     "section_type": "table",
+                    "article_refs": ", ".join(_extract_article_refs(f"{source_name} {page_exact_refs} {table_title} {row_doc}")),
+                    "it_section_refs": ", ".join(_extract_it_section_refs(f"{source_name} {page_exact_refs} {table_title} {row_doc}")),
                     "itc_refs": _extract_itc_refs(f"{source_name} {page_exact_refs} {table_title} {row_doc}"),
                     "exact_refs": ", ".join(_extract_exact_refs(f"{source_name} {page_exact_refs} {table_title} {row_doc}")),
                     "topics": ", ".join(_extract_topic_terms(row_doc)),
@@ -2086,7 +2182,15 @@ def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> in
     return collection.count()
 
 
-def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESULTS, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None) -> Tuple[str, List[str], Dict[str, object]]:
+def _search_documents_detailed_chroma(
+    question: str,
+    n_results: int = TOP_K_RESULTS,
+    domain: str = "",
+    hint_domains: List[str] | None = None,
+    hint_document_variants: List[str] | None = None,
+    hint_article_refs: List[str] | None = None,
+    hint_it_section_refs: List[str] | None = None,
+) -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
         return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
     if _embedding_fn is None:
@@ -2152,6 +2256,12 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     if not expected_document_variants and hint_document_variants:
         expected_document_variants = [v for v in hint_document_variants if v]
         logger.debug("hint_document_variants aplicados como fallback: %s", expected_document_variants)
+    if not query_profile["article_refs"] and hint_article_refs:
+        query_profile["article_refs"] = sorted({ref for ref in hint_article_refs if ref})
+        logger.debug("hint_article_refs aplicados como fallback: %s", query_profile["article_refs"])
+    if not query_profile["it_section_refs"] and hint_it_section_refs:
+        query_profile["it_section_refs"] = sorted({ref for ref in hint_it_section_refs if ref})
+        logger.debug("hint_it_section_refs aplicados como fallback: %s", query_profile["it_section_refs"])
     if expected_domains:
         auto_terms = _auto_technical_terms(clean_question)
         existing = set(query_profile["phrase_queries"])
@@ -2159,6 +2269,16 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         if new_terms:
             query_profile["phrase_queries"] = query_profile["phrase_queries"] + new_terms
             logger.debug("auto_technical_terms añadidos: %s", new_terms)
+    structural_followup_query = bool(query_profile["article_refs"] or query_profile["it_section_refs"])
+    semantic_query = clean_question
+    if structural_followup_query and (expected_domains or expected_document_variants):
+        semantic_parts = [clean_question] + expected_domains + expected_document_variants
+        semantic_query = " ".join(part for part in semantic_parts if part).strip()
+        logger.debug("semantic_query enriquecida con foco conversacional: %s", semantic_query)
+        for term in expected_domains + expected_document_variants:
+            normalized_term = _normalize_text(term)
+            if normalized_term and normalized_term not in core_terms:
+                core_terms.append(normalized_term)
     broad_query = any((
         query_profile["definition_query"],
         query_profile["list_query"],
@@ -2188,7 +2308,9 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     candidate_count = _candidate_window(n_results, question_keywords, clean_question)
     if broad_query:
         candidate_count = min(candidate_count + 12, 80)
-    results = collection.query(query_embeddings=[_encode_query(clean_question)], n_results=candidate_count)
+    if structural_followup_query and (expected_domains or expected_document_variants):
+        candidate_count = min(candidate_count + 28, 96)
+    results = collection.query(query_embeddings=[_encode_query(semantic_query)], n_results=candidate_count)
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     ids = results.get("ids", [[]])[0]
@@ -2222,6 +2344,36 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 except Exception as exc:
                     logger.warning("ITC-forced retrieval failed for %s: %s", search_term, exc)
 
+    structured_search_terms: List[str] = []
+    for article_ref in query_profile["article_refs"][:3]:
+        article_number = article_ref.split()[-1]
+        structured_search_terms.extend((article_ref, f"art. {article_number}"))
+    for it_ref in query_profile["it_section_refs"][:3]:
+        structured_search_terms.extend((it_ref, it_ref.upper()))
+    if structured_search_terms:
+        existing_ids = set(ids)
+        for search_term in structured_search_terms[:8]:
+            try:
+                structured_results = collection.get(
+                    where_document={"$contains": search_term},
+                    include=["documents", "metadatas"],
+                    limit=12,
+                )
+                for doc, meta, fid in zip(
+                    structured_results.get("documents", []) or [],
+                    structured_results.get("metadatas", []) or [],
+                    structured_results.get("ids", []) or [],
+                ):
+                    if expected_domains and _source_domain_key(str(meta.get("source", "")), meta) not in expected_domains:
+                        continue
+                    if fid not in existing_ids:
+                        documents.append(doc)
+                        metadatas.append(meta)
+                        ids.append(fid)
+                        existing_ids.add(fid)
+            except Exception as exc:
+                logger.warning("Structured retrieval failed for %s: %s", search_term, exc)
+
     table_collection_query = (
         query_profile["intent"] == "table_lookup"
         or query_profile["table_query"]
@@ -2232,7 +2384,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         try:
             table_candidate_count = min(max(n_results * 3, 18), 50)
             table_results = table_collection.query(
-                query_embeddings=[_encode_query(clean_question)],
+                query_embeddings=[_encode_query(semantic_query)],
                 n_results=table_candidate_count,
             )
             for doc, meta, fid in zip(
@@ -2367,7 +2519,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             try:
                 forced_n = min(n_results + 6, 14)
                 domain_results = collection.query(
-                    query_embeddings=[_encode_query(clean_question)],
+                    query_embeddings=[_encode_query(semantic_query)],
                     n_results=forced_n,
                     where={"domain": expected_domain},
                 )
@@ -2416,7 +2568,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         for table_kind, col in (("table_row", table_collection), ("table_row", collection), ("table", collection)):
             try:
                 table_query_args = {
-                    "query_embeddings": [_encode_query(clean_question)],
+                    "query_embeddings": [_encode_query(semantic_query)],
                     "n_results": min(n_results + 6, 16),
                 }
                 if col is collection:
@@ -2740,7 +2892,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             if source_domain in expected_domains:
                 score += 12
             else:
-                score -= 30
+                score -= 60 if query_profile["article_refs"] else 30
         if expected_document_variants:
             source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
             if source_document_variant and source_document_variant in expected_document_variants:
@@ -2754,6 +2906,13 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             )
             if it_ref_hits:
                 score += it_ref_hits * IT_SECTION_BOOST
+        if query_profile["article_refs"]:
+            article_ref_hits = sum(
+                1 for ref in query_profile["article_refs"]
+                if ref in section_title or ref in doc_norm or ref in metadata_norm
+            )
+            if article_ref_hits:
+                score += article_ref_hits * ARTICLE_REF_BOOST
         if query_profile["comparison"] and len(doc_tokens.intersection(question_tokens)) >= 2:
             score += COMPARISON_PRIORITY_BOOST
         if core_terms and core_hits == 0:
@@ -2808,6 +2967,12 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             metadata_norm = _metadata_text(metadata)
             section_title = _normalize_text(str(metadata.get("section", "")))
             lexical_score = 8
+            if expected_domains:
+                lex_source_domain = _source_domain_key(str(metadata.get("source", "")), metadata)
+                if lex_source_domain in expected_domains:
+                    lexical_score += 12
+                else:
+                    lexical_score -= 60 if query_profile["article_refs"] else 30
             inferred_itcs = _inferred_itc_refs(metadata, document)
             try:
                 metadata_page = int(metadata.get("page", 0) or 0)
@@ -2918,6 +3083,13 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
                 )
                 if it_ref_hits_lex:
                     lexical_score += it_ref_hits_lex * IT_SECTION_BOOST
+            if query_profile["article_refs"]:
+                article_ref_hits_lex = sum(
+                    1 for ref in query_profile["article_refs"]
+                    if ref in section_title or ref in doc_norm or ref in metadata_norm
+                )
+                if article_ref_hits_lex:
+                    lexical_score += article_ref_hits_lex * ARTICLE_REF_BOOST
             document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
             doc_norm = _normalize_text(document)
             labeled_match_hits = 0
@@ -2985,6 +3157,20 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
 
         ranked_items.sort(key=lambda item: (_phrase_hit_count(item), item[0]), reverse=True)
 
+    def _matches_variant_focus(item: Tuple[float, str, str, Dict[str, object]]) -> bool:
+        if not expected_document_variants:
+            return False
+        source_document_variant = _document_variant_from_source(str(item[3].get("source", "")))
+        return bool(source_document_variant and source_document_variant in expected_document_variants)
+
+    def _matches_structural_focus(item: Tuple[float, str, str, Dict[str, object]]) -> bool:
+        if not query_profile["article_refs"] and not query_profile["it_section_refs"]:
+            return False
+        text = _normalize_text(f"{item[3].get('section', '')} {item[2]} {_metadata_text(item[3])}")
+        return any(ref in text for ref in query_profile["article_refs"]) or any(
+            ref in text for ref in query_profile["it_section_refs"]
+        )
+
     selected = []
     selected_ids = set()
     source_counts = {}
@@ -3028,6 +3214,14 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         ]
         if preferred_selection_items:
             selection_items = preferred_selection_items
+    if expected_document_variants:
+        variant_selection_items = [item for item in selection_items if _matches_variant_focus(item)]
+        if variant_selection_items:
+            selection_items = variant_selection_items
+    if query_profile["article_refs"] or query_profile["it_section_refs"]:
+        structural_selection_items = [item for item in selection_items if _matches_structural_focus(item)]
+        if structural_selection_items:
+            selection_items = structural_selection_items
     for item in selection_items:
         _, doc_id, _, metadata = item
         source_name = metadata.get("source", "unknown")
@@ -3046,7 +3240,7 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
             break
 
     if len(selected) < n_results:
-        fallback_items = selection_items if expected_domains and selection_items else ranked_items
+        fallback_items = selection_items if selection_items else ranked_items
         for item in fallback_items:
             _, doc_id, _, _ = item
             if doc_id in selected_ids:
@@ -3106,6 +3300,16 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         if focused:
             focused.sort(key=lambda item: (_focus_hits(item[2], core_terms), item[0]), reverse=True)
             selected = (focused + non_focused)[:n_results]
+
+    # Enforcement final: article_refs + expected_domains → eliminar items de dominios foráneos.
+    # Solo se aplica si hay suficientes items del dominio esperado para no degradar la respuesta.
+    if expected_domains and query_profile["article_refs"] and selected:
+        domain_only = [
+            item for item in selected
+            if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
+        ]
+        if len(domain_only) >= max(1, n_results // 2):
+            selected = domain_only
 
     if query_profile["comparison"] and len(query_profile["numeric_value_groups"]) >= 2 and selected:
         value_groups = query_profile["numeric_value_groups"]
@@ -3399,6 +3603,8 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
         "table_collection_hits": table_collection_hits,
         "numeric_comparison_hits": numeric_comparison_hits,
         "target_itc_refs": sorted(target_itc_refs),
+        "target_article_refs": sorted(query_profile["article_refs"]),
+        "target_it_section_refs": sorted(query_profile["it_section_refs"]),
         "table_selected_signal_count": table_selected_signal_count,
         "table_candidate_signal_count": table_candidate_signal_count,
         "table_coverage_ratio": table_coverage_ratio,
@@ -3413,8 +3619,24 @@ def _search_documents_detailed_chroma(question: str, n_results: int = TOP_K_RESU
     return "\n\n".join(context_parts), sources, retrieval_stats
 
 
-def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, domain: str = "", hint_domains: List[str] | None = None, hint_document_variants: List[str] | None = None) -> Tuple[str, List[str], Dict[str, object]]:
-    cached = _query_cache.get(question, n_results, domain, hint_domains, hint_document_variants)
+def search_documents_detailed(
+    question: str,
+    n_results: int = TOP_K_RESULTS,
+    domain: str = "",
+    hint_domains: List[str] | None = None,
+    hint_document_variants: List[str] | None = None,
+    hint_article_refs: List[str] | None = None,
+    hint_it_section_refs: List[str] | None = None,
+) -> Tuple[str, List[str], Dict[str, object]]:
+    cached = _query_cache.get(
+        question,
+        n_results,
+        domain,
+        hint_domains,
+        hint_document_variants,
+        hint_article_refs,
+        hint_it_section_refs,
+    )
     if cached is not None:
         logger.debug("Cache hit para query: %s", question[:60])
         return cached
@@ -3422,8 +3644,25 @@ def search_documents_detailed(question: str, n_results: int = TOP_K_RESULTS, dom
         from azure_rag_service import search_documents_detailed_azure
         result = search_documents_detailed_azure(question, n_results=n_results)
     else:
-        result = _search_documents_detailed_chroma(question, n_results=n_results, domain=domain, hint_domains=hint_domains, hint_document_variants=hint_document_variants)
-    _query_cache.put(question, n_results, result, domain, hint_domains, hint_document_variants)
+        result = _search_documents_detailed_chroma(
+            question,
+            n_results=n_results,
+            domain=domain,
+            hint_domains=hint_domains,
+            hint_document_variants=hint_document_variants,
+            hint_article_refs=hint_article_refs,
+            hint_it_section_refs=hint_it_section_refs,
+        )
+    _query_cache.put(
+        question,
+        n_results,
+        result,
+        domain,
+        hint_domains,
+        hint_document_variants,
+        hint_article_refs,
+        hint_it_section_refs,
+    )
     return result
 
 

@@ -566,13 +566,22 @@ def send_message(data: MessageRequest, request: Request):
                 )
             else:
                 history = _get_recent_history(data.conversation_id, limit=2)
-                recent_text = " ".join(h.get("question", "") for h in history)
+                recent_text = " ".join(
+                    f"{h.get('question', '')} {h.get('response', '')}".strip()
+                    for h in history
+                )
                 hint_domains = _rag_service().detect_hint_domains(recent_text) if recent_text.strip() else []
                 hint_document_variants = _rag_service().detect_hint_document_variants(recent_text, hint_domains) if recent_text.strip() else []
+                hint_article_refs = _rag_service().detect_hint_article_refs(recent_text) if recent_text.strip() else []
+                hint_it_section_refs = _rag_service().detect_hint_it_section_refs(recent_text) if recent_text.strip() else []
 
                 stage_rag_start = time.time()
                 context, sources, retrieval_stats = _rag_service().search_documents_detailed(
-                    data.question, hint_domains=hint_domains or None, hint_document_variants=hint_document_variants or None
+                    data.question,
+                    hint_domains=hint_domains or None,
+                    hint_document_variants=hint_document_variants or None,
+                    hint_article_refs=hint_article_refs or None,
+                    hint_it_section_refs=hint_it_section_refs or None,
                 )
                 rag_ms = int((time.time() - stage_rag_start) * 1000)
                 stage_llm_start = time.time()

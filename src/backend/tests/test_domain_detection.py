@@ -23,6 +23,7 @@ from rag_service import (  # noqa: E402
     _EF_VERSION,
     _expected_document_variants,
     _expected_domains,
+    _extract_article_refs,
     _extract_exact_refs,
     _extract_it_section_refs,
     _is_normative_intent_query,
@@ -32,8 +33,10 @@ from rag_service import (  # noqa: E402
     _source_domain_key,
     _source_taxonomy,
     _technical_equivalent_phrases,
+    detect_hint_article_refs,
     detect_hint_document_variants,
     detect_hint_domains,
+    detect_hint_it_section_refs,
 )
 
 
@@ -166,6 +169,25 @@ def test_chunk_profile_metadata_detects_table_and_scope():
     assert profile["content_intent"] == "table"
     assert profile["table_hint"] == "tabla"
     assert profile["section_level"] == 2
+
+
+def test_chunk_profile_metadata_extracts_structural_refs():
+    profile = _chunk_profile_metadata(
+        "rite/RITE-BOE-A-2007-15820-consolidado.pdf",
+        "Articulo 12. Eficiencia energetica, energias renovables y energias residuales",
+        "El articulo 12 establece criterios generales del reglamento.",
+        "text",
+    )
+    assert "articulo 12" in profile["article_refs"]
+    assert profile["it_section_refs"] == ""
+
+    profile_it = _chunk_profile_metadata(
+        "rite/RITE IT3.pdf",
+        "IT 3.4. Programa de gestion energetica",
+        "La IT 3.4 evalua el rendimiento de los equipos.",
+        "text",
+    )
+    assert "it 3.4" in profile_it["it_section_refs"]
 
 
 def test_rebt_contact_voltage_phrase_queries_cover_grounding_questions():
@@ -519,6 +541,21 @@ VARIANT_SOURCE_CASES = [
     ("rite/RITE-desconocido.pdf", ""),
 ]
 
+VARIANT_ENRICHED_SOURCE_CASES = [
+    (
+        "rite/RITE-BOE-A-2007-15820-consolidado.pdf (pag. 5, pag. doc 2021)",
+        "consolidado",
+    ),
+    (
+        "rite/RITE-BOE-A-2007-15820-consolidado.pdf (pag. 11, Artículo 12. Eficiencia energética.)",
+        "consolidado",
+    ),
+    (
+        "rite/RITE-2021-BOE-A-2021-4572.pdf (pag. 3, pag. doc 2021)",
+        "2021",
+    ),
+]
+
 
 def test_document_variant_from_rite_sources():
     """Las variantes del dominio RITE se derivan correctamente del nombre de fichero."""
@@ -542,6 +579,19 @@ def test_document_variant_in_profile_metadata():
 
     profile_bt = _document_profile_metadata("baja_tension/BOE-326_REBT.pdf")
     assert profile_bt["document_variant"] == ""
+
+
+def test_document_variant_ignores_page_snippet_suffixes():
+    """La variante debe salir del PDF real, no del texto añadido al source."""
+    failures = []
+    for source, expected in VARIANT_ENRICHED_SOURCE_CASES:
+        actual = _document_variant_from_source(source)
+        if actual != expected:
+            failures.append(f"  {source!r}: esperado={expected!r}, obtenido={actual!r}")
+    assert not failures, (
+        f"\nVariante incorrecta en {len(failures)} source(s) enriquecidos:\n"
+        + "\n".join(failures)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +679,79 @@ def test_extract_it_section_refs_no_false_positives():
 def test_extract_it_section_refs_deduplicates():
     refs = _extract_it_section_refs("IT 3 de IT 3 según IT 3")
     assert refs.count("it 3") == 1
+
+
+def test_extract_article_refs_basic():
+    assert "articulo 12" in _extract_article_refs("segun el articulo 12 del RITE")
+    assert "articulo 37" in _extract_article_refs("art. 37 tras la modificacion de 2021")
+
+
+def test_extract_article_refs_no_false_positives():
+    assert _extract_article_refs("hay 12 sistemas de control") == []
+    assert _extract_article_refs("") == []
+
+
+def test_extract_article_refs_deduplicates():
+    refs = _extract_article_refs("articulo 12 y art. 12 del mismo reglamento")
+    assert refs == ["articulo 12"]
+
+
+def test_detect_hint_article_refs_from_history():
+    hints = detect_hint_article_refs("segun el articulo 12 del RITE cual es su alcance")
+    assert hints == ["articulo 12"]
+
+
+def test_detect_hint_it_section_refs_from_history():
+    hints = detect_hint_it_section_refs("seguimos con la IT 3.3 del RITE y su periodicidad")
+    assert "it 3.3" in hints
+
+
+# --- Regresión: artículos genéricos (Q13/Q14 pattern) ---
+
+def test_q13_article_ref_detected():
+    """Q13: 'articulo 12' debe extraerse de la pregunta."""
+    refs = _extract_article_refs(
+        "que establece el articulo 12 sobre eficiencia energetica energias renovables y residuales"
+    )
+    assert "articulo 12" in refs
+
+
+def test_q13_no_rite_domain_from_question_alone():
+    """Q13 no contiene trigger_terms de RITE: el dominio debe venir de hints, no de la pregunta."""
+    domains = _expected_domains(
+        "que establece el articulo 12 sobre eficiencia energetica energias renovables y residuales"
+    )
+    assert "rite" not in domains, "El dominio RITE debe provenir de hints, no detectarse en Q13"
+
+
+def test_q14_article_ref_detected():
+    """Q14: 'articulo 37' debe extraerse correctamente."""
+    refs = _extract_article_refs("que dice el articulo 37 sobre inspecciones periodicas")
+    assert "articulo 37" in refs
+
+
+def test_article_refs_no_domain_crosstalk():
+    """Artículos genéricos (12, 37) no deben disparar dominios alta_tension ni baja_tension."""
+    for q in (
+        "que establece el articulo 12 sobre eficiencia energetica",
+        "que dice el articulo 37 sobre inspecciones",
+        "y el articulo 12",
+    ):
+        domains = _expected_domains(q)
+        assert "alta_tension" not in domains, f"alta_tension disparado incorrectamente por: {q!r}"
+        assert "baja_tension" not in domains, f"baja_tension disparado incorrectamente por: {q!r}"
+
+
+def test_consolidado_variant_requires_explicit_trigger():
+    """La variante 'consolidado' solo se detecta si el texto menciona un trigger explícito."""
+    # Sin trigger → vacío
+    assert _expected_document_variants(
+        "que establece el articulo 12 sobre renovables", ["rite"]
+    ) == []
+    # Con trigger → detecta consolidado
+    assert "consolidado" in _expected_document_variants(
+        "segun el RITE consolidado articulo 12", ["rite"]
+    )
 
 
 if __name__ == "__main__":
