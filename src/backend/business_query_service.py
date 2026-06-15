@@ -444,7 +444,7 @@ def detect_business_route(question: str) -> str | None:
         return "business_licitaciones"
     if any(hint in text for hint in ("cliente", "estado", "numero proyecto", "numero oferta", "tipo obra", "concurso")):
         return "business_licitaciones"
-    if any(hint in text for hint in ("importe medio", "importe promedio", "importe contratado", "importe adjudicado", "probabilidad de adjudicacion", "situacion oferta", "periodo de ejecucion", "tipologia de obra")):
+    if any(hint in text for hint in ("importe medio", "importe promedio", "importe contratado", "importe adjudicado", "probabilidad de adjudicacion", "situacion oferta", "periodo de ejecucion", "tipologia de obra", "tipologia")):
         return "business_licitaciones"
     return None
 
@@ -1038,9 +1038,11 @@ def _extract_history_context(history: List[Dict[str, Any]]) -> Dict[str, Any]:
     for item in reversed(history or []):
         question = str(item.get("question") or "")
         normalized = _normalize(question)
+        response = str(item.get("response") or "")
+        response_normalized = _normalize(response)
         year_match = re.search(r"\b(20\d{2})\b", normalized)
         month = _extract_month(normalized)
-        reference = _extract_reference(question, normalized)
+        reference = _extract_reference(question, normalized) or _extract_reference(response, response_normalized)
         if reference or year_match or month:
             return {
                 "reference": reference,
@@ -1069,7 +1071,12 @@ def _resolve_reference(original_question: str, normalized: str, history: List[Di
     for item in reversed(history or []):
         history_question = str(item.get("question") or "")
         history_normalized = _normalize(history_question)
-        history_reference = _extract_reference(history_question, history_normalized)
+        history_response = str(item.get("response") or "")
+        history_response_normalized = _normalize(history_response)
+        history_reference = _extract_reference(history_question, history_normalized) or _extract_reference(
+            history_response,
+            history_response_normalized,
+        )
         if history_reference:
             return history_reference
     return None
