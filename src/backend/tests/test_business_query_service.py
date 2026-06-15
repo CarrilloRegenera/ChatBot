@@ -47,6 +47,16 @@ class BusinessQueryServiceTests(unittest.TestCase):
             "business_licitaciones",
         )
 
+    def test_detect_business_route_ignores_documentary_manual_questions(self):
+        questions = [
+            "Si me llega el equipo a obra, que deberia comprobar en la recepcion y antes de moverlo?",
+            "Entonces, para corregir esa situacion de baja carga, que recomienda el manual y cuanto deberian durar como maximo las pruebas semanales sin carga?",
+            "En epoca fria, si el grupo es automatico, que condicion de temperatura pide el manual y que elementos preve para ayudar al arranque?",
+        ]
+
+        for question in questions:
+            self.assertIsNone(business.detect_business_route(question), question)
+
     def test_parse_margen_previsto_maps_to_rentabilidad(self):
         parsed = business._parse_question(
             "Cual es el margen previsto de la obra 26001",

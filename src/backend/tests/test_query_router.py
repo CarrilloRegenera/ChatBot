@@ -48,3 +48,15 @@ def test_business_estudio_reference_routes_to_business_licitaciones():
     ]
     for question in questions:
         assert classify_question(question)["route"] == "business_licitaciones", question
+
+
+def test_documentary_manual_questions_are_not_misrouted_to_business_or_out_of_scope():
+    questions = [
+        "Si me llega el equipo a obra, que deberia comprobar en la recepcion y antes de moverlo?",
+        "Entonces, para corregir esa situacion de baja carga, que recomienda el manual y cuanto deberian durar como maximo las pruebas semanales sin carga?",
+        "En epoca fria, si el grupo es automatico, que condicion de temperatura pide el manual y que elementos preve para ayudar al arranque?",
+        "Para cerrar, si el grupo pasa mucho tiempo parado, que rutina minima de mantenimiento recomienda el manual y que precaucion previa hay antes de intervenirlo?",
+    ]
+
+    for question in questions:
+        assert classify_question(question)["route"] == "knowledge", question

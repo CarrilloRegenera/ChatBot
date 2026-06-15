@@ -66,7 +66,7 @@ class TestMyPendingEndpoint(unittest.TestCase):
         """GET /knowledge/my-pending devuelve solo las interacciones del usuario."""
         client = self._make_client()
         with (
-            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row()),
+            mock.patch("routes.auth_helpers.load_user_by_id", return_value=_make_user_row()),
             mock.patch("routes.chat._memory_service") as ms,
         ):
             ms.return_value.list_pending_interactions.return_value = [PENDING_ITEM]
@@ -89,7 +89,7 @@ class TestMyPendingEndpoint(unittest.TestCase):
     def test_my_pending_user_not_found_returns_401(self):
         """GET /knowledge/my-pending con user_id inválido devuelve 401."""
         client = self._make_client()
-        with mock.patch("routes.chat._load_user_by_id", return_value=None):
+        with mock.patch("routes.auth_helpers.load_user_by_id", return_value=None):
             resp = client.get("/knowledge/my-pending", headers=_user_headers(user_id=999))
         self.assertEqual(resp.status_code, 401)
 
@@ -108,7 +108,7 @@ class TestValidateOwnership(unittest.TestCase):
         """El propietario de la interacción puede aprobarla."""
         client = self._make_client()
         with (
-            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row(user_id=10)),
+            mock.patch("routes.auth_helpers.load_user_by_id", return_value=_make_user_row(user_id=10)),
             mock.patch("routes.chat._memory_service") as ms,
         ):
             ms.return_value.get_interaction_owner_user_id.return_value = 10
@@ -126,7 +126,7 @@ class TestValidateOwnership(unittest.TestCase):
         """El propietario de la interacción puede rechazarla."""
         client = self._make_client()
         with (
-            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row(user_id=10)),
+            mock.patch("routes.auth_helpers.load_user_by_id", return_value=_make_user_row(user_id=10)),
             mock.patch("routes.chat._memory_service") as ms,
         ):
             ms.return_value.get_interaction_owner_user_id.return_value = 10
@@ -144,7 +144,7 @@ class TestValidateOwnership(unittest.TestCase):
         """Un usuario que no es propietario recibe 403 al intentar aprobar."""
         client = self._make_client()
         with (
-            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row(user_id=20)),
+            mock.patch("routes.auth_helpers.load_user_by_id", return_value=_make_user_row(user_id=20)),
             mock.patch("routes.chat._memory_service") as ms,
         ):
             ms.return_value.get_interaction_owner_user_id.return_value = 10  # propietario es usuario 10
@@ -160,7 +160,7 @@ class TestValidateOwnership(unittest.TestCase):
         """Un usuario que no es propietario recibe 403 al intentar rechazar."""
         client = self._make_client()
         with (
-            mock.patch("routes.chat._load_user_by_id", return_value=_make_user_row(user_id=20)),
+            mock.patch("routes.auth_helpers.load_user_by_id", return_value=_make_user_row(user_id=20)),
             mock.patch("routes.chat._memory_service") as ms,
         ):
             ms.return_value.get_interaction_owner_user_id.return_value = 10

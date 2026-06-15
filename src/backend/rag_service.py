@@ -36,6 +36,7 @@ from config import (
     TABLE_COLLECTION_NAME,
     TOP_K_RESULTS,
 )
+from rag_pdf_utils import decode_chunk_corruption, is_noise_chunk, normalize_rite_table31_text, ocr_page_text
 
 
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "900"))
@@ -97,24 +98,18 @@ if OCR_ENABLED:
 
 
 def _ocr_page_text(page) -> str:
-    """OCR de una página PyMuPDF. Devuelve "" si no hay Tesseract disponible."""
-    if not (OCR_ENABLED and _pytesseract is not None and _PIL_Image is not None):
-        return ""
-    try:
-        import io
-        pix = page.get_pixmap(dpi=OCR_RENDER_DPI, alpha=False)
-        img = _PIL_Image.open(io.BytesIO(pix.tobytes("png")))
-        return _pytesseract.image_to_string(img, lang=OCR_LANGUAGES) or ""
-    except Exception as exc:
-        # No abortar: el resto de páginas pueden tener texto extraíble.
-        logging.getLogger(__name__).warning(
-            "OCR fallo en pagina %s: %s", getattr(page, "number", "?"), exc
-        )
-        return ""
+    """OCR de una pagina PyMuPDF. Devuelve "" si no hay Tesseract disponible."""
+    return ocr_page_text(
+        page,
+        enabled=OCR_ENABLED,
+        pytesseract_module=_pytesseract,
+        pil_image_module=_PIL_Image,
+        render_dpi=OCR_RENDER_DPI,
+        languages=OCR_LANGUAGES,
+    )
+
+
 MIN_CHUNK_LENGTH = 80
-NOISE_MAX_ALPHA_RATIO = 0.3
-NOISE_PAGE_NUMBER_PATTERN = re.compile(r"^[\d\s\-–/.,:;()]+$")
-NOISE_TOC_LINE_PATTERN = re.compile(r"\.{3,}\s*\d+\s*$")
 CORE_TERM_PENALTY = 4
 
 # ---------------------------------------------------------------------------
@@ -134,137 +129,22 @@ GENERATORS_LEXICAL_TERM   = _gt_scoring.get("generators_lexical_term", 16)
 
 
 def _is_noise_chunk(text: str) -> bool:
-    clean = text.strip()
-    if len(clean) < 40:
-        return True
-    if NOISE_PAGE_NUMBER_PATTERN.match(clean):
-        return True
-    alpha_count = sum(1 for c in clean if c.isalpha())
-    if alpha_count / max(len(clean), 1) < NOISE_MAX_ALPHA_RATIO:
-        return True
-    lines = [line.strip() for line in clean.splitlines() if line.strip()]
-    if lines:
-        toc_lines = sum(1 for line in lines if NOISE_TOC_LINE_PATTERN.search(line))
-        if toc_lines / len(lines) > 0.5:
-            return True
-    words = clean.split()
-    if len(words) >= 4 and len(set(w.lower() for w in words)) <= 2:
-        return True
-    return False
+    return is_noise_chunk(text)
 
 
 def _normalize_rite_table31_text(text: str) -> str:
     """Hace legibles filas compactadas de la Tabla 3.1 del RITE."""
-    if not text:
-        return text
-    normalized = text
-    replacements = {
-        "Tabla?Operacionesdemantenimientopreventivoysuperiodicidad": (
-            "Tabla 3.1. Operaciones de mantenimiento preventivo y su periodicidad"
-        ),
-        "Limpiezadelosevaporadores": "Limpieza de los evaporadores",
-        "Limpiezadeloscondensadores": "Limpieza de los condensadores",
-        "RevisiÓngeneraldecalderasdegas": "Revision general de calderas de gas",
-        "RevisiÓngeneraldecalderasdegasÓleo": "Revision general de calderas de gasoleo",
-        "3FWJTJÓO\u0001HFOFSBM\u0001EF\u0001DBMEFSBT\u0001EF\u0001HBT": "Revision general de calderas de gas",
-        "3FWJTJÓO HFOFSBM EF DBMEFSBT EF HBT": "Revision general de calderas de gas",
-        "3FWJTJÓO\u0001HFOFSBM\u0001EF\u0001DBMEFSBT\u0001EF\u0001HBTÓMFP": "Revision general de calderas de gasoleo",
-        "0QFSBDJÓO": "Operacion",
-        "1FSJPEJDJEBE": "Periodicidad",
-        "RevisiÓndeloselementosdeseguridad": "Revision de los elementos de seguridad",
-        "T VOBWF[DBEBTFNBOB": "S = una vez cada semana",
-        "N VOBWF[BMNFT": "M = una vez al mes",
-        "U VOBWF[QPSUFNQPSBEB": "U = una vez por temporada",
-        "BÒP": "(año)",
-    }
-    for old, new in replacements.items():
-        normalized = normalized.replace(old, new)
-
-    compact = normalized.replace(" ", "")
-    if (
-        "Tabla3.1" in compact
-        or "Tabla?Operacionesdemantenimientopreventivoysuperiodicidad" in text
-        or "Limpiezadelosevaporadores" in compact
-        or "Limpiezadeloscondensadores" in compact
-        or "Revisiongeneraldecalderasdegas" in compact
-        or "Revision general de calderas de gas" in normalized
-        or "Revisión general de calderas de gas" in normalized
-    ):
-        legend = (
-            "Leyenda Tabla 3.1 RITE: en el texto extraido, U corresponde a "
-            "una vez por temporada (año). Si una fila aparece como U U, la "
-            "periodicidad es una vez por temporada para ambas columnas de potencia."
-        )
-        if legend not in normalized:
-            normalized = f"{normalized}\n{legend}"
-    return normalized
+    return normalize_rite_table31_text(text)
 
 
 def _decode_chunk_corruption(text: str, source: str = "") -> str:
-    """Decodifica corrupción de desplazamiento +31 bytes en PDFs con fuentes mal embebidas.
-
-    Para fuentes con strategy=full_text (ej. alta_tension): decodifica todas las
-    secuencias de mayúsculas ASCII de longitud ≥4 en el cuerpo completo del chunk.
-    Secuencias cortas (≤3 chars: BOE, ITC, LAT…) se preservan sin decodificar.
-
-    Para RITE: detecta líneas con la firma de corrupción (guion o dígito + 3+ mayúsculas)
-    y aplica el decode +31 solo a la parte del nombre de operación.
-
-    Devuelve el texto original si la fuente no tiene encoding shift31 en domains.json.
-    """
-    src = source.lower().replace("\\", "/")
-    if not any(token in src for token in _SHIFT31_SOURCE_TOKENS):
-        return text
-
-    if any(token in src for token in _SHIFT31_FULLTEXT_SOURCE_TOKENS):
-        def _decode_fulltext_line(line: str) -> str:
-            out: list[str] = []
-            i = 0
-            while i < len(line):
-                c = line[i]
-                if "A" <= c <= "Z":
-                    j = i
-                    while j < len(line) and "A" <= line[j] <= "Z":
-                        j += 1
-                    run = line[i:j]
-                    if len(run) >= 4:
-                        out.append("".join(
-                            chr(ord(ch) + 31) if 32 <= ord(ch) + 31 <= 126 else ch
-                            for ch in run
-                        ))
-                    else:
-                        out.append(run)
-                    i = j
-                else:
-                    out.append(c)
-                    i += 1
-            return "".join(out)
-
-        return "\n".join(_decode_fulltext_line(line) for line in text.split("\n"))
-
-    lines = text.split("\n")
-    changed = False
-    result = []
-    for line in lines:
-        stripped = line.strip()
-        if _LINE_CORRUPT_PATTERN.match(stripped):
-            trail = _TRAILING_CODES_RE.search(stripped)
-            if trail:
-                name_part = stripped[: trail.start()]
-                code_part = stripped[trail.start():]
-            else:
-                name_part = stripped
-                code_part = ""
-            decoded_name = "".join(
-                chr(ord(c) + 31) if 32 <= ord(c) + 31 <= 126 else c
-                for c in name_part
-            )
-            result.append(decoded_name + code_part)
-            changed = True
-        else:
-            result.append(line)
-    decoded = "\n".join(result) if changed else text
-    return _normalize_rite_table31_text(decoded)
+    """Decodifica corrupcion de desplazamiento +31 bytes en PDFs con fuentes mal embebidas."""
+    return decode_chunk_corruption(
+        text,
+        source,
+        shift31_source_tokens=_SHIFT31_SOURCE_TOKENS,
+        shift31_fulltext_source_tokens=_SHIFT31_FULLTEXT_SOURCE_TOKENS,
+    )
 
 
 MAX_TOPIC_TOKENS = 6

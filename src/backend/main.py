@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import logging
 import os
 from threading import Lock, Thread
@@ -9,6 +10,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from routes.admin_deployments import router as admin_deployments_router
 from routes.auth import router as auth_router
 from routes.deployments_webhook import router as deployments_webhook_router
 from config import ALLOWED_ORIGINS, CHATBOT_FRONTEND_URL, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
@@ -25,12 +27,23 @@ for handler in logging.getLogger().handlers:
     handler.addFilter(RequestIdFilter())
 
 
-app = FastAPI(title="ChatBot API")
-app.state.runtime_ready = False
-app.state.startup_error = ""
-app.state.database_ready = False
-app.state.chat_router_ready = False
-app.state.chat_router_error = ""
+def _reset_runtime_state() -> None:
+    app.state.runtime_ready = False
+    app.state.startup_error = ""
+    app.state.database_ready = False
+    app.state.chat_router_ready = False
+    app.state.chat_router_error = ""
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _reset_runtime_state()
+    Thread(target=_startup_background_init, daemon=True, name="startup-init").start()
+    yield
+
+
+app = FastAPI(title="ChatBot API", lifespan=lifespan)
+_reset_runtime_state()
 _chat_router_lock = Lock()
 
 app.add_middleware(
@@ -42,6 +55,8 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(auth_router, prefix="/api")
+app.include_router(admin_deployments_router)
+app.include_router(admin_deployments_router, prefix="/api")
 app.include_router(deployments_webhook_router)
 app.include_router(deployments_webhook_router, prefix="/api")
 
@@ -51,6 +66,8 @@ def _is_lightweight_path(path: str) -> bool:
     return (
         normalized in {"/", "/api", "/health", "/api/health"}
         or normalized in {"/admin/deployments/webhook", "/api/admin/deployments/webhook"}
+        or normalized.startswith("/admin/deployments")
+        or normalized.startswith("/api/admin/deployments")
         or normalized.startswith("/login")
         or normalized.startswith("/api/login")
         or normalized.startswith("/registro")
@@ -110,13 +127,6 @@ async def lazy_chat_router_middleware(request: Request, call_next):
                 },
             )
     return await call_next(request)
-
-
-@app.on_event("startup")
-def startup_init():
-    app.state.runtime_ready = False
-    app.state.startup_error = ""
-    Thread(target=_startup_background_init, daemon=True, name="startup-init").start()
 
 
 def _startup_background_init():

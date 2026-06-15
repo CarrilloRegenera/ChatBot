@@ -45,6 +45,12 @@ OUT_OF_SCOPE_HINTS = {
     "chiste", "receta", "videojuego", "pelicula",
 }
 
+DOCUMENTARY_HINTS = {
+    "manual", "pdf", "documentacion", "documento", "normativa", "normativo",
+    "norma", "reglamento", "apartado", "seccion", "capitulo", "pagina",
+    "pag.", "segun el manual", "segun el documento", "segun el pdf",
+}
+
 TECHNICAL_HINTS = {
     "rebt", "rite", "ralt", "itc", "instalacion", "instalaciones", "baja tension",
     "alta tension", "linea", "lineas", "inspeccion", "inspecciones",
@@ -56,6 +62,10 @@ TECHNICAL_HINTS = {
     "generadora", "generadoras", "aislada", "aisladas", "asistida", "asistidas",
     "interconectada", "interconectadas", "grupo electrogeno", "grupos electrogenos",
     "iso 8528", "respuesta transitoria",
+    "mantenimiento", "arranque", "motor", "bateria", "remolque", "enganche",
+    "desenganche", "recepcion", "izado", "combustible", "escape", "ventilacion",
+    "refrigeracion", "baja carga", "banco de carga", "magnetotermico", "calefactor",
+    "calefaccion", "automatico", "grupo movil", "grupo automatico", "himoinsa",
 }
 
 BUSINESS_LICITACIONES_HINTS = {
@@ -64,7 +74,7 @@ BUSINESS_LICITACIONES_HINTS = {
 }
 
 BUSINESS_PRODUCCION_HINTS = {
-    "produccion", "obra", "control de obras", "cartera", "responsable",
+    "produccion", "control de obras", "cartera", "responsable",
     "cuatrimestre", "rentabilidad", "codigo obra",
 }
 
@@ -108,9 +118,28 @@ def _looks_technical(text: str) -> bool:
     return any(hint in text for hint in TECHNICAL_HINTS)
 
 
+def _looks_documentary(text: str) -> bool:
+    return any(hint in text for hint in DOCUMENTARY_HINTS)
+
+
+def _has_strong_business_signal(text: str) -> bool:
+    if LICITACION_REFERENCE_PATTERN.search(text):
+        return True
+    if PRODUCCION_CODE_PATTERN.search(text):
+        return True
+    if any(hint in text for hint in BUSINESS_LICITACIONES_HINTS):
+        return True
+    if any(hint in text for hint in BUSINESS_PRODUCCION_HINTS):
+        return True
+    if "importe contratado" in text:
+        return True
+    return False
+
+
 def classify_question(question: str) -> Dict[str, str]:
     text = (question or "").strip()
     normalized = _normalize(text)
+    documentary_or_technical = _looks_documentary(normalized) or _looks_technical(normalized)
 
     if len(normalized) < MIN_QUERY_LENGTH:
         return {
@@ -118,13 +147,13 @@ def classify_question(question: str) -> Dict[str, str]:
             "message": "La consulta es demasiado corta. Anade mas detalle para poder responder con precision.",
         }
 
-    if _is_smalltalk(normalized) and not _looks_technical(normalized):
+    if _is_smalltalk(normalized) and not documentary_or_technical:
         return {
             "route": "smalltalk",
             "message": "Hola. Soy el asistente tecnico de REGENERA y puedo ayudarte con consultas basadas en la documentacion cargada.",
         }
 
-    if _is_out_of_scope(normalized) and not _looks_technical(normalized):
+    if _is_out_of_scope(normalized) and not documentary_or_technical:
         return {
             "route": "out_of_scope",
             "message": "Esa pregunta parece fuera del alcance documental actual. Haz una consulta tecnica sobre la documentacion cargada.",
@@ -137,6 +166,9 @@ def classify_question(question: str) -> Dict[str, str]:
     if has_produccion_code and not any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):
         return {"route": "business_produccion", "message": ""}
 
+    if documentary_or_technical and not _has_strong_business_signal(normalized):
+        return {"route": "knowledge", "message": ""}
+
     if any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):
         return {"route": "business_licitaciones", "message": ""}
 
@@ -146,7 +178,7 @@ def classify_question(question: str) -> Dict[str, str]:
     if any(hint in normalized for hint in BUSINESS_PRODUCCION_HINTS):
         return {"route": "business_produccion", "message": ""}
 
-    if any(hint in normalized for hint in BUSINESS_COMMON_HINTS):
+    if any(hint in normalized for hint in BUSINESS_COMMON_HINTS) and _has_strong_business_signal(normalized):
         return {"route": "business_licitaciones", "message": ""}
 
     return {"route": "knowledge", "message": ""}

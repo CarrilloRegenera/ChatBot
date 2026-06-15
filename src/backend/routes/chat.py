@@ -1,34 +1,21 @@
 import logging
 import time
-import unicodedata
 from threading import Lock, Thread
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from business_query_service import answer_business_question, detect_business_route
-from config import ADMIN_API_KEY, ADMIN_PANEL_ALLOWED_EMAILS, ADMIN_PANEL_ALLOWED_NAMES, CONVERSATION_LOCK_TIMEOUT_SECS, ENTRA_ADMIN_EMAILS, ENTRA_ENABLED
+from config import CONVERSATION_LOCK_TIMEOUT_SECS
 from database import db_conn
-from deployment_service import (
-    DeploymentConfigurationError,
-    download_run_logs,
-    get_notification_settings,
-    list_deployments,
-    register_webhook_run,
-    sync_recent_deployments,
-    trigger_full_deploy,
-    update_notification_settings,
-)
-from entra_auth import validate_entra_token
 from models import (
     ConversationRequest,
-    DeploymentNotificationSettingsRequest,
-    DeploymentTriggerRequest,
     InteractionReviewRequest,
     MessageRequest,
 )
 from query_router import classify_question
+from routes.auth_helpers import assert_admin, resolve_request_user_id
 
 
 router = APIRouter()
@@ -37,8 +24,6 @@ _locks_guard = Lock()
 _conversation_locks: Dict[int, Lock] = {}
 _lock_last_used: Dict[int, float] = {}
 _last_lock_cleanup: float = 0.0
-_deploy_sync_lock = Lock()
-_deploy_sync_inflight = False
 _document_sync_lock = Lock()
 _document_sync_inflight = False
 _document_sync_status = {
@@ -56,30 +41,6 @@ def _memory_service():
     import memory_service
 
     return memory_service
-
-
-def _sync_recent_deployments_background(limit: int, page: int) -> None:
-    global _deploy_sync_inflight
-    with _deploy_sync_lock:
-        if _deploy_sync_inflight:
-            return
-        _deploy_sync_inflight = True
-
-    def _worker() -> None:
-        global _deploy_sync_inflight
-        try:
-            sync_recent_deployments(limit=limit, page=page)
-        except Exception:
-            logger.exception("No se pudo actualizar el historico de despliegues en segundo plano")
-        finally:
-            with _deploy_sync_lock:
-                _deploy_sync_inflight = False
-
-    Thread(
-        target=_worker,
-        daemon=True,
-        name=f"deploy-history-sync-p{page}",
-    ).start()
 
 
 def _start_document_sync_background() -> Dict[str, object]:
@@ -247,104 +208,6 @@ def _save_chat_message(conversation_id: int, question: str, response: str, elaps
     return int((time.time() - start) * 1000)
 
 
-def _admin_identity_key(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value or "")
-    without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-    return " ".join(without_marks.strip().lower().split())
-
-
-ADMIN_PANEL_ALLOWED_NAME_KEYS = {_admin_identity_key(name) for name in ADMIN_PANEL_ALLOWED_NAMES}
-
-
-def _assert_admin(request: Request) -> None:
-    auth_header = (request.headers.get("authorization") or "").strip()
-    if ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-        try:
-            claims = validate_entra_token(token)
-        except Exception as exc:
-            raise HTTPException(status_code=401, detail=f"Token Entra no válido: {exc}") from exc
-        email = (
-            claims.get("preferred_username")
-            or claims.get("email")
-            or claims.get("upn")
-            or ""
-        ).strip().lower()
-        if email and email in ADMIN_PANEL_ALLOWED_EMAILS:
-            return
-        raise HTTPException(status_code=403, detail="Acceso solo para administradores de Entra")
-
-    admin_key = (request.headers.get("x-admin-key") or "").strip()
-    if admin_key and ADMIN_API_KEY and admin_key == ADMIN_API_KEY:
-        return  # API key válida — auth suficiente para acceso automatizado (CI/scripts)
-
-    role = (request.headers.get("x-user-role") or "").strip().lower()
-    user_name = (request.headers.get("x-user-name") or "").strip().lower()
-    user_email = (request.headers.get("x-user-email") or "").strip().lower()
-    auth_provider = (request.headers.get("x-auth-provider") or "").strip().lower()
-    is_local_admin = auth_provider == "local" and user_name == "admin"
-    is_allowed_entra_email = bool(user_email and user_email in ADMIN_PANEL_ALLOWED_EMAILS)
-    is_allowed_admin_name = _admin_identity_key(user_name) in ADMIN_PANEL_ALLOWED_NAME_KEYS
-    if not (is_local_admin or is_allowed_entra_email or is_allowed_admin_name):
-        raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
-    if admin_key and ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Acceso admin denegado")
-
-
-def _load_user_by_id(user_id: int) -> tuple | None:
-    with db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT TOP 1 Id, Nombre, Email, Rol, AuthProvider FROM Usuarios WHERE Id = ?",
-            user_id,
-        )
-        return cursor.fetchone()
-
-
-def _resolve_request_user_id(request: Request) -> int:
-    auth_header = (request.headers.get("authorization") or "").strip()
-    if ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-        try:
-            claims = validate_entra_token(token)
-        except Exception as exc:
-            raise HTTPException(status_code=401, detail=f"Token Entra no valido: {exc}") from exc
-
-        email = (
-            claims.get("preferred_username")
-            or claims.get("email")
-            or claims.get("upn")
-            or ""
-        ).strip().lower()
-        if not email:
-            raise HTTPException(status_code=401, detail="El token de Entra no contiene email")
-
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT TOP 1 Id FROM Usuarios WHERE LOWER(Email) = ?", email)
-            row = cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=401, detail="Usuario de Entra no sincronizado en el chatbot")
-        return int(row[0])
-
-    user_id_header = (request.headers.get("x-user-id") or "").strip()
-    if not user_id_header.isdigit():
-        raise HTTPException(status_code=401, detail="Identidad de usuario no disponible")
-
-    user_id = int(user_id_header)
-    user_row = _load_user_by_id(user_id)
-    if not user_row:
-        raise HTTPException(status_code=401, detail="Usuario no encontrado")
-
-    header_provider = (request.headers.get("x-auth-provider") or "").strip().lower()
-    header_email = (request.headers.get("x-user-email") or "").strip().lower()
-    if header_provider and str(user_row[4] or "").strip().lower() not in {"", header_provider}:
-        raise HTTPException(status_code=403, detail="La sesion no coincide con el proveedor del usuario")
-    if header_email and str(user_row[2] or "").strip().lower() not in {"", header_email}:
-        raise HTTPException(status_code=403, detail="La sesion no coincide con el email del usuario")
-    return user_id
-
-
 def _assert_conversation_owner(conversation_id: int, request_user_id: int) -> tuple:
     with db_conn() as conn:
         cursor = conn.cursor()
@@ -362,7 +225,7 @@ def _assert_conversation_owner(conversation_id: int, request_user_id: int) -> tu
 
 @router.post("/conversations")
 def create_conversation(data: ConversationRequest, request: Request):
-    request_user_id = _resolve_request_user_id(request)
+    request_user_id = resolve_request_user_id(request)
     if int(data.user_id) != request_user_id:
         raise HTTPException(status_code=403, detail="No puedes crear conversaciones para otro usuario")
     chat_mode = _normalize_chat_mode(data.chat_mode)
@@ -380,7 +243,7 @@ def create_conversation(data: ConversationRequest, request: Request):
 
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: int, request: Request):
-    request_user_id = _resolve_request_user_id(request)
+    request_user_id = resolve_request_user_id(request)
     _assert_conversation_owner(conversation_id, request_user_id)
     with db_conn() as conn:
         cursor = conn.cursor()
@@ -400,7 +263,7 @@ def delete_conversation(conversation_id: int, request: Request):
 
 @router.post("/messages")
 def send_message(data: MessageRequest, request: Request):
-    request_user_id = _resolve_request_user_id(request)
+    request_user_id = resolve_request_user_id(request)
     _assert_conversation_owner(data.conversation_id, request_user_id)
     conversation_lock = _get_conversation_lock(data.conversation_id)
     acquired = conversation_lock.acquire(timeout=CONVERSATION_LOCK_TIMEOUT_SECS)
@@ -566,9 +429,10 @@ def send_message(data: MessageRequest, request: Request):
                 )
             else:
                 history = _get_recent_history(data.conversation_id, limit=2)
+                history_for_hints = _get_recent_history(data.conversation_id, limit=6)
                 recent_text = " ".join(
                     f"{h.get('question', '')} {h.get('response', '')}".strip()
-                    for h in history
+                    for h in history_for_hints
                 )
                 hint_domains = _rag_service().detect_hint_domains(recent_text) if recent_text.strip() else []
                 hint_document_variants = _rag_service().detect_hint_document_variants(recent_text, hint_domains) if recent_text.strip() else []
@@ -699,7 +563,7 @@ def send_message(data: MessageRequest, request: Request):
 
 @router.post("/admin/sync")
 def admin_sync(request: Request, background: bool = False):
-    _assert_admin(request)
+    assert_admin(request)
     if background:
         return _start_document_sync_background()
     result = _rag_service().sync_documents()
@@ -708,7 +572,7 @@ def admin_sync(request: Request, background: bool = False):
 
 @router.get("/admin/sync/status")
 def admin_sync_status(request: Request):
-    _assert_admin(request)
+    assert_admin(request)
     with _document_sync_lock:
         return dict(_document_sync_status)
 
@@ -720,114 +584,50 @@ def get_pending_knowledge(limit: int = 50):
 
 @router.get("/knowledge/my-pending")
 def get_my_pending_knowledge(request: Request, limit: int = 50):
-    request_user_id = _resolve_request_user_id(request)
+    request_user_id = resolve_request_user_id(request)
     return {"pending": _memory_service().list_pending_interactions(limit=limit, user_id=request_user_id)}
 
 
 @router.get("/admin/metrics")
 def admin_metrics(request: Request, days: int = 30):
-    _assert_admin(request)
+    assert_admin(request)
     return _memory_service().get_admin_metrics(days=days)
 
 
 @router.get("/admin/metrics/errors-503")
 def admin_503_metrics(request: Request, hours: int = 24):
-    _assert_admin(request)
+    assert_admin(request)
     return _memory_service().get_admin_503_metrics(hours=hours)
 
 
 @router.get("/admin/knowledge/pending")
 def admin_pending(request: Request, limit: int = 50, user_id: int | None = None):
-    _assert_admin(request)
+    assert_admin(request)
     return {"pending": _memory_service().list_pending_interactions(limit=limit, user_id=user_id)}
 
 
 @router.get("/admin/knowledge/users")
 def admin_pending_users(request: Request):
-    _assert_admin(request)
+    assert_admin(request)
     return {"users": _memory_service().list_pending_users()}
 
 
 @router.get("/admin/knowledge/{interaction_id}")
 def admin_interaction_detail(interaction_id: int, request: Request):
-    _assert_admin(request)
+    assert_admin(request)
     try:
         return _memory_service().get_interaction_detail(interaction_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.get("/admin/deployments")
-def admin_list_deployments(request: Request, page: int = 1, page_size: int = 25):
-    _assert_admin(request)
-    current_page = max(1, int(page or 1))
-    size = max(1, min(int(page_size or 25), 50))
-    page_data = list_deployments(page=current_page, page_size=size)
-    page_data["settings"] = get_notification_settings()
-    _sync_recent_deployments_background(limit=size, page=current_page)
-    return page_data
-
-
-@router.post("/admin/deployments/run")
-def admin_run_deployment(data: DeploymentTriggerRequest, request: Request):
-    _assert_admin(request)
-    request_user_id = _resolve_request_user_id(request)
-    user_row = _load_user_by_id(request_user_id)
-    requested_by_name = str(user_row[1] or "").strip() if user_row else ""
-    requested_by_email = str(user_row[2] or "").strip().lower() if user_row else ""
-    try:
-        return trigger_full_deploy(
-            requested_by_email=requested_by_email,
-            requested_by_name=requested_by_name,
-            branch=data.branch,
-        )
-    except DeploymentConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"No se pudo lanzar el despliegue: {exc}") from exc
-
-
-@router.get("/admin/deployments/settings")
-def admin_get_deployment_settings(request: Request):
-    _assert_admin(request)
-    return get_notification_settings()
-
-
-@router.put("/admin/deployments/settings")
-def admin_update_deployment_settings(data: DeploymentNotificationSettingsRequest, request: Request):
-    _assert_admin(request)
-    request_user_id = _resolve_request_user_id(request)
-    user_row = _load_user_by_id(request_user_id)
-    updated_by = str(user_row[2] or user_row[1] or "admin") if user_row else "admin"
-    try:
-        return update_notification_settings(data.recipients, updated_by=updated_by)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.get("/admin/deployments/{run_id}/logs")
-def admin_download_deployment_logs(run_id: int, request: Request):
-    _assert_admin(request)
-    try:
-        archive, filename = download_run_logs(run_id)
-    except DeploymentConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"No se pudo descargar el log completo: {exc}") from exc
-    return Response(
-        content=archive,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
 def _assert_admin_or_interaction_owner(request: Request, interaction_id: int) -> None:
     try:
-        _assert_admin(request)
+        assert_admin(request)
         return
     except HTTPException:
         pass
-    request_user_id = _resolve_request_user_id(request)
+    request_user_id = resolve_request_user_id(request)
     owner_user_id = _memory_service().get_interaction_owner_user_id(interaction_id)
     if owner_user_id is None or owner_user_id != request_user_id:
         raise HTTPException(status_code=403, detail="Solo puedes revisar tus propias interacciones")
@@ -851,7 +651,7 @@ def reject_interaction_endpoint(interaction_id: int, data: InteractionReviewRequ
 
 @router.get("/conversations/{user_id}")
 def list_conversations(user_id: int, request: Request):
-    request_user_id = _resolve_request_user_id(request)
+    request_user_id = resolve_request_user_id(request)
     if int(user_id) != request_user_id:
         raise HTTPException(status_code=403, detail="No puedes consultar conversaciones de otro usuario")
     with db_conn() as conn:
@@ -878,7 +678,7 @@ def list_conversations(user_id: int, request: Request):
 
 @router.get("/conversations/{conversation_id}/messages")
 def get_history(conversation_id: int, request: Request):
-    request_user_id = _resolve_request_user_id(request)
+    request_user_id = resolve_request_user_id(request)
     _assert_conversation_owner(conversation_id, request_user_id)
     with db_conn() as conn:
         cursor = conn.cursor()
@@ -896,7 +696,7 @@ def get_history(conversation_id: int, request: Request):
 
 @router.put("/conversations/{conversation_id}/title")
 def update_title(conversation_id: int, data: dict, request: Request):
-    request_user_id = _resolve_request_user_id(request)
+    request_user_id = resolve_request_user_id(request)
     _assert_conversation_owner(conversation_id, request_user_id)
     with db_conn() as conn:
         cursor = conn.cursor()
