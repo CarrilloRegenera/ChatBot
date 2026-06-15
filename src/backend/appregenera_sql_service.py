@@ -60,6 +60,25 @@ def _normalize_bool(value: str) -> str:
 
 _APPREGENERA_SQL_CONNECTION_STRING = _prepare_appregenera_connection_string(APPREGENERA_SQL_CONNECTION_STRING)
 
+LICITACION_IMPORTE_YEAR_SQL = {
+    2026: "COALESCE(ImporteContratado2026, ImporteContratado, 0)",
+    2027: "COALESCE(ImporteContratado2027, 0)",
+    2028: "COALESCE(ImporteContratado2028, 0)",
+    2029: "COALESCE(ImporteContratado2029, 0)",
+}
+LICITACION_PLAN_YEAR_SQL = {
+    2026: "COALESCE(Plan2026, 0)",
+    2027: "COALESCE(Plan2027, 0)",
+    2028: "COALESCE(Plan2028, 0)",
+    2029: "COALESCE(Plan2029, 0)",
+}
+LICITACION_PRODUCCION_YEAR_SQL = {
+    2026: "COALESCE(Produccion2026, Produccion, 0)",
+    2027: "COALESCE(Produccion2027, 0)",
+    2028: "COALESCE(Produccion2028, 0)",
+    2029: "COALESCE(Produccion2029, 0)",
+}
+
 
 def is_available() -> bool:
     return bool(_APPREGENERA_SQL_CONNECTION_STRING)
@@ -266,44 +285,23 @@ def query_licitaciones_aggregate(
 def _resolve_licitacion_field_sql(select_field: str, *, year: int | None, scope: str | None) -> str:
     field = (select_field or "").strip().lower()
     if field == "importecontratado":
-        if year == 2026:
-            return "COALESCE(ImporteContratado2026, ImporteContratado, 0)"
-        if year == 2027:
-            return "COALESCE(ImporteContratado2027, 0)"
-        if year == 2028:
-            return "COALESCE(ImporteContratado2028, 0)"
-        if year == 2029:
-            return "COALESCE(ImporteContratado2029, 0)"
+        if year is not None:
+            return LICITACION_IMPORTE_YEAR_SQL.get(year, "0")
         return "COALESCE(ImporteContratado, 0)"
     if field == "pipeline":
-        if year == 2026:
-            return "COALESCE(Plan2026, 0)"
-        if year == 2027:
-            return "COALESCE(Plan2027, 0)"
-        if year == 2028:
-            return "COALESCE(Plan2028, 0)"
-        if year == 2029:
-            return "COALESCE(Plan2029, 0)"
-        return "COALESCE(Plan2026, 0) + COALESCE(Plan2027, 0) + COALESCE(Plan2028, 0) + COALESCE(Plan2029, 0)"
+        if year is not None:
+            return LICITACION_PLAN_YEAR_SQL.get(year, "0")
+        return " + ".join(LICITACION_PLAN_YEAR_SQL[plan_year] for plan_year in sorted(LICITACION_PLAN_YEAR_SQL))
     if field == "backlog":
-        if year == 2026:
-            return "COALESCE(Produccion2026, Produccion, 0)"
-        if year == 2027:
-            return "COALESCE(Produccion2027, 0)"
-        if year == 2028:
-            return "COALESCE(Produccion2028, 0)"
-        if year == 2029:
-            return "COALESCE(Produccion2029, 0)"
-        return "COALESCE(Produccion, 0) + COALESCE(Produccion2027, 0) + COALESCE(Produccion2028, 0) + COALESCE(Produccion2029, 0)"
+        if year is not None:
+            return LICITACION_PRODUCCION_YEAR_SQL.get(year, "0")
+        return "COALESCE(Produccion, 0) + " + " + ".join(
+            LICITACION_PRODUCCION_YEAR_SQL[prod_year]
+            for prod_year in sorted(year_key for year_key in LICITACION_PRODUCCION_YEAR_SQL if year_key != 2026)
+        )
     if field == "produccion":
-        if year == 2026:
-            return "COALESCE(Produccion2026, Produccion, 0)"
-        if year == 2027:
-            return "COALESCE(Produccion2027, 0)"
-        if year == 2028:
-            return "COALESCE(Produccion2028, 0)"
-        if year == 2029:
-            return "COALESCE(Produccion2029, 0)"
+        if year is not None:
+            return LICITACION_PRODUCCION_YEAR_SQL.get(year, "0")
         return "COALESCE(Produccion, 0)"
     if field == "importecontratadoprevio":
         return "COALESCE(ImporteContratadoPrevio, 0)"
