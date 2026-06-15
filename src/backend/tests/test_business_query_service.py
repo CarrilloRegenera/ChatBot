@@ -32,6 +32,30 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertTrue(business.BUSINESS_SCHEMA["relationships"])
         self.assertIn("nos hemos adjudicado", business.BUSINESS_SCHEMA["scopes"]["backlog"]["aliases"])
 
+    def test_business_schema_autocompletes_missing_fields_case_insensitive(self):
+        synonyms = business._schema_field_synonyms("produccion", "rentabilidadPrevista2026")
+        self.assertIn("rentabilidad prevista", synonyms)
+        self.assertIn("rentabilidad", synonyms)
+
+    def test_detect_business_route_uses_five_digit_reference_for_produccion(self):
+        self.assertEqual(
+            business.detect_business_route("Que cliente tiene el proyecto 26001"),
+            "business_produccion",
+        )
+        self.assertEqual(
+            business.detect_business_route("Que cliente tiene la licitacion 26018"),
+            "business_licitaciones",
+        )
+
+    def test_parse_margen_previsto_maps_to_rentabilidad(self):
+        parsed = business._parse_question(
+            "Cual es el margen previsto de la obra 26001",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertIn("rentabilidadPrevista2026", parsed["fields"])
+
     def test_parse_pipeline_per_year_expands_plan_fields(self):
         parsed = business._parse_question("Dime el pipeline por ano", module="estudios", history=[])
 
@@ -52,6 +76,7 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(
             parsed["fields"],
             [
+                "importeContratado2025",
                 "importeContratado2026",
                 "importeContratado2027",
                 "importeContratado2028",
@@ -143,8 +168,8 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["year"], 2026)
         self.assertEqual(parsed["fields"], ["importeContratado2026"])
 
-    def test_numeric_reference_does_not_force_produccion_module(self):
-        self.assertIsNone(business._detect_reference_module("26001"))
+    def test_numeric_reference_can_identify_produccion_module(self):
+        self.assertEqual(business._detect_reference_module("26001"), "produccion")
         self.assertEqual(business._detect_reference_module("EST-26001-2026"), "estudios")
 
     def test_singular_sum_question_creates_aggregate(self):
@@ -550,6 +575,10 @@ class BusinessQueryServiceTests(unittest.TestCase):
             appregenera_sql._resolve_licitacion_field_sql("importecontratado", year=2027, scope=None),
             "COALESCE(ImporteContratado2027, 0)",
         )
+        self.assertEqual(
+            appregenera_sql._resolve_licitacion_field_sql("importecontratado", year=2030, scope=None),
+            "0",
+        )
 
     def test_produccion_yearly_fields_are_formatted(self):
         parsed = business._parse_question(
@@ -762,6 +791,35 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["aggregate"]["kind"], "top")
         self.assertEqual(parsed["aggregate"]["top_n"], 1)
         self.assertEqual(parsed["aggregate"]["metric"], "produccion")
+
+    def test_explicit_unsupported_year_is_kept_as_specific_field(self):
+        parsed = business._parse_question(
+            "Cuanto importe contratado tiene la licitacion 26018 en 2030",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["fields"], ["importeContratado2030"])
+
+    def test_answer_business_question_falls_back_to_http_when_sql_raises(self):
+        with patch.object(business, "APPREGENERA_DEV_BYPASS_KEY", "dev"), patch.object(
+            business,
+            "_answer_business_question_sql",
+            side_effect=RuntimeError("sql down"),
+        ), patch.object(
+            business,
+            "_answer_business_question_http",
+            return_value={"response": "fallback http", "route": "business_produccion", "confidence": 1.0, "sources": []},
+        ) as http_call:
+            result = business.answer_business_question(
+                "Que cliente tiene el proyecto 26001",
+                user_token="token",
+                preferred_route="business_produccion",
+                history=[],
+            )
+
+        self.assertEqual(result["response"], "fallback http")
+        http_call.assert_called_once()
 
     def test_auth_required_response_is_traced(self):
         with patch.object(business, "APPREGENERA_DEV_BYPASS_KEY", ""):

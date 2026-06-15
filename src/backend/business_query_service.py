@@ -35,7 +35,7 @@ def _load_business_schema() -> Dict[str, Any]:
         return {}
 
 
-BUSINESS_SCHEMA = _load_business_schema()
+RAW_BUSINESS_SCHEMA = _load_business_schema()
 
 
 def _schema_module_hints(module: str) -> tuple[str, ...]:
@@ -54,8 +54,30 @@ def _schema_scope_aliases(scope: str) -> tuple[str, ...]:
     )
 
 
+def _schema_field_entry(module: str, metric: str) -> Dict[str, Any]:
+    fields = BUSINESS_SCHEMA.get("fields") or {}
+    candidates = (
+        f"{module}.{metric}",
+        f"{module}.{(metric or '').lower()}",
+    )
+    for candidate in candidates:
+        field = fields.get(candidate)
+        if field:
+            return field
+    target_module = (module or "").strip().lower()
+    target_metric = (metric or "").strip().lower()
+    for key, value in fields.items():
+        try:
+            key_module, key_metric = key.split(".", 1)
+        except ValueError:
+            continue
+        if key_module.strip().lower() == target_module and key_metric.strip().lower() == target_metric:
+            return value
+    return {}
+
+
 def _schema_field_synonyms(module: str, metric: str) -> tuple[str, ...]:
-    field = (BUSINESS_SCHEMA.get("fields") or {}).get(f"{module}.{metric}") or {}
+    field = _schema_field_entry(module, metric)
     return tuple(_normalize_static(alias) for alias in field.get("synonyms", []) if alias)
 
 
@@ -136,7 +158,7 @@ LICITACION_FIELD_SPECS = [
     ("periodoEjecucion", "periodo de ejecucion", ("periodo de ejecucion", "periodo ejecucion")),
     ("observaciones", "observaciones", ("observaciones", "observacion")),
     ("enlaceLicitacion", "enlace de licitacion", ("enlace de licitacion", "enlace licitacion", "url licitacion")),
-    ("importeContratado", "importe contratado", ("importe contratado", "importe adjudicado")),
+    ("importeContratado", "importe contratado", ("importe contratado", "importe adjudicado", "presupuesto", "presupuesto adjudicado", "valor contratado")),
     ("importeContratadoPrevio", "importe contratado previo", ("importe previo", "importe contratado previo")),
     ("importeContratado2026C1", "importe contratado C1 2026", ("importe contratado c1 2026", "importe contratado primer cuatrimestre 2026")),
     ("importeContratado2026C2", "importe contratado C2 2026", ("importe contratado c2 2026", "importe contratado segundo cuatrimestre 2026")),
@@ -166,14 +188,14 @@ PRODUCCION_FIELD_SPECS = [
     ("oculta", "oculta", ("oculta", "oculto", "esta oculta", "esta oculto")),
     ("responsableNombreCompleto", "responsable", ("responsable", "quien es el responsable", "responsable de la obra")),
     ("tipoObra", "tipo de obra", ("tipo de obra", "tipo obra")),
-    ("importeContratado", "importe contratado", ("importe contratado", "importe adjudicado")),
-    ("rentabilidadPrevista2026", "rentabilidad prevista 2026", ("rentabilidad prevista 2026", "rentabilidad 2026", "rentabilidad prevista", "rentabilidad")),
+    ("importeContratado", "importe contratado", ("importe contratado", "importe adjudicado", "presupuesto", "presupuesto contratado", "valor contratado")),
+    ("rentabilidadPrevista2026", "rentabilidad prevista 2026", ("rentabilidad prevista 2026", "rentabilidad 2026", "rentabilidad prevista", "rentabilidad", "margen previsto", "margen", "beneficio previsto")),
     ("produccionOrigen2025", "produccion origen 2025", ("produccion origen 2025",)),
     ("produccionOrigenAnosAnteriores", "produccion origen anos anteriores", ("produccion origen anos anteriores",)),
     ("ventaMaster2025", "venta master 2025", ("venta master 2025",)),
     ("porcentajeMateriales", "porcentaje de materiales", ("porcentaje de materiales", "porcentaje materiales")),
     ("porcentajeManoObra", "porcentaje de mano de obra", ("porcentaje de mano de obra", "porcentaje mano de obra")),
-    ("cartera2026", "cartera 2026", ("cartera 2026", "cartera")),
+    ("cartera2026", "cartera 2026", ("cartera 2026", "cartera", "cartera pendiente", "pendiente por ejecutar")),
     ("pendiente2026", "pendiente 2026", ("pendiente 2026",)),
     ("diferencia", "diferencia", ("diferencia",)),
     ("comentarios", "comentarios", ("comentarios",)),
@@ -268,6 +290,183 @@ CLOSURE_FIELD_HINTS = {
     "publico privado": "publicoPrivado",
     "situacion": "situacion",
 }
+
+
+def _schema_field_key(module: str, field_name: str) -> str:
+    return f"{module}.{(field_name or '').strip().lower()}"
+
+
+def _default_sql_field_name(field_name: str) -> str:
+    if not field_name:
+        return ""
+    return field_name[0].upper() + field_name[1:]
+
+
+def _default_field_description(label: str, module: str) -> str:
+    module_copy = {
+        "estudios": "una licitacion o estudio",
+        "produccion": "una obra en produccion",
+        "cierre": "un cierre de produccion",
+    }.get(module, "la entidad consultada")
+    return f"Dato de {label} asociado a {module_copy}."
+
+
+def _build_generated_business_fields() -> Dict[str, Dict[str, Any]]:
+    generated: Dict[str, Dict[str, Any]] = {}
+
+    for canonical, label, aliases in LICITACION_FIELD_SPECS:
+        generated[_schema_field_key("estudios", canonical)] = {
+            "table": "dbo.Licitaciones",
+            "sql_field": _default_sql_field_name(canonical),
+            "label": label,
+            "human_description": _default_field_description(label, "estudios"),
+            "synonyms": list(dict.fromkeys((label, *aliases))),
+            "aggregations": [],
+        }
+
+    for canonical, label, aliases in PRODUCCION_FIELD_SPECS:
+        table_name = "dbo.ProyectosProduccionSyncPeriodos" if canonical == "periodosMensuales" else "dbo.ProyectosProduccionSync"
+        generated[_schema_field_key("produccion", canonical)] = {
+            "table": table_name,
+            "sql_field": _default_sql_field_name(canonical),
+            "label": label,
+            "human_description": _default_field_description(label, "produccion"),
+            "synonyms": list(dict.fromkeys((label, *aliases))),
+            "aggregations": [],
+        }
+
+    numeric_fields = {
+        "estudios": {
+            "importeContratado",
+            "importeContratadoPrevio",
+            "importeContratado2026C1",
+            "importeContratado2026C2",
+            "importeContratado2026C3",
+            "produccion",
+            "produccionPrevio",
+            "plan2026",
+            "plan2027",
+            "plan2028",
+            "plan2029",
+            "produccion2026",
+            "produccion2026C1",
+            "produccion2026C2",
+            "produccion2026C3",
+            "produccion2027",
+            "produccion2028",
+            "produccion2029",
+        },
+        "produccion": {
+            "importeContratado",
+            "rentabilidadPrevista2026",
+            "produccionOrigen2025",
+            "produccionOrigenAnosAnteriores",
+            "ventaMaster2025",
+            "porcentajeMateriales",
+            "porcentajeManoObra",
+            "cartera2026",
+            "pendiente2026",
+            "diferencia",
+            "produccionPrimerCuatrimestre",
+            "produccionSegundoCuatrimestre",
+            "produccionPrimerSegundoCuatrimestre",
+            "produccionEstimadaPendiente",
+            "produccionEstimadaTercerCuatrimestre",
+            *PRODUCTION_MONTH_FIELDS.values(),
+            "produccionTotal",
+        },
+    }
+    aggregate_kinds = ["sum", "avg", "top"]
+    for module_name, field_names in numeric_fields.items():
+        for field_name in field_names:
+            key = _schema_field_key(module_name, field_name)
+            if key in generated:
+                generated[key]["aggregations"] = aggregate_kinds
+
+    for label, field_name in CLOSURE_FIELD_HINTS.items():
+        generated[_schema_field_key("cierre", field_name)] = {
+            "table": "dbo.CierresProduccionValores",
+            "sql_field": field_name,
+            "label": label,
+            "human_description": _default_field_description(label, "cierre"),
+            "synonyms": [label],
+            "aggregations": aggregate_kinds,
+        }
+
+    generated[_schema_field_key("estudios", "pipeline")] = {
+        "table": "dbo.Licitaciones",
+        "sql_field": "Plan2026, Plan2027, Plan2028, Plan2029",
+        "label": "pipeline",
+        "human_description": "Plan o pipeline previsto de licitaciones pendientes o potenciales.",
+        "synonyms": ["pipeline", "plan", "prevision", "potencial"],
+        "aggregations": aggregate_kinds,
+    }
+    generated[_schema_field_key("estudios", "backlog")] = {
+        "table": "dbo.Licitaciones",
+        "sql_field": "Produccion, Produccion2026, Produccion2027, Produccion2028, Produccion2029",
+        "label": "backlog",
+        "human_description": "Produccion prevista de licitaciones adjudicadas o completadas.",
+        "synonyms": ["backlog", "produccion adjudicada", "produccion prevista", "trabajo adjudicado"],
+        "aggregations": aggregate_kinds,
+    }
+    generated[_schema_field_key("produccion", "producciontotal")] = {
+        "table": "dbo.ProyectosProduccionSync",
+        "sql_field": "ProduccionTotal",
+        "label": "produccion total",
+        "human_description": "Produccion total acumulada de la obra en produccion.",
+        "synonyms": ["produccion total", "produccion acumulada", "total producido"],
+        "aggregations": aggregate_kinds,
+    }
+    generated[_schema_field_key("produccion", "cartera2027")] = {
+        "table": "dbo.CierresProduccionValores",
+        "sql_field": "cartera2027",
+        "label": "cartera 2027",
+        "human_description": "Cartera para 2027 reflejada en cierres.",
+        "synonyms": ["cartera 2027"],
+        "aggregations": aggregate_kinds,
+    }
+    generated[_schema_field_key("produccion", "cartera2028")] = {
+        "table": "dbo.CierresProduccionValores",
+        "sql_field": "cartera2028",
+        "label": "cartera 2028",
+        "human_description": "Cartera para 2028 reflejada en cierres.",
+        "synonyms": ["cartera 2028"],
+        "aggregations": aggregate_kinds,
+    }
+    return generated
+
+
+def _augment_business_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    merged = json.loads(json.dumps(schema or {}))
+    merged.setdefault("fields", {})
+    for key, generated_field in _build_generated_business_fields().items():
+        existing = merged["fields"].get(key) or {}
+        merged["fields"][key] = {
+            **generated_field,
+            **existing,
+            "synonyms": list(dict.fromkeys([*(generated_field.get("synonyms") or []), *(existing.get("synonyms") or [])])),
+            "aggregations": list(dict.fromkeys([*(generated_field.get("aggregations") or []), *(existing.get("aggregations") or [])])),
+        }
+    return merged
+
+
+BUSINESS_SCHEMA = _augment_business_schema(RAW_BUSINESS_SCHEMA)
+
+
+def _extract_year_suffixes(field_names: List[str], prefix: str) -> List[int]:
+    years: List[int] = []
+    for field_name in field_names:
+        match = re.fullmatch(rf"{re.escape(prefix)}(20\d{{2}})", field_name)
+        if match:
+            years.append(int(match.group(1)))
+    return sorted(dict.fromkeys(years))
+
+
+_ALL_FIELD_NAMES = list(FIELD_LABELS.keys())
+LICITACION_IMPORTE_YEARS = _extract_year_suffixes(_ALL_FIELD_NAMES, "importeContratado")
+LICITACION_PLAN_YEARS = _extract_year_suffixes(_ALL_FIELD_NAMES, "plan")
+LICITACION_PRODUCCION_YEARS = _extract_year_suffixes(_ALL_FIELD_NAMES, "produccion")
+PRODUCCION_LINKED_YEARS = _extract_year_suffixes(_ALL_FIELD_NAMES, "licitacionProduccion")
 
 STUDIES_AGGREGATE_KEYWORDS = {
     "pipeline": ("pipeline", "plan "),
@@ -431,6 +630,15 @@ def detect_business_route(question: str) -> str | None:
         return "business_licitaciones"
     if explicit_scope == "produccion":
         return "business_produccion"
+    reference = _extract_reference(question, text)
+    if reference:
+        reference_module = _detect_reference_module(reference)
+        if reference_module == "estudios":
+            return "business_licitaciones"
+        if reference_module == "produccion":
+            return "business_produccion"
+        if re.fullmatch(r"\d{5}", reference):
+            return "business_produccion"
 
     if any(hint in text for hint in ("control de produccion", "cierre", "cartera", "rentabilidad", "produccion estimada", "produccion marzo", "produccion abril")):
         return "business_produccion"
@@ -483,13 +691,16 @@ def answer_business_question(
         }, _business_trace(path="auth", module="", route=route, parsed=None, outcome="auth_required"))
 
     if appregenera_sql_available():
-        sql_result = _answer_business_question_sql(
-            question,
-            preferred_route=preferred_route,
-            history=history or [],
-        )
-        if sql_result:
-            return sql_result
+        try:
+            sql_result = _answer_business_question_sql(
+                question,
+                preferred_route=preferred_route,
+                history=history or [],
+            )
+            if sql_result:
+                return sql_result
+        except Exception:
+            logger.exception("Fallo en consulta SQL de AppRegenera; se intentara fallback HTTP")
 
     return _answer_business_question_http(
         question,
@@ -578,9 +789,18 @@ def _answer_yearly_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: 
     if metric not in {"pipeline", "importecontratado", "produccion"}:
         return None
 
+    if metric == "pipeline":
+        years_to_query = LICITACION_PLAN_YEARS
+    elif metric == "importecontratado":
+        years_to_query = LICITACION_IMPORTE_YEARS
+    else:
+        years_to_query = LICITACION_PRODUCCION_YEARS or LICITACION_PLAN_YEARS
+    if not years_to_query:
+        return None
+
     values: List[str] = []
     is_zero_value = True
-    for year in (2026, 2027, 2028, 2029):
+    for year in years_to_query:
         rows = sql_query_licitaciones_aggregate(
             select_field=metric,
             agg="sum",
@@ -1338,7 +1558,7 @@ def _detect_aggregate_metric(text: str, fields: List[str], *, module: str, year:
                 return metric
         if any(token in text for token in ("importe medio", "importe promedio", "media de importe", "promedio de importe")):
             return "importecontratado"
-        if year in {2026, 2027, 2028, 2029} and any(field.startswith("importeContratado") for field in fields):
+        if year and any(field.startswith("importeContratado") for field in fields):
             return "importecontratado"
         return None
     if module == "produccion":
@@ -1453,7 +1673,7 @@ def _build_source_info_response(parsed: Dict[str, Any], *, module: str, route: s
     source_name = "Estudios" if module == "estudios" else "Produccion"
     reference = parsed.get("reference")
     fields = parsed.get("fields") or []
-    fields_text = ", ".join(FIELD_LABELS.get(field, field) for field in fields[:4]) or "el dato consultado"
+    fields_text = ", ".join(_field_label(field) for field in fields[:4]) or "el dato consultado"
     ref_text = f" para {reference}" if reference else ""
     return {
         "response": f"Este dato lo estoy consultando desde {source_name}{ref_text}. La pregunta se ha interpretado sobre {fields_text}.",
@@ -1490,18 +1710,18 @@ def _detect_fields(
 
     if "pipeline" in text or "plan " in text:
         if per_year:
-            year_fields = [f"plan{item}" for item in years if item in {2026, 2027, 2028, 2029}]
-            fields.extend(year_fields or ["plan2026", "plan2027", "plan2028", "plan2029"])
-        elif year in {2026, 2027, 2028, 2029}:
+            year_fields = [f"plan{item}" for item in years]
+            fields.extend(year_fields or [f"plan{item}" for item in LICITACION_PLAN_YEARS])
+        elif year:
             fields.append(f"plan{year}")
         else:
-            fields.append("plan2026")
+            fields.append(f"plan{LICITACION_PLAN_YEARS[0]}") if LICITACION_PLAN_YEARS else fields.append("plan2026")
 
     if "backlog" in text:
         if per_year:
-            year_fields = [f"produccion{item}" for item in years if item in {2025, 2026, 2027, 2028, 2029}]
-            fields.extend(year_fields or ["produccion2026", "produccion2027", "produccion2028", "produccion2029"])
-        elif year in {2026, 2027, 2028, 2029}:
+            year_fields = [f"produccion{item}" for item in years]
+            fields.extend(year_fields or [f"produccion{item}" for item in LICITACION_PRODUCCION_YEARS])
+        elif year:
             fields.append(f"produccion{year}")
         else:
             fields.append("produccion")
@@ -1509,9 +1729,9 @@ def _detect_fields(
     if re.search(r"\bimporte\b", text) or "importe contratado" in text or "importe adjudicado" in text:
         if module == "estudios":
             if per_year:
-                year_fields = [f"importeContratado{item}" for item in years if item in {2025, 2026, 2027, 2028, 2029}]
-                fields.extend(year_fields or ["importeContratado2026", "importeContratado2027", "importeContratado2028", "importeContratado2029"])
-            elif year in {2026, 2027, 2028, 2029} and not cuatrimestre and not month:
+                year_fields = [f"importeContratado{item}" for item in years]
+                fields.extend(year_fields or [f"importeContratado{item}" for item in LICITACION_IMPORTE_YEARS])
+            elif year and not cuatrimestre and not month:
                 fields.append(f"importeContratado{year}")
             elif any(token in text for token in ("previo", "anteriores", "anterior")):
                 fields.append("importeContratadoPrevio")
@@ -1524,9 +1744,9 @@ def _detect_fields(
     if "produccion" in production_metric_text and "backlog" not in text:
         if module == "estudios":
             if per_year:
-                year_fields = [f"produccion{item}" for item in years if item in {2025, 2026, 2027, 2028, 2029}]
-                fields.extend(year_fields or ["produccion2026", "produccion2027", "produccion2028", "produccion2029"])
-            elif year in {2026, 2027, 2028, 2029} and not cuatrimestre and not month:
+                year_fields = [f"produccion{item}" for item in years]
+                fields.extend(year_fields or [f"produccion{item}" for item in LICITACION_PRODUCCION_YEARS])
+            elif year and not cuatrimestre and not month:
                 fields.append(f"produccion{year}")
             elif any(token in text for token in ("previa", "previo", "anteriores", "anterior")):
                 fields.append("produccionPrevio")
@@ -1536,12 +1756,8 @@ def _detect_fields(
             if "cierre" in text:
                 fields.append("cierre")
             elif per_year:
-                fields.extend([
-                    "licitacionProduccion2026",
-                    "licitacionProduccion2027",
-                    "licitacionProduccion2028",
-                    "licitacionProduccion2029",
-                ])
+                year_fields = [f"licitacionProduccion{item}" for item in years]
+                fields.extend(year_fields or [f"licitacionProduccion{item}" for item in PRODUCCION_LINKED_YEARS])
             elif "total" in text:
                 fields.append("produccionTotal")
             elif per_month:
@@ -1569,7 +1785,8 @@ def _detect_fields(
 
     field_specs = LICITACION_FIELD_SPECS if module == "estudios" else PRODUCCION_FIELD_SPECS
     for canonical, _, aliases in field_specs:
-        for alias in aliases:
+        schema_aliases = _schema_field_synonyms(module, canonical)
+        for alias in dict.fromkeys((*aliases, *schema_aliases)):
             haystack = text_without_type_client if alias == "cliente" and module == "produccion" else text
             if _alias_in_text(haystack, alias) and canonical not in fields:
                 fields.append(canonical)
@@ -1613,6 +1830,23 @@ def _dedupe(values: List[str]) -> List[str]:
             seen.add(value)
             ordered.append(value)
     return ordered
+
+
+def _field_label(field_name: str) -> str:
+    label = FIELD_LABELS.get(field_name)
+    if label:
+        return label
+    match = re.fullmatch(r"(importeContratado|produccion|plan|licitacionProduccion)(20\d{2})", field_name or "")
+    if match:
+        base, year = match.groups()
+        base_labels = {
+            "importeContratado": "importe contratado",
+            "produccion": "produccion",
+            "plan": "pipeline",
+            "licitacionProduccion": "produccion",
+        }
+        return f"{base_labels.get(base, base)} {year}"
+    return field_name
 
 
 def _pick_best_licitacion_match(matches: List[Dict[str, Any]], reference: str) -> Dict[str, Any] | str | None:
@@ -1988,11 +2222,11 @@ def _format_business_response(result: Dict[str, Any], *, module: str, parsed: Di
 
     if len(relevant_fields) == 1:
         item = relevant_fields[0]
-        label = FIELD_LABELS.get(item["key"], item["key"])
+        label = _field_label(item["key"])
         return f"{prefix} {code or ''} {name}{period_text}: {label} = {_format_value(item.get('value'))}."
 
     summary = "; ".join(
-        f"{FIELD_LABELS.get(item['key'], item['key'])} = {_format_value(item.get('value'))}"
+        f"{_field_label(item['key'])} = {_format_value(item.get('value'))}"
         for item in relevant_fields
     )
     return f"{prefix} {code or ''} {name}{period_text}: {summary}."
@@ -2040,7 +2274,7 @@ def _build_no_data_message(match: Dict[str, Any], *, module: str, parsed: Dict[s
     if parsed.get("month") and module == "produccion":
         return f"{prefix} {code} {name}{period_text}: no hay dato cargado para ese mes en AppRegenera."
 
-    requested_labels = [FIELD_LABELS.get(field, field) for field in parsed.get("fields") or []]
+    requested_labels = [_field_label(field) for field in parsed.get("fields") or []]
     labels_text = ", ".join(requested_labels[:4]) if requested_labels else "el dato solicitado"
     return f"{prefix} {code} {name}{period_text}: no hay datos disponibles para {labels_text}."
 
@@ -2135,8 +2369,10 @@ def _detect_reference_module(reference: str | None) -> str | None:
     if not reference:
         return None
     normalized = _normalize(reference).replace(" ", "-")
-    if normalized.startswith("est-"):
+    if normalized.startswith("est-") or re.fullmatch(r"[a-z]{2,6}-\d{1,5}-20\d{2}", normalized):
         return "estudios"
+    if re.fullmatch(r"\d{5}", normalized):
+        return "produccion"
     return None
 
 
