@@ -1563,6 +1563,17 @@ def _filename_tokens(source_name: str) -> set:
     return tokens
 
 
+def _source_pdf_path(source_name: str) -> str:
+    """Extrae la ruta real del PDF desde un source enriquecido con pagina/snippet."""
+    clean = (source_name or "").strip().replace("\\", "/")
+    if not clean:
+        return ""
+    pdf_match = re.search(r"(?i)^(.+?\.pdf)\b", clean)
+    if pdf_match:
+        return pdf_match.group(1)
+    return clean.split(" (", 1)[0].strip()
+
+
 def _domain_from_source(source_name: str) -> str:
     tokens = _filename_tokens(source_name)
     normalized_full = _normalize_text((source_name or "").replace("\\", "/").replace("/", " "))
@@ -1758,7 +1769,7 @@ def _document_variant_from_source(source_name: str) -> str:
     """
     if not source_name:
         return ""
-    tokens = _filename_tokens(source_name)
+    tokens = _filename_tokens(_source_pdf_path(source_name))
     for cfg in _DOMAIN_CFG.get("domains", {}).values():
         for variant in cfg.get("document_variants", []):
             patterns = {_normalize_text(p) for p in variant.get("filename_patterns", [])}

@@ -541,6 +541,21 @@ VARIANT_SOURCE_CASES = [
     ("rite/RITE-desconocido.pdf", ""),
 ]
 
+VARIANT_ENRICHED_SOURCE_CASES = [
+    (
+        "rite/RITE-BOE-A-2007-15820-consolidado.pdf (pag. 5, pag. doc 2021)",
+        "consolidado",
+    ),
+    (
+        "rite/RITE-BOE-A-2007-15820-consolidado.pdf (pag. 11, Artículo 12. Eficiencia energética.)",
+        "consolidado",
+    ),
+    (
+        "rite/RITE-2021-BOE-A-2021-4572.pdf (pag. 3, pag. doc 2021)",
+        "2021",
+    ),
+]
+
 
 def test_document_variant_from_rite_sources():
     """Las variantes del dominio RITE se derivan correctamente del nombre de fichero."""
@@ -564,6 +579,19 @@ def test_document_variant_in_profile_metadata():
 
     profile_bt = _document_profile_metadata("baja_tension/BOE-326_REBT.pdf")
     assert profile_bt["document_variant"] == ""
+
+
+def test_document_variant_ignores_page_snippet_suffixes():
+    """La variante debe salir del PDF real, no del texto añadido al source."""
+    failures = []
+    for source, expected in VARIANT_ENRICHED_SOURCE_CASES:
+        actual = _document_variant_from_source(source)
+        if actual != expected:
+            failures.append(f"  {source!r}: esperado={expected!r}, obtenido={actual!r}")
+    assert not failures, (
+        f"\nVariante incorrecta en {len(failures)} source(s) enriquecidos:\n"
+        + "\n".join(failures)
+    )
 
 
 # ---------------------------------------------------------------------------
