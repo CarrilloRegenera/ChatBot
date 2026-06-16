@@ -3181,6 +3181,8 @@ def _search_documents_detailed_chroma(
         structural_selection_items = [item for item in selection_items if _matches_structural_focus(item)]
         if structural_selection_items:
             selection_items = structural_selection_items
+    layer_counts: Dict[str, int] = {}
+    max_per_layer = max(n_results - 1, 3)
     for item in selection_items:
         _, doc_id, _, metadata = item
         source_name = metadata.get("source", "unknown")
@@ -3191,10 +3193,15 @@ def _search_documents_detailed_chroma(
             continue
         if section_counts.get((source_name, section_name), 0) >= section_cap:
             continue
+        chunk_layer = str(metadata.get("document_layer", "") or "")
+        if chunk_layer and layer_counts.get(chunk_layer, 0) >= max_per_layer:
+            continue
         selected.append(item)
         selected_ids.add(doc_id)
         source_counts[source_name] = source_counts.get(source_name, 0) + 1
         section_counts[(source_name, section_name)] = section_counts.get((source_name, section_name), 0) + 1
+        if chunk_layer:
+            layer_counts[chunk_layer] = layer_counts.get(chunk_layer, 0) + 1
         if len(selected) >= n_results:
             break
 
