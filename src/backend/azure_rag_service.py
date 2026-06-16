@@ -46,6 +46,7 @@ from rag_service import (
     _encode_query,
     _EF_VERSION,
     _expected_domains,
+    _expected_document_variants,
     _decode_chunk_corruption,
     _extract_text_blocks,
     _chunk_profile_metadata,
@@ -437,7 +438,47 @@ def sync_documents_from_blob() -> Dict[str, int]:
     return {"added": added, "updated": updated, "removed": removed, "chunks_indexed": chunks_indexed}
 
 
-def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
+_VARIANT_BOOST = 0.15
+_ARTICLE_REF_BOOST = 0.12
+_IT_SECTION_REF_BOOST = 0.10
+
+
+def _apply_hint_boosts(
+    candidates: list,
+    expected_variants: List[str],
+    hint_article_refs: List[str] | None,
+    hint_it_section_refs: List[str] | None,
+) -> None:
+    if not expected_variants and not hint_article_refs and not hint_it_section_refs:
+        return
+    variant_set = {_normalize_text(v) for v in expected_variants} if expected_variants else set()
+    article_set = {_normalize_text(r) for r in hint_article_refs} if hint_article_refs else set()
+    it_set = {_normalize_text(r) for r in hint_it_section_refs} if hint_it_section_refs else set()
+    for item in candidates:
+        boost = 0.0
+        if variant_set:
+            doc_variant = _normalize_text(str(item.get("document_variant", "") or ""))
+            if doc_variant and doc_variant in variant_set:
+                boost += _VARIANT_BOOST
+        if article_set:
+            item_articles = _normalize_text(str(item.get("article_refs", "") or ""))
+            if item_articles and any(ref in item_articles for ref in article_set):
+                boost += _ARTICLE_REF_BOOST
+        if it_set:
+            item_it = _normalize_text(str(item.get("it_section_refs", "") or ""))
+            if item_it and any(ref in item_it for ref in it_set):
+                boost += _IT_SECTION_REF_BOOST
+        item["_hint_boost"] = boost
+
+
+def search_documents_detailed_azure(
+    question: str,
+    n_results: int = TOP_K_RESULTS,
+    hint_domains: List[str] | None = None,
+    hint_document_variants: List[str] | None = None,
+    hint_article_refs: List[str] | None = None,
+    hint_it_section_refs: List[str] | None = None,
+) -> Tuple[str, List[str], Dict[str, object]]:
     _require_azure_config()
     if not question.strip():
         return "", [], {"selected_count": 0, "source_diversity": 0, "backend": "azure_search"}
@@ -451,6 +492,13 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
     )
     clean_question = _clean_question(question)
     domains = _expected_domains(clean_question)
+    if not domains and hint_domains:
+        domains = [d for d in hint_domains if d]
+        logger.debug("hint_domains aplicados como fallback: %s", domains)
+    expected_variants = _expected_document_variants(clean_question, domains) if domains else []
+    if not expected_variants and hint_document_variants:
+        expected_variants = [v for v in hint_document_variants if v]
+        logger.debug("hint_document_variants aplicados como fallback: %s", expected_variants)
     domain_filter = (
         "(" + " or ".join(f"domain eq '{_odata_escape(d)}'" for d in domains) + ")"
         if domains else None
@@ -504,6 +552,9 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         )
 
     candidates = list(results)
+
+    _apply_hint_boosts(candidates, expected_variants, hint_article_refs, hint_it_section_refs)
+
     if ENABLE_RERANK and _st_model is not None and candidates:
         query_emb = _st_model.encode(clean_question, convert_to_tensor=True)
         candidate_texts = [
@@ -512,6 +563,8 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         ]
         candidate_embs = _st_model.encode(candidate_texts, convert_to_tensor=True)
         scores = cos_sim(query_emb, candidate_embs)[0].tolist()
+        for i, score in enumerate(scores):
+            scores[i] = score + candidates[i].get("_hint_boost", 0.0)
         candidates = [
             item for _, item in sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
         ]
@@ -577,7 +630,8 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
             for item in selected
             if item.get("regulation")
         }),
-        "expected_domains": [],
+        "expected_domains": domains or [],
+        "expected_document_variants": expected_variants or [],
         "domain_match_ratio": 1.0,
         "broad_query": False,
         "table_selected_chunks": table_selected_chunks,

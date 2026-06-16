@@ -3583,7 +3583,14 @@ def search_documents_detailed(
         return cached
     if RAG_BACKEND == "azure_search":
         from azure_rag_service import search_documents_detailed_azure
-        result = search_documents_detailed_azure(question, n_results=n_results)
+        result = search_documents_detailed_azure(
+            question,
+            n_results=n_results,
+            hint_domains=hint_domains,
+            hint_document_variants=hint_document_variants,
+            hint_article_refs=hint_article_refs,
+            hint_it_section_refs=hint_it_section_refs,
+        )
     else:
         result = _search_documents_detailed_chroma(
             question,
