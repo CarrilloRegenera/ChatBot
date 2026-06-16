@@ -16,6 +16,10 @@ from azure.search.documents.indexes.models import (
     SearchFieldDataType,
     SearchIndex,
     SearchableField,
+    SemanticConfiguration,
+    SemanticField,
+    SemanticPrioritizedFields,
+    SemanticSearch,
     SimpleField,
     VectorSearch,
     VectorSearchProfile,
@@ -35,17 +39,22 @@ from config import (
     BLOB_STORAGE_CONNECTION_STRING,
     ENABLE_RERANK,
     MAX_CHUNKS_PER_SOURCE,
+    RERANK_BM25_WEIGHT,
+    RERANK_WEIGHT,
+    STOPWORDS,
     TOP_K_RESULTS,
 )
 from rag_service import (
     OCR_MIN_TEXT_CHARS_PER_PAGE,
     RERANK_MODEL,
+    _bm25_score,
     _clean_question,
     _embedding_fn,
     _encode_passage,
     _encode_query,
     _EF_VERSION,
     _expected_domains,
+    _expected_document_variants,
     _decode_chunk_corruption,
     _extract_text_blocks,
     _chunk_profile_metadata,
@@ -58,10 +67,12 @@ from rag_service import (
     _source_domain_key,
     _split_text,
     _st_model,
+    _tokenize,
     _looks_like_table_block,
 )
 
 _VECTOR_DIMS = 384  # multilingual-e5-small
+_SEMANTIC_CONFIG_NAME = "semantic-config"
 
 
 logger = logging.getLogger(__name__)
@@ -171,6 +182,7 @@ def _build_index_fields() -> List:
         SearchableField(name="table_hint", type=SearchFieldDataType.String),
         SimpleField(name="table_signal_count", type=SearchFieldDataType.Int32),
         SimpleField(name="file_hash", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="document_layer", type=SearchFieldDataType.String, filterable=True, facetable=True),
         # Campos enriquecidos (schema v4+)
         SearchableField(name="itc_refs", type=SearchFieldDataType.String, filterable=True),
         SearchableField(name="exact_refs", type=SearchFieldDataType.String, filterable=True),
@@ -179,6 +191,24 @@ def _build_index_fields() -> List:
         SearchableField(name="article_ref", type=SearchFieldDataType.String, filterable=True),
         SimpleField(name="section_level", type=SearchFieldDataType.Int32, filterable=True),
     ]
+
+
+def _build_semantic_config() -> SemanticConfiguration:
+    return SemanticConfiguration(
+        name=_SEMANTIC_CONFIG_NAME,
+        prioritized_fields=SemanticPrioritizedFields(
+            content_fields=[SemanticField(field_name="content")],
+            title_fields=[SemanticField(field_name="section")],
+            keywords_fields=[SemanticField(field_name="topics")],
+        ),
+    )
+
+
+def _build_semantic_search() -> SemanticSearch:
+    return SemanticSearch(
+        default_configuration_name=_SEMANTIC_CONFIG_NAME,
+        configurations=[_build_semantic_config()],
+    )
 
 
 def ensure_azure_index() -> None:
@@ -209,6 +239,14 @@ def ensure_azure_index() -> None:
             )
         else:
             logger.info("Índice '%s': schema ya actualizado", AZURE_SEARCH_INDEX_NAME)
+        if not existing.semantic_search:
+            existing.semantic_search = _build_semantic_search()
+            index_client.create_or_update_index(existing)
+            logger.info("Índice '%s': semantic configuration añadida", AZURE_SEARCH_INDEX_NAME)
+        elif not any(c.name == _SEMANTIC_CONFIG_NAME for c in (existing.semantic_search.configurations or [])):
+            existing.semantic_search.configurations.append(_build_semantic_config())
+            index_client.create_or_update_index(existing)
+            logger.info("Índice '%s': semantic configuration '%s' añadida", AZURE_SEARCH_INDEX_NAME, _SEMANTIC_CONFIG_NAME)
     except ResourceNotFoundError:
         vector_search = VectorSearch(
             algorithms=[HnswAlgorithmConfiguration(name="hnsw-config")],
@@ -218,9 +256,10 @@ def ensure_azure_index() -> None:
             name=AZURE_SEARCH_INDEX_NAME,
             fields=all_fields,
             vector_search=vector_search,
+            semantic_search=_build_semantic_search(),
         )
         index_client.create_index(index)
-        logger.info("Índice '%s' creado desde cero", AZURE_SEARCH_INDEX_NAME)
+        logger.info("Índice '%s' creado desde cero con semantic config", AZURE_SEARCH_INDEX_NAME)
 
 
 def _ensure_index_schema_for_search() -> bool:
@@ -463,7 +502,68 @@ def sync_documents_from_blob() -> Dict[str, int]:
     return {"added": added, "updated": updated, "removed": removed, "chunks_indexed": chunks_indexed}
 
 
-def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULTS) -> Tuple[str, List[str], Dict[str, object]]:
+_VARIANT_BOOST = 0.15
+_ARTICLE_REF_BOOST = 0.12
+_IT_SECTION_REF_BOOST = 0.10
+_DOMAIN_MATCH_BOOST = 12.0
+_DOMAIN_MISMATCH_PENALTY = -30.0
+
+_LAYER_BOOSTS = {
+    "normativa_oficial": 8.0,
+    "guia_oficial": 4.0,
+    "manual_fabricante": 0.0,
+    "pendiente": -5.0,
+}
+
+
+def _domain_boost(item: dict, expected_domains: set) -> float:
+    boost = 0.0
+    if expected_domains:
+        item_domain = _normalize_text(str(item.get("domain") or item.get("category") or ""))
+        if item_domain:
+            boost += _DOMAIN_MATCH_BOOST if item_domain in expected_domains else _DOMAIN_MISMATCH_PENALTY
+    layer = _normalize_text(str(item.get("document_layer", "") or ""))
+    if layer:
+        boost += _LAYER_BOOSTS.get(layer, 0.0)
+    return boost
+
+
+def _apply_hint_boosts(
+    candidates: list,
+    expected_variants: List[str],
+    hint_article_refs: List[str] | None,
+    hint_it_section_refs: List[str] | None,
+) -> None:
+    if not expected_variants and not hint_article_refs and not hint_it_section_refs:
+        return
+    variant_set = {_normalize_text(v) for v in expected_variants} if expected_variants else set()
+    article_set = {_normalize_text(r) for r in hint_article_refs} if hint_article_refs else set()
+    it_set = {_normalize_text(r) for r in hint_it_section_refs} if hint_it_section_refs else set()
+    for item in candidates:
+        boost = 0.0
+        if variant_set:
+            doc_variant = _normalize_text(str(item.get("document_variant", "") or ""))
+            if doc_variant and doc_variant in variant_set:
+                boost += _VARIANT_BOOST
+        if article_set:
+            item_articles = _normalize_text(str(item.get("article_refs", "") or ""))
+            if item_articles and any(ref in item_articles for ref in article_set):
+                boost += _ARTICLE_REF_BOOST
+        if it_set:
+            item_it = _normalize_text(str(item.get("it_section_refs", "") or ""))
+            if item_it and any(ref in item_it for ref in it_set):
+                boost += _IT_SECTION_REF_BOOST
+        item["_hint_boost"] = boost
+
+
+def search_documents_detailed_azure(
+    question: str,
+    n_results: int = TOP_K_RESULTS,
+    hint_domains: List[str] | None = None,
+    hint_document_variants: List[str] | None = None,
+    hint_article_refs: List[str] | None = None,
+    hint_it_section_refs: List[str] | None = None,
+) -> Tuple[str, List[str], Dict[str, object]]:
     _require_azure_config()
     if not question.strip():
         return "", [], {"selected_count": 0, "source_diversity": 0, "backend": "azure_search"}
@@ -477,8 +577,14 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
     )
     clean_question = _clean_question(question)
     domains = _expected_domains(clean_question)
+    if not domains and hint_domains:
+        domains = [d for d in hint_domains if d]
+        logger.debug("hint_domains aplicados como fallback: %s", domains)
     search_text = _compose_search_text(question, clean_question, domains)
     expected_document_variants = _expected_document_variants(clean_question, domains)
+    if not expected_document_variants and hint_document_variants:
+        expected_document_variants = [v for v in hint_document_variants if v]
+        logger.debug("hint_document_variants aplicados como fallback: %s", expected_document_variants)
     domain_filter = (
         "(" + " or ".join(f"domain eq '{_odata_escape(d)}'" for d in domains) + ")"
         if domains else None
@@ -500,6 +606,7 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
     enriched_select = legacy_select + [
         "department",
         "document_type",
+        "document_layer",
         "regulation",
         "document_variant",
         "section_type",
@@ -510,19 +617,24 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         "article_refs",
         "it_section_refs",
     ]
-    select_fields = enriched_select if _ensure_index_schema_for_search() else legacy_select
+    semantic_ok = _ensure_index_schema_for_search()
+    select_fields = enriched_select if semantic_ok else legacy_select
     try:
-        results = _search_client().search(
-            search_text=search_text,
-            vector_queries=[vector_query],
-            filter=domain_filter,
-            top=max(n_results * 2, 12),
-            select=select_fields,
-        )
+        search_kwargs = {
+            "search_text": search_text,
+            "vector_queries": [vector_query],
+            "filter": domain_filter,
+            "top": max(n_results * 2, 12),
+            "select": select_fields,
+        }
+        if semantic_ok:
+            search_kwargs["query_type"] = "semantic"
+            search_kwargs["semantic_configuration_name"] = _SEMANTIC_CONFIG_NAME
+        results = _search_client().search(**search_kwargs)
     except HttpResponseError:
         if select_fields == legacy_select:
             raise
-        logger.warning("Azure Search no acepta campos enriquecidos; reintentando con select legacy")
+        logger.warning("Azure Search: fallback a select legacy sin semantic ranker")
         results = _search_client().search(
             search_text=search_text,
             vector_queries=[vector_query],
@@ -532,17 +644,38 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         )
 
     candidates = list(results)
+
+    _apply_hint_boosts(candidates, expected_document_variants, hint_article_refs, hint_it_section_refs)
+
+    query_tokens = {t for t in _tokenize(clean_question) if t not in STOPWORDS and len(t) >= 4}
+    candidate_texts = [
+        _decode_chunk_corruption(item.get("content", ""), item.get("source_path", ""))
+        for item in candidates
+    ]
+    avg_doc_len = sum(len(t.split()) for t in candidate_texts) / max(len(candidate_texts), 1)
+    domain_set = set(domains) if domains else set()
+
     if ENABLE_RERANK and _st_model is not None and candidates:
         query_emb = _st_model.encode(clean_question, convert_to_tensor=True)
-        candidate_texts = [
-            _decode_chunk_corruption(item.get("content", ""), item.get("source_path", ""))
-            for item in candidates
-        ]
         candidate_embs = _st_model.encode(candidate_texts, convert_to_tensor=True)
-        scores = cos_sim(query_emb, candidate_embs)[0].tolist()
-        candidates = [
-            item for _, item in sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        ]
+        sem_scores = cos_sim(query_emb, candidate_embs)[0].tolist()
+        scored = []
+        for i, item in enumerate(candidates):
+            bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
+            hint_boost = item.get("_hint_boost", 0.0)
+            domain_boost = _domain_boost(item, domain_set)
+            final = (float(sem_scores[i]) * RERANK_WEIGHT) + (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost
+            scored.append((final, item))
+        candidates = [item for _, item in sorted(scored, key=lambda x: x[0], reverse=True)]
+    elif candidates:
+        scored = []
+        for i, item in enumerate(candidates):
+            bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
+            hint_boost = item.get("_hint_boost", 0.0)
+            domain_boost = _domain_boost(item, domain_set)
+            final = (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost
+            scored.append((final, item))
+        candidates = [item for _, item in sorted(scored, key=lambda x: x[0], reverse=True)]
 
     if candidates:
         phrase_queries = _query_phrase_queries(clean_question)
@@ -558,12 +691,19 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
 
     selected = []
     source_counts: Dict[str, int] = {}
+    layer_counts: Dict[str, int] = {}
+    max_per_layer = max(n_results - 1, 3)
     for item in candidates:
         source = item.get("source_path", "unknown")
         if source_counts.get(source, 0) >= MAX_CHUNKS_PER_SOURCE:
             continue
+        layer = str(item.get("document_layer", "") or "")
+        if layer and layer_counts.get(layer, 0) >= max_per_layer:
+            continue
         selected.append(item)
         source_counts[source] = source_counts.get(source, 0) + 1
+        if layer:
+            layer_counts[layer] = layer_counts.get(layer, 0) + 1
         if len(selected) >= n_results:
             break
 
@@ -617,7 +757,8 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
             for item in selected
             if item.get("regulation")
         }),
-        "expected_domains": [],
+        "expected_domains": domains or [],
+        "expected_document_variants": expected_variants or [],
         "domain_match_ratio": 1.0,
         "broad_query": False,
         "table_selected_chunks": table_selected_chunks,

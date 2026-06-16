@@ -409,6 +409,7 @@ DOMAIN_TAXONOMY: dict = {
     name: {
         "department": str(cfg.get("department", "general") or "general").strip() or "general",
         "document_type": str(cfg.get("document_type", "documento") or "documento").strip() or "documento",
+        "document_layer": str(cfg.get("document_layer", "") or "").strip(),
         "confidentiality": str(cfg.get("confidentiality", "internal") or "internal").strip() or "internal",
     }
     for name, cfg in _DOMAIN_CFG["domains"].items()
@@ -1570,6 +1571,7 @@ def _taxonomy_for_domain(domain: str) -> Dict[str, str]:
         {
             "department": "general",
             "document_type": "documento",
+            "document_layer": "",
             "confidentiality": "internal",
         },
     )
@@ -1579,7 +1581,7 @@ def _source_taxonomy(source_name: str, metadata: Dict[str, object] | None = None
     domain = _source_domain_key(source_name, metadata)
     base = dict(_taxonomy_for_domain(domain))
     if metadata:
-        for key in ("department", "document_type", "confidentiality"):
+        for key in ("department", "document_type", "document_layer", "confidentiality"):
             explicit = str(metadata.get(key, "") or "").strip()
             if explicit:
                 base[key] = explicit
@@ -1611,7 +1613,7 @@ def _document_profile_metadata(
     """
     resolved_domain = domain or _source_domain_key(source_name, metadata)
     taxonomy = _source_taxonomy(source_name, {**(metadata or {}), "domain": resolved_domain})
-    return {
+    result = {
         "department": taxonomy["department"],
         "domain": resolved_domain,
         "category": resolved_domain,
@@ -1620,6 +1622,10 @@ def _document_profile_metadata(
         "regulation": _regulation_key(source_name, resolved_domain),
         "document_variant": _document_variant_from_source(source_name),
     }
+    layer = taxonomy.get("document_layer", "")
+    if layer:
+        result["document_layer"] = layer
+    return result
 
 
 def _chunk_profile_metadata(
@@ -2820,6 +2826,13 @@ def _search_documents_detailed_chroma(
                 score += 12
             else:
                 score -= 60 if query_profile["article_refs"] else 30
+        chunk_layer = str(metadata.get("document_layer", "") or "")
+        if chunk_layer == "normativa_oficial":
+            score += 8
+        elif chunk_layer == "guia_oficial":
+            score += 4
+        elif chunk_layer == "pendiente":
+            score -= 5
         if expected_document_variants:
             source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
             if source_document_variant and source_document_variant in expected_document_variants:
@@ -2900,6 +2913,13 @@ def _search_documents_detailed_chroma(
                     lexical_score += 12
                 else:
                     lexical_score -= 60 if query_profile["article_refs"] else 30
+            lex_chunk_layer = str(metadata.get("document_layer", "") or "")
+            if lex_chunk_layer == "normativa_oficial":
+                lexical_score += 8
+            elif lex_chunk_layer == "guia_oficial":
+                lexical_score += 4
+            elif lex_chunk_layer == "pendiente":
+                lexical_score -= 5
             inferred_itcs = _inferred_itc_refs(metadata, document)
             try:
                 metadata_page = int(metadata.get("page", 0) or 0)
@@ -3181,6 +3201,8 @@ def _search_documents_detailed_chroma(
         structural_selection_items = [item for item in selection_items if _matches_structural_focus(item)]
         if structural_selection_items:
             selection_items = structural_selection_items
+    layer_counts: Dict[str, int] = {}
+    max_per_layer = max(n_results - 1, 3)
     for item in selection_items:
         _, doc_id, _, metadata = item
         source_name = metadata.get("source", "unknown")
@@ -3191,10 +3213,15 @@ def _search_documents_detailed_chroma(
             continue
         if section_counts.get((source_name, section_name), 0) >= section_cap:
             continue
+        chunk_layer = str(metadata.get("document_layer", "") or "")
+        if chunk_layer and layer_counts.get(chunk_layer, 0) >= max_per_layer:
+            continue
         selected.append(item)
         selected_ids.add(doc_id)
         source_counts[source_name] = source_counts.get(source_name, 0) + 1
         section_counts[(source_name, section_name)] = section_counts.get((source_name, section_name), 0) + 1
+        if chunk_layer:
+            layer_counts[chunk_layer] = layer_counts.get(chunk_layer, 0) + 1
         if len(selected) >= n_results:
             break
 
@@ -3603,7 +3630,14 @@ def search_documents_detailed(
         return cached
     if RAG_BACKEND == "azure_search":
         from azure_rag_service import search_documents_detailed_azure
-        result = search_documents_detailed_azure(question, n_results=n_results)
+        result = search_documents_detailed_azure(
+            question,
+            n_results=n_results,
+            hint_domains=hint_domains,
+            hint_document_variants=hint_document_variants,
+            hint_article_refs=hint_article_refs,
+            hint_it_section_refs=hint_it_section_refs,
+        )
     else:
         result = _search_documents_detailed_chroma(
             question,

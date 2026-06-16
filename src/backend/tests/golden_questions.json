@@ -1,0 +1,222 @@
+[
+  {
+    "id": "rite_01",
+    "domain": "rite",
+    "question": "Segun el RITE cual es la periodicidad de limpieza de los condensadores",
+    "expected_domains": ["rite"],
+    "expected_variants": [],
+    "expected_phrase_queries": ["condensadores"],
+    "difficulty": "media",
+    "category": "temporal"
+  },
+  {
+    "id": "rite_02",
+    "domain": "rite",
+    "question": "Que indica la Tabla 3.1 del RITE sobre operaciones de mantenimiento",
+    "expected_domains": ["rite"],
+    "expected_variants": ["it3"],
+    "expected_phrase_queries": ["Tabla 3.1"],
+    "difficulty": "media",
+    "category": "table_lookup"
+  },
+  {
+    "id": "rite_03",
+    "domain": "rite",
+    "question": "Cual es la periodicidad de limpieza de los evaporadores segun el RITE IT3",
+    "expected_domains": ["rite"],
+    "expected_variants": ["it3"],
+    "expected_phrase_queries": ["evaporadores"],
+    "difficulty": "media",
+    "category": "temporal"
+  },
+  {
+    "id": "rite_04",
+    "domain": "rite",
+    "question": "Que requisitos establece el RITE 2021 para las inspecciones periodicas",
+    "expected_domains": ["rite"],
+    "expected_variants": ["2021"],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "procedure"
+  },
+  {
+    "id": "rite_05",
+    "domain": "rite",
+    "question": "Que establece el RITE consolidado sobre calderas de gas",
+    "expected_domains": ["rite"],
+    "expected_variants": ["consolidado"],
+    "expected_phrase_queries": ["calderas de gas"],
+    "difficulty": "media",
+    "category": "definition"
+  },
+  {
+    "id": "bt_01",
+    "domain": "baja_tension",
+    "question": "Que establece la ITC-BT-25 sobre circuitos minimos en viviendas",
+    "expected_domains": ["baja_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "definition"
+  },
+  {
+    "id": "bt_02",
+    "domain": "baja_tension",
+    "question": "Cual es la seccion minima del conductor neutro segun el REBT",
+    "expected_domains": ["baja_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "numeric_value"
+  },
+  {
+    "id": "bt_03",
+    "domain": "baja_tension",
+    "question": "Que diferencia hay entre electrificacion basica y elevada",
+    "expected_domains": ["baja_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": ["electrificacion basica"],
+    "difficulty": "media",
+    "category": "comparison"
+  },
+  {
+    "id": "bt_04",
+    "domain": "baja_tension",
+    "question": "Que dice el articulo 12 del REBT sobre documentacion",
+    "expected_domains": ["baja_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "facil",
+    "category": "definition"
+  },
+  {
+    "id": "bt_05",
+    "domain": "baja_tension",
+    "question": "Cuales son los sistemas de puesta a tierra segun el REBT",
+    "expected_domains": ["baja_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "list"
+  },
+  {
+    "id": "lat_01",
+    "domain": "alta_tension",
+    "question": "Que establece la ITC-LAT-07 sobre distancias de seguridad",
+    "expected_domains": ["alta_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "definition"
+  },
+  {
+    "id": "lat_02",
+    "domain": "alta_tension",
+    "question": "Cuales son las protecciones de personas segun la ITC-LAT-06",
+    "expected_domains": ["alta_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": ["proteccion de las personas"],
+    "difficulty": "media",
+    "category": "list"
+  },
+  {
+    "id": "lat_03",
+    "domain": "alta_tension",
+    "question": "Que requisitos tienen las lineas aereas de alta tension",
+    "expected_domains": ["alta_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "facil",
+    "category": "definition"
+  },
+  {
+    "id": "gt_01",
+    "domain": "guias_tecnicas",
+    "question": "Que dice la guia BT-40 sobre instalaciones generadoras de baja tension",
+    "expected_domains": ["guias_tecnicas", "baja_tension"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "definition"
+  },
+  {
+    "id": "gt_02",
+    "domain": "guias_tecnicas",
+    "question": "Que tipos de instalaciones generadoras clasifica la BT-40",
+    "expected_domains": ["guias_tecnicas"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "list"
+  },
+  {
+    "id": "gt_03",
+    "domain": "guias_tecnicas",
+    "question": "Que establece la UNE 12464-1 sobre iluminacion",
+    "expected_domains": ["guias_tecnicas"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "definition"
+  },
+  {
+    "id": "fv_01",
+    "domain": "fotovoltaica_om",
+    "question": "Cual es la periodicidad de limpieza de paneles fotovoltaicos",
+    "expected_domains": ["fotovoltaica_om"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "facil",
+    "category": "temporal"
+  },
+  {
+    "id": "fv_02",
+    "domain": "fotovoltaica_om",
+    "question": "Que mantenimiento preventivo requieren los inversores fotovoltaicos",
+    "expected_domains": ["fotovoltaica_om"],
+    "expected_variants": [],
+    "expected_phrase_queries": ["inversores"],
+    "difficulty": "media",
+    "category": "procedure"
+  },
+  {
+    "id": "fv_03",
+    "domain": "fotovoltaica_om",
+    "question": "Que operaciones de mantenimiento se hacen en las cajas de campo",
+    "expected_domains": ["fotovoltaica_om"],
+    "expected_variants": [],
+    "expected_phrase_queries": ["cajas de campo"],
+    "difficulty": "media",
+    "category": "procedure"
+  },
+  {
+    "id": "ge_01",
+    "domain": "grupos_electrogenos",
+    "question": "Que requisitos establece la ISO 8528 para respuesta transitoria de grupos electrogenos",
+    "expected_domains": ["grupos_electrogenos"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "definition"
+  },
+  {
+    "id": "ge_02",
+    "domain": "grupos_electrogenos",
+    "question": "Cual es el procedimiento de arranque de un grupo electrogeno",
+    "expected_domains": ["grupos_electrogenos"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "facil",
+    "category": "procedure"
+  },
+  {
+    "id": "ge_03",
+    "domain": "grupos_electrogenos",
+    "question": "Que operaciones de mantenimiento requiere un grupo electrogeno movil",
+    "expected_domains": ["grupos_electrogenos"],
+    "expected_variants": [],
+    "expected_phrase_queries": [],
+    "difficulty": "media",
+    "category": "procedure"
+  }
+]
