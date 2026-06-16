@@ -151,6 +151,7 @@ def _build_index_fields() -> List:
         SearchableField(name="table_hint", type=SearchFieldDataType.String),
         SimpleField(name="table_signal_count", type=SearchFieldDataType.Int32),
         SimpleField(name="file_hash", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="document_layer", type=SearchFieldDataType.String, filterable=True, facetable=True),
         # Campos enriquecidos (schema v4+)
         SearchableField(name="itc_refs", type=SearchFieldDataType.String, filterable=True),
         SearchableField(name="exact_refs", type=SearchFieldDataType.String, filterable=True),

@@ -409,6 +409,7 @@ DOMAIN_TAXONOMY: dict = {
     name: {
         "department": str(cfg.get("department", "general") or "general").strip() or "general",
         "document_type": str(cfg.get("document_type", "documento") or "documento").strip() or "documento",
+        "document_layer": str(cfg.get("document_layer", "") or "").strip(),
         "confidentiality": str(cfg.get("confidentiality", "internal") or "internal").strip() or "internal",
     }
     for name, cfg in _DOMAIN_CFG["domains"].items()
@@ -1559,6 +1560,7 @@ def _taxonomy_for_domain(domain: str) -> Dict[str, str]:
         {
             "department": "general",
             "document_type": "documento",
+            "document_layer": "",
             "confidentiality": "internal",
         },
     )
@@ -1568,7 +1570,7 @@ def _source_taxonomy(source_name: str, metadata: Dict[str, object] | None = None
     domain = _source_domain_key(source_name, metadata)
     base = dict(_taxonomy_for_domain(domain))
     if metadata:
-        for key in ("department", "document_type", "confidentiality"):
+        for key in ("department", "document_type", "document_layer", "confidentiality"):
             explicit = str(metadata.get(key, "") or "").strip()
             if explicit:
                 base[key] = explicit
@@ -1600,7 +1602,7 @@ def _document_profile_metadata(
     """
     resolved_domain = domain or _source_domain_key(source_name, metadata)
     taxonomy = _source_taxonomy(source_name, {**(metadata or {}), "domain": resolved_domain})
-    return {
+    result = {
         "department": taxonomy["department"],
         "domain": resolved_domain,
         "category": resolved_domain,
@@ -1609,6 +1611,10 @@ def _document_profile_metadata(
         "regulation": _regulation_key(source_name, resolved_domain),
         "document_variant": _document_variant_from_source(source_name),
     }
+    layer = taxonomy.get("document_layer", "")
+    if layer:
+        result["document_layer"] = layer
+    return result
 
 
 def _chunk_profile_metadata(

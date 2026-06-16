@@ -4,6 +4,7 @@
     "alta_tension": {
       "department": "ingenieria",
       "document_type": "reglamento",
+      "document_layer": "normativa_oficial",
       "confidentiality": "internal",
       "encoding": {
         "type": "shift31",
@@ -124,6 +125,7 @@
     "rite": {
       "department": "ingenieria",
       "document_type": "reglamento",
+      "document_layer": "normativa_oficial",
       "confidentiality": "internal",
       "document_variants": [
         {
@@ -353,6 +355,7 @@
     "baja_tension": {
       "department": "ingenieria",
       "document_type": "reglamento",
+      "document_layer": "normativa_oficial",
       "confidentiality": "internal",
       "trigger_terms": [
         "rebt",
@@ -471,6 +474,7 @@
     "guias_tecnicas": {
       "department": "ingenieria",
       "document_type": "guia_tecnica",
+      "document_layer": "guia_oficial",
       "confidentiality": "internal",
       "trigger_terms": [
         "bt-40",
@@ -570,6 +574,7 @@
     "fotovoltaica_om": {
       "department": "mantenimiento",
       "document_type": "manual",
+      "document_layer": "manual_fabricante",
       "confidentiality": "internal",
       "trigger_terms": [
         "fotovoltaica",
@@ -650,6 +655,7 @@
     "grupos_electrogenos": {
       "department": "mantenimiento",
       "document_type": "norma",
+      "document_layer": "normativa_oficial",
       "confidentiality": "internal",
       "trigger_terms": [
         "grupo electrogeno",
@@ -768,6 +774,7 @@
     "pendiente_ocr": {
       "department": "general",
       "document_type": "pendiente_ocr",
+      "document_layer": "pendiente",
       "confidentiality": "internal",
       "blob_sync": false,
       "trigger_terms": [],

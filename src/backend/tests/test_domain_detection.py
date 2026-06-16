@@ -81,27 +81,27 @@ def test_domain_classification():
 TAXONOMY_CASES = [
     (
         "alta_tension/A16436-16554.pdf",
-        {"department": "ingenieria", "document_type": "reglamento", "confidentiality": "internal"},
+        {"department": "ingenieria", "document_type": "reglamento", "document_layer": "normativa_oficial", "confidentiality": "internal"},
     ),
     (
         "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf",
-        {"department": "ingenieria", "document_type": "reglamento", "confidentiality": "internal"},
+        {"department": "ingenieria", "document_type": "reglamento", "document_layer": "normativa_oficial", "confidentiality": "internal"},
     ),
     (
         "rite/A35931-35984.pdf",
-        {"department": "ingenieria", "document_type": "reglamento", "confidentiality": "internal"},
+        {"department": "ingenieria", "document_type": "reglamento", "document_layer": "normativa_oficial", "confidentiality": "internal"},
     ),
     (
         "guias_tecnicas/Guia_bt_40_sep13R1 (1).pdf",
-        {"department": "ingenieria", "document_type": "guia_tecnica", "confidentiality": "internal"},
+        {"department": "ingenieria", "document_type": "guia_tecnica", "document_layer": "guia_oficial", "confidentiality": "internal"},
     ),
     (
         "fotovoltaica_om/Manual-de-Manteminiento.pdf",
-        {"department": "mantenimiento", "document_type": "manual", "confidentiality": "internal"},
+        {"department": "mantenimiento", "document_type": "manual", "document_layer": "manual_fabricante", "confidentiality": "internal"},
     ),
     (
         "grupos_electrogenos/ISO-8528-5-2018.pdf",
-        {"department": "mantenimiento", "document_type": "norma", "confidentiality": "internal"},
+        {"department": "mantenimiento", "document_type": "norma", "document_layer": "normativa_oficial", "confidentiality": "internal"},
     ),
 ]
 
@@ -121,6 +121,7 @@ def test_source_taxonomy_allows_explicit_metadata_override():
     assert _source_taxonomy("fotovoltaica_om/manual.pdf", metadata) == {
         "department": "operaciones",
         "document_type": "procedimiento",
+        "document_layer": "manual_fabricante",
         "confidentiality": "restricted",
     }
 
@@ -146,6 +147,7 @@ def test_document_profile_metadata_is_backend_neutral():
         "domain": "fotovoltaica_om",
         "category": "fotovoltaica_om",
         "document_type": "manual",
+        "document_layer": "manual_fabricante",
         "confidentiality": "internal",
         "regulation": "fotovoltaica_om",
         "document_variant": "",
