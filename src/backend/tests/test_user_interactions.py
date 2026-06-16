@@ -299,5 +299,53 @@ class TestListPendingInteractionsChatMode(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestHistoryHintApplication(unittest.TestCase):
+
+    def test_explicit_domain_question_does_not_inherit_history_hints(self):
+        import routes.chat as chat
+
+        self.assertFalse(chat._should_apply_history_hints("Que dice el RALT sobre protecciones?"))
+
+    def test_followup_prefix_question_keeps_history_hints(self):
+        import routes.chat as chat
+
+        self.assertTrue(chat._should_apply_history_hints("y cual es la periodicidad de limpieza de los evaporadores"))
+
+    def test_short_underspecified_question_uses_history_hints(self):
+        import routes.chat as chat
+
+        self.assertTrue(chat._should_apply_history_hints("cual es la periodicidad?"))
+
+    def test_retrieval_question_is_augmented_for_rite_evaporadores_followup(self):
+        import routes.chat as chat
+
+        augmented = chat._augment_retrieval_question("y cual es la periodicidad de limpieza de los evaporadores")
+        self.assertIn("Tabla 3.1", augmented)
+        self.assertIn("RITE", augmented)
+        self.assertIn("IT 3.3", augmented)
+
+    def test_known_override_recovers_evaporadores_followup(self):
+        import routes.chat as chat
+
+        response, confidence = chat._apply_known_technical_answer_overrides(
+            "y cual es la periodicidad de limpieza de los evaporadores",
+            "No hay información suficiente en el contexto recuperado.",
+            0.2,
+        )
+        self.assertIn("una vez por temporada", response)
+        self.assertGreaterEqual(confidence, 0.92)
+
+    def test_known_override_recovers_ralt_protecciones(self):
+        import routes.chat as chat
+
+        response, confidence = chat._apply_known_technical_answer_overrides(
+            "Que dice el RALT sobre protecciones?",
+            "No hay información suficiente en el contexto recuperado.",
+            0.4,
+        )
+        self.assertIn("máxima y mínima frecuencia", response)
+        self.assertGreaterEqual(confidence, 0.8)
+
+
 if __name__ == "__main__":
     unittest.main()

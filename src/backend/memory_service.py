@@ -654,14 +654,24 @@ def reject_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
 def search_validated_memory(question: str) -> Optional[Dict]:
     if not question.strip():
         return None
-    if memory_collection.count() == 0:
+    try:
+        collection_size = memory_collection.count()
+    except Exception:
+        logger.exception("search_validated_memory: no se pudo consultar el tamano de la coleccion")
         return None
 
-    results = memory_collection.query(
-        query_texts=[question],
-        n_results=MEMORY_MAX_RESULTS,
-        include=["documents", "metadatas", "distances"],
-    )
+    if collection_size == 0:
+        return None
+
+    try:
+        results = memory_collection.query(
+            query_texts=[question],
+            n_results=MEMORY_MAX_RESULTS,
+            include=["documents", "metadatas", "distances"],
+        )
+    except Exception:
+        logger.exception("search_validated_memory: fallo consultando memoria validada")
+        return None
 
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]

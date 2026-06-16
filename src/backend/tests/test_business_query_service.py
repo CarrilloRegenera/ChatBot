@@ -236,6 +236,69 @@ class BusinessQueryServiceTests(unittest.TestCase):
         generic_search.assert_not_called()
         self.assertIn("REGENERA OPS", result["response"])
 
+    def test_filtered_listing_recent_related_ops_extracts_filter_text(self):
+        parsed = business._parse_question(
+            "Cuales son las licitaciones mas recientes relacionadas con OPS",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["filter_text"], "OPS")
+
+    def test_filtered_listing_recent_related_ops_returns_ranked_list(self):
+        parsed = business._parse_question(
+            "Cuales son las licitaciones mas recientes relacionadas con OPS",
+            module="estudios",
+            history=[],
+        )
+        mocked_rows = [
+            {
+                "NumeroProyecto": "26018",
+                "NumeroOferta": "EST-084-2026",
+                "Obra": "Concesion OPS",
+                "Cliente": "REGENERA OPS",
+                "Estado": "Adjudicada",
+                "FechaPresentacion": "2026-01-20T06:00:00",
+            },
+            {
+                "NumeroProyecto": "26013",
+                "NumeroOferta": "EST-188-2025",
+                "Obra": "Proyecto OPS anterior",
+                "Cliente": "REGENERA OPS",
+                "Estado": "Pendiente",
+                "FechaPresentacion": "2025-09-01T06:00:00",
+            },
+        ]
+        with patch.object(business, "sql_search_licitaciones", return_value=mocked_rows) as generic_search:
+            result = business._answer_estudios_filtered_listing_sql(parsed, route="business_licitaciones")
+
+        generic_search.assert_called_once_with("OPS", take=100)
+        self.assertIn("Licitaciones mas recientes relacionadas con 'OPS'", result["response"])
+        self.assertIn("1. 26018", result["response"])
+        self.assertIn("2. 26013", result["response"])
+        self.assertIn("cliente = REGENERA OPS", result["response"])
+
+    def test_backlog_filtered_listing_by_ops_returns_list_not_count(self):
+        parsed = business._parse_question(
+            "Que proyectos adjudicados son de OPS?",
+            module="estudios",
+            history=[],
+        )
+        mocked_rows = [
+            {"NumeroProyecto": "26018", "NumeroOferta": "EST-084-2026", "Obra": "Concesion OPS", "Cliente": "REGENERA OPS", "Estado": "Adjudicada"},
+            {"NumeroProyecto": "26004", "NumeroOferta": "EST-090-2025", "Obra": "A.T. OPS Cruceros A Coruña", "Cliente": "REGENERA OPS", "Estado": "Completada"},
+            {"NumeroProyecto": "25001", "NumeroOferta": "EST-001-2025", "Obra": "Proyecto sin backlog", "Cliente": "REGENERA OPS", "Estado": "Pendiente de Presentar"},
+        ]
+        with patch.object(business, "sql_search_licitaciones", return_value=mocked_rows) as generic_search:
+            result = business._answer_estudios_filtered_listing_sql(parsed, route="business_licitaciones")
+
+        self.assertIsNone(parsed["aggregate"])
+        generic_search.assert_called_once_with("OPS", take=100)
+        self.assertIn("Licitaciones adjudicadas", result["response"])
+        self.assertIn("26018", result["response"])
+        self.assertIn("26004", result["response"])
+        self.assertNotIn("25001", result["response"])
+
     def test_business_intent_preserves_non_aggregate_filter_text(self):
         intent = business._extract_business_intent(
             "Que licitaciones contienen la palabra OPS en su cliente",
@@ -245,6 +308,84 @@ class BusinessQueryServiceTests(unittest.TestCase):
 
         self.assertEqual(intent["intent"], "unknown")
         self.assertEqual(intent["filter_text"], "OPS")
+
+    def test_projects_in_progress_for_client_extract_filter_text(self):
+        parsed = business._parse_question(
+            "Que proyectos tenemos en curso para el cliente EOPSA",
+            module="produccion",
+            history=[],
+        )
+
+        self.assertEqual(parsed["filter_text"], "EOPSA")
+
+    def test_projects_in_progress_for_client_returns_active_project_list(self):
+        parsed = business._parse_question(
+            "Que proyectos tenemos en curso para el cliente EOPSA",
+            module="produccion",
+            history=[],
+        )
+        mocked_rows = [
+            {
+                "CodigoObra": "26004",
+                "NombreObra": "A.T. OPS Cruceros A Coruna",
+                "Cliente": "EOPSA",
+                "Estado": "En curso",
+                "Finalizada": False,
+                "UpdatedDate": "2026-06-15T10:00:00",
+            },
+            {
+                "CodigoObra": "25002",
+                "NombreObra": "Proyecto antiguo",
+                "Cliente": "EOPSA",
+                "Estado": "Finalizada",
+                "Finalizada": True,
+                "UpdatedDate": "2025-06-15T10:00:00",
+            },
+        ]
+        with patch.object(business, "sql_search_produccion", return_value=mocked_rows) as production_search:
+            result = business._answer_produccion_filtered_listing_sql(parsed, route="business_produccion")
+
+        production_search.assert_called_once_with("EOPSA", take=100)
+        self.assertIn("Proyectos en curso relacionados con 'EOPSA'", result["response"])
+        self.assertIn("1. 26004", result["response"])
+        self.assertNotIn("25002", result["response"])
+
+    def test_top_related_ops_with_client_uses_generic_search_and_returns_multiple_rows(self):
+        parsed = business._parse_question(
+            "Dame el top de proyectos o licitaciones vinculados a OPS con su cliente",
+            module="estudios",
+            history=[],
+        )
+        mocked_rows = [
+            {
+                "NumeroProyecto": "26018",
+                "NumeroOferta": "EST-084-2026",
+                "Obra": "Concesion OPS",
+                "Cliente": "REGENERA OPS",
+                "Estado": "Adjudicada",
+                "ImporteContratado": 12312500.0,
+            },
+            {
+                "NumeroProyecto": "26013",
+                "NumeroOferta": "EST-188-2025",
+                "Obra": "Segundo OPS",
+                "Cliente": "REGENERA OPS",
+                "Estado": "Pendiente",
+                "ImporteContratado": 5383264.4,
+            },
+        ]
+        with (
+            patch.object(business, "sql_search_licitaciones", return_value=mocked_rows) as generic_search,
+            patch.object(business, "sql_search_licitaciones_by_client_text") as client_search,
+        ):
+            result = business._answer_estudios_filtered_listing_sql(parsed, route="business_licitaciones")
+
+        generic_search.assert_called_once_with("OPS", take=100)
+        client_search.assert_not_called()
+        self.assertIn("Licitaciones top relacionadas con 'OPS'", result["response"])
+        self.assertIn("1. 26018", result["response"])
+        self.assertIn("2. 26013", result["response"])
+        self.assertIn("cliente = REGENERA OPS", result["response"])
 
     def test_numeric_reference_can_identify_produccion_module(self):
         self.assertEqual(business._detect_reference_module("26001"), "produccion")

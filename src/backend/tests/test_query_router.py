@@ -51,10 +51,32 @@ def test_business_estudio_reference_routes_to_business_licitaciones():
         assert classify_question(question)["route"] == "business_licitaciones", question
 
 
+def test_ops_related_business_listings_keep_business_route():
+    questions = [
+        "Cuales son las licitaciones mas recientes relacionadas con OPS",
+        "Dame el top de proyectos o licitaciones vinculados a OPS con su cliente",
+    ]
+
+    for question in questions:
+        assert classify_question(question)["route"] == "business_licitaciones", question
+
+
+def test_ops_client_project_queries_route_to_business_produccion():
+    questions = [
+        "Que proyectos tenemos en curso para el cliente EOPSA",
+        "Que obras en curso tenemos para el cliente OPSA",
+    ]
+
+    for question in questions:
+        assert classify_question(question)["route"] == "business_produccion", question
+
+
 def test_ops_standard_reference_is_not_misrouted_to_business_produccion():
     questions = [
         "Resumen de IEC 80005 para OPS y suministro electrico a buques",
         "Segun ISO 80005-1, que es la shore-side electricity en OPS?",
+        "Segun la IEC 80005-2, como funciona la monitorizacion y control del OPS?",
+        "Que recomienda OPS para pliegos de condiciones y programa de necesidades?",
     ]
 
     for question in questions:

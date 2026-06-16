@@ -774,13 +774,28 @@
           "variant_key": "normativa_base",
           "filename_patterns": ["80005-1", "80005_1", "bs iso iec ieee 80005-1"],
           "query_triggers": [
-            "80005",
             "80005-1",
             "iec 80005",
             "ieee 80005",
             "iso 80005",
             "hvsc",
             "high voltage shore connection"
+          ]
+        },
+        {
+          "variant_key": "monitorizacion_control",
+          "filename_patterns": ["80005-2", "80005_2", "iecieee80005-2", "data communication"],
+          "query_triggers": [
+            "80005-2",
+            "iec 80005-2",
+            "ieee 80005-2",
+            "iso 80005-2",
+            "data communication",
+            "monitorizacion y control",
+            "monitoring and control",
+            "interfaz de comunicacion",
+            "scada",
+            "control remoto"
           ]
         },
         {
@@ -792,6 +807,50 @@
             "lista de verificacion",
             "anexo 1",
             "licitacion ops"
+          ]
+        },
+        {
+          "variant_key": "resumen_sectorial",
+          "filename_patterns": ["summary-surveys", "questionnaire results", "world ports climate action"],
+          "query_triggers": [
+            "survey",
+            "surveys",
+            "questionnaire",
+            "questionnaire results",
+            "world ports climate action",
+            "wpcap",
+            "descuentos ops",
+            "rebates",
+            "penalties",
+            "successful ops connections",
+            "global ops requested calls"
+          ]
+        },
+        {
+          "variant_key": "planificacion_proyecto",
+          "filename_patterns": [
+            "planificacion y explotacion",
+            "redaccion de proyectos",
+            "presentacion",
+            "recomendaciones"
+          ],
+          "query_triggers": [
+            "planificacion y explotacion",
+            "planificacion ops",
+            "explotacion ops",
+            "redaccion de proyectos",
+            "proyecto ops",
+            "pliegos de condiciones",
+            "programa de necesidades",
+            "puntos de verificacion",
+            "metodologia",
+            "subestacion",
+            "modulo ops",
+            "sistema de gestion de cables",
+            "integracion en el entorno portuario",
+            "normativa de aplicacion",
+            "afir",
+            "puertos del estado"
           ]
         }
       ],
@@ -810,6 +869,22 @@
         "ieee 80005",
         "iso 80005",
         "80005-1",
+        "80005-2",
+        "80005-3",
+        "hvsc",
+        "lvsc",
+        "data communication",
+        "monitorizacion y control",
+        "control remoto",
+        "planificacion y explotacion",
+        "redaccion de proyectos",
+        "programa de necesidades",
+        "pliegos de condiciones",
+        "puntos de verificacion",
+        "questionnaire results",
+        "world ports climate action",
+        "wpcap",
+        "successful ops connections",
         "electrificacion de atraques",
         "electrificacion de buques",
         "suministro electrico a buques",
@@ -823,7 +898,9 @@
       "trigger_regex": [
         "\\bops\\b",
         "\\bsse\\b",
-        "\\b80005(?:-1)?\\b"
+        "\\b80005(?:-[123])?\\b",
+        "\\bhvsc\\b",
+        "\\blvsc\\b"
       ],
       "source_tokens": [
         "ops",
@@ -835,6 +912,10 @@
         "emsa",
         "80005",
         "hvsc",
+        "lvsc",
+        "scada",
+        "questionnaire",
+        "wpcap",
         "iec-80005",
         "ieee-80005"
       ],
@@ -842,7 +923,10 @@
         "on shore power supply",
         "shore side electricity",
         "shore-side electricity",
-        "cold ironing"
+        "cold ironing",
+        "planning and operation",
+        "redaccion de proyectos",
+        "world ports climate action"
       ],
       "folder_prefixes": [
         "ops"
@@ -883,6 +967,40 @@
         },
         {
           "if_contains": [
+            "80005-2"
+          ],
+          "emit": [
+            "IEC/IEEE 80005-2",
+            "data communication for monitoring and control",
+            "high and low voltage shore connection systems",
+            "monitoring and control"
+          ]
+        },
+        {
+          "if_contains": [
+            "monitorizacion",
+            "control"
+          ],
+          "emit": [
+            "data communication for monitoring and control",
+            "IEC/IEEE 80005-2",
+            "interfaz de comunicacion de datos",
+            "monitoring and control"
+          ]
+        },
+        {
+          "if_contains": [
+            "scada"
+          ],
+          "emit": [
+            "SCADA",
+            "monitoring and control",
+            "data communication for monitoring and control",
+            "IEC/IEEE 80005-2"
+          ]
+        },
+        {
+          "if_contains": [
             "eopsa"
           ],
           "emit": [
@@ -913,6 +1031,85 @@
             "Lista de Verificacion para una Licitacion OPS Completa y Exitosa",
             "Anexo 1",
             "EOPSA"
+          ]
+        },
+        {
+          "if_contains": [
+            "survey"
+          ],
+          "emit": [
+            "QUESTIONNAIRE RESULTS",
+            "WORLD PORTS CLIMATE ACTION PROGRAM",
+            "successful OPS connections",
+            "Global OPS requested calls"
+          ]
+        },
+        {
+          "if_contains": [
+            "questionnaire"
+          ],
+          "emit": [
+            "QUESTIONNAIRE RESULTS",
+            "WORLD PORTS CLIMATE ACTION PROGRAM",
+            "Port infrastructure",
+            "Recommendations"
+          ]
+        },
+        {
+          "if_contains": [
+            "planificacion"
+          ],
+          "emit": [
+            "PLANIFICACION Y EXPLOTACION DE INSTALACIONES OPS",
+            "Planificacion y desarrollo del servicio de OPS",
+            "Definir esquemas de explotacion del servicio",
+            "Puertos del Estado"
+          ]
+        },
+        {
+          "if_contains": [
+            "explotacion"
+          ],
+          "emit": [
+            "PLANIFICACION Y EXPLOTACION DE INSTALACIONES OPS",
+            "Planificacion y desarrollo del servicio de OPS",
+            "esquemas de explotacion del servicio",
+            "operadores de terminales"
+          ]
+        },
+        {
+          "if_contains": [
+            "proyecto",
+            "ops"
+          ],
+          "emit": [
+            "REDACCION DE PROYECTOS OPS",
+            "RECOMENDACIONES",
+            "Normativa de aplicacion",
+            "Puntos de Verificacion para la redaccion de proyectos OPS"
+          ]
+        },
+        {
+          "if_contains": [
+            "pliegos"
+          ],
+          "emit": [
+            "REDACCION DE PROYECTOS OPS",
+            "PLIEGOS DE CONDICIONES",
+            "Revision de proyectos OPS",
+            "Programa de necesidades",
+            "Requerimientos generales para proyectos OPS"
+          ]
+        },
+        {
+          "if_contains": [
+            "programa de necesidades"
+          ],
+          "emit": [
+            "Programa de necesidades",
+            "Esquema basico de un proyecto OPS",
+            "Subestaciones / Centros de",
+            "Conexion muelle-buque"
           ]
         },
         {
