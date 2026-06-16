@@ -2806,6 +2806,13 @@ def _search_documents_detailed_chroma(
                 score += 12
             else:
                 score -= 60 if query_profile["article_refs"] else 30
+        chunk_layer = str(metadata.get("document_layer", "") or "")
+        if chunk_layer == "normativa_oficial":
+            score += 8
+        elif chunk_layer == "guia_oficial":
+            score += 4
+        elif chunk_layer == "pendiente":
+            score -= 5
         if expected_document_variants:
             source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
             if source_document_variant and source_document_variant in expected_document_variants:
@@ -2886,6 +2893,13 @@ def _search_documents_detailed_chroma(
                     lexical_score += 12
                 else:
                     lexical_score -= 60 if query_profile["article_refs"] else 30
+            lex_chunk_layer = str(metadata.get("document_layer", "") or "")
+            if lex_chunk_layer == "normativa_oficial":
+                lexical_score += 8
+            elif lex_chunk_layer == "guia_oficial":
+                lexical_score += 4
+            elif lex_chunk_layer == "pendiente":
+                lexical_score -= 5
             inferred_itcs = _inferred_itc_refs(metadata, document)
             try:
                 metadata_page = int(metadata.get("page", 0) or 0)

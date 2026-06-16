@@ -482,16 +482,24 @@ _IT_SECTION_REF_BOOST = 0.10
 _DOMAIN_MATCH_BOOST = 12.0
 _DOMAIN_MISMATCH_PENALTY = -30.0
 
+_LAYER_BOOSTS = {
+    "normativa_oficial": 8.0,
+    "guia_oficial": 4.0,
+    "manual_fabricante": 0.0,
+    "pendiente": -5.0,
+}
+
 
 def _domain_boost(item: dict, expected_domains: set) -> float:
-    if not expected_domains:
-        return 0.0
-    item_domain = _normalize_text(str(item.get("domain") or item.get("category") or ""))
-    if not item_domain:
-        return 0.0
-    if item_domain in expected_domains:
-        return _DOMAIN_MATCH_BOOST
-    return _DOMAIN_MISMATCH_PENALTY
+    boost = 0.0
+    if expected_domains:
+        item_domain = _normalize_text(str(item.get("domain") or item.get("category") or ""))
+        if item_domain:
+            boost += _DOMAIN_MATCH_BOOST if item_domain in expected_domains else _DOMAIN_MISMATCH_PENALTY
+    layer = _normalize_text(str(item.get("document_layer", "") or ""))
+    if layer:
+        boost += _LAYER_BOOSTS.get(layer, 0.0)
+    return boost
 
 
 def _apply_hint_boosts(
@@ -571,6 +579,7 @@ def search_documents_detailed_azure(
     enriched_select = legacy_select + [
         "department",
         "document_type",
+        "document_layer",
         "regulation",
         "document_variant",
         "section_type",
@@ -643,12 +652,19 @@ def search_documents_detailed_azure(
 
     selected = []
     source_counts: Dict[str, int] = {}
+    layer_counts: Dict[str, int] = {}
+    max_per_layer = max(n_results - 1, 3)
     for item in candidates:
         source = item.get("source_path", "unknown")
         if source_counts.get(source, 0) >= MAX_CHUNKS_PER_SOURCE:
             continue
+        layer = str(item.get("document_layer", "") or "")
+        if layer and layer_counts.get(layer, 0) >= max_per_layer:
+            continue
         selected.append(item)
         source_counts[source] = source_counts.get(source, 0) + 1
+        if layer:
+            layer_counts[layer] = layer_counts.get(layer, 0) + 1
         if len(selected) >= n_results:
             break
 
