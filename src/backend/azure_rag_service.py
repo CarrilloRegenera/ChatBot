@@ -50,8 +50,10 @@ from rag_service import (
     _extract_text_blocks,
     _chunk_profile_metadata,
     _document_profile_metadata,
+    _expected_document_variants,
     _normalize_text,
     _ocr_page_text,
+    _query_phrase_queries,
     _sanitize_section_label,
     _source_domain_key,
     _split_text,
@@ -65,6 +67,30 @@ _VECTOR_DIMS = 384  # multilingual-e5-small
 logger = logging.getLogger(__name__)
 _index_schema_lock = threading.Lock()
 _index_schema_checked = False
+
+
+def _compose_search_text(question: str, clean_question: str, domains: List[str]) -> str:
+    parts: List[str] = [question]
+    parts.extend(_query_phrase_queries(clean_question)[:6])
+    variants = _expected_document_variants(clean_question, domains)
+    if "normativa_base" in variants:
+        parts.extend(
+            [
+                "IEC/ISO/IEEE 80005-1",
+                "Utility connections in port",
+                "High Voltage Shore Connection",
+                "HVSC",
+            ]
+        )
+    seen = set()
+    merged: List[str] = []
+    for part in parts:
+        normalized = _normalize_text(str(part or ""))
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        merged.append(str(part))
+    return " ".join(merged)
 
 
 def _require_azure_config() -> None:
@@ -451,6 +477,8 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
     )
     clean_question = _clean_question(question)
     domains = _expected_domains(clean_question)
+    search_text = _compose_search_text(question, clean_question, domains)
+    expected_document_variants = _expected_document_variants(clean_question, domains)
     domain_filter = (
         "(" + " or ".join(f"domain eq '{_odata_escape(d)}'" for d in domains) + ")"
         if domains else None
@@ -485,7 +513,7 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
     select_fields = enriched_select if _ensure_index_schema_for_search() else legacy_select
     try:
         results = _search_client().search(
-            search_text=question,
+            search_text=search_text,
             vector_queries=[vector_query],
             filter=domain_filter,
             top=max(n_results * 2, 12),
@@ -496,7 +524,7 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
             raise
         logger.warning("Azure Search no acepta campos enriquecidos; reintentando con select legacy")
         results = _search_client().search(
-            search_text=question,
+            search_text=search_text,
             vector_queries=[vector_query],
             filter=domain_filter,
             top=max(n_results * 2, 12),
@@ -515,6 +543,18 @@ def search_documents_detailed_azure(question: str, n_results: int = TOP_K_RESULT
         candidates = [
             item for _, item in sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
         ]
+
+    if candidates:
+        phrase_queries = _query_phrase_queries(clean_question)
+
+        def _candidate_sort_key(item: Dict[str, object]) -> Tuple[int, int]:
+            content_norm = _normalize_text(str(item.get("content", "") or ""))
+            variant = str(item.get("document_variant", "") or "")
+            variant_hit = 1 if expected_document_variants and variant in expected_document_variants else 0
+            phrase_hits = sum(1 for phrase in phrase_queries if _normalize_text(phrase) in content_norm)
+            return variant_hit, phrase_hits
+
+        candidates = sorted(candidates, key=_candidate_sort_key, reverse=True)
 
     selected = []
     source_counts: Dict[str, int] = {}
