@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from azure_rag_service import _build_index_fields, _compose_search_text
+from azure_rag_service import _build_index_fields, _build_semantic_config, _compose_search_text
 from rag_service import _chunk_profile_metadata, _document_profile_metadata
 
 
@@ -38,3 +38,12 @@ def test_compose_search_text_enriches_ops_normative_queries():
     assert "IEC/ISO/IEEE 80005-1" in text
     assert "High Voltage Shore Connection" in text
     assert "Utility connections in port" in text
+
+
+def test_build_semantic_config_uses_supported_title_field_shape():
+    config = _build_semantic_config()
+    prioritized = config.prioritized_fields
+
+    assert prioritized is not None
+    assert getattr(prioritized, "title_field", None) is not None
+    assert getattr(prioritized.title_field, "field_name", None) == "section"

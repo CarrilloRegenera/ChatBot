@@ -198,7 +198,7 @@ def _build_semantic_config() -> SemanticConfiguration:
         name=_SEMANTIC_CONFIG_NAME,
         prioritized_fields=SemanticPrioritizedFields(
             content_fields=[SemanticField(field_name="content")],
-            title_fields=[SemanticField(field_name="section")],
+            title_field=SemanticField(field_name="section"),
             keywords_fields=[SemanticField(field_name="topics")],
         ),
     )
