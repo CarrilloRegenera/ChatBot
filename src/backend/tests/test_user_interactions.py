@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from fastapi.testclient import TestClient
 
@@ -58,6 +59,7 @@ class TestMyPendingEndpoint(unittest.TestCase):
         import config as cfg
         cfg.ADMIN_API_KEY = "test-admin-key"
         cfg.ENTRA_ENABLED = False
+        cfg.OPENAI_API_KEY = "test-key"
 
         from main import app
         return TestClient(app, raise_server_exceptions=True)
@@ -78,7 +80,20 @@ class TestMyPendingEndpoint(unittest.TestCase):
         self.assertEqual(len(data["pending"]), 1)
         self.assertEqual(data["pending"][0]["id"], 99)
         # Verifica que se llamó con el user_id del usuario autenticado
-        ms.return_value.list_pending_interactions.assert_called_once_with(limit=50, user_id=10)
+        ms.return_value.list_pending_interactions.assert_called_once_with(limit=50, user_id=10, chat_mode=None)
+
+    def test_my_pending_passes_active_chat_mode_filter(self):
+        """GET /knowledge/my-pending propaga el modo de chat para filtrar pendientes."""
+        client = self._make_client()
+        with (
+            mock.patch("routes.auth_helpers.load_user_by_id", return_value=_make_user_row()),
+            mock.patch("routes.chat._memory_service") as ms,
+        ):
+            ms.return_value.list_pending_interactions.return_value = [PENDING_ITEM]
+            resp = client.get("/knowledge/my-pending?limit=25&chat_mode=business", headers=_user_headers())
+
+        self.assertEqual(resp.status_code, 200)
+        ms.return_value.list_pending_interactions.assert_called_once_with(limit=25, user_id=10, chat_mode="business")
 
     def test_my_pending_requires_auth(self):
         """GET /knowledge/my-pending sin cabeceras de usuario devuelve 401."""
@@ -100,6 +115,7 @@ class TestValidateOwnership(unittest.TestCase):
         import config as cfg
         cfg.ADMIN_API_KEY = "test-admin-key"
         cfg.ENTRA_ENABLED = False
+        cfg.OPENAI_API_KEY = "test-key"
 
         from main import app
         return TestClient(app, raise_server_exceptions=True)
@@ -236,6 +252,40 @@ class TestGetInteractionOwner(unittest.TestCase):
             result = memory_service.get_interaction_owner_user_id(999)
 
         self.assertIsNone(result)
+
+
+class TestListPendingInteractionsChatMode(unittest.TestCase):
+
+    def test_list_pending_interactions_applies_business_filter(self):
+        import memory_service
+
+        with mock.patch("memory_service.db_conn") as mock_conn:
+            mock_cursor = mock.MagicMock()
+            mock_cursor.fetchall.return_value = []
+            mock_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+
+            memory_service.list_pending_interactions(limit=20, user_id=7, chat_mode="business")
+
+        query = mock_cursor.execute.call_args.args[0]
+        params = mock_cursor.execute.call_args.args[1:]
+        self.assertIn("LOWER(LTRIM(RTRIM(ISNULL(c.ChatMode, '')))) = 'business'", query)
+        self.assertEqual(params, (20, 7))
+
+    def test_list_pending_interactions_applies_technical_filter(self):
+        import memory_service
+
+        with mock.patch("memory_service.db_conn") as mock_conn:
+            mock_cursor = mock.MagicMock()
+            mock_cursor.fetchall.return_value = []
+            mock_conn.return_value.__enter__.return_value.cursor.return_value = mock_cursor
+
+            memory_service.list_pending_interactions(limit=10, user_id=3, chat_mode="technical")
+
+        query = mock_cursor.execute.call_args.args[0]
+        params = mock_cursor.execute.call_args.args[1:]
+        self.assertIn("LOWER(LTRIM(RTRIM(ISNULL(c.ChatMode, '')))) = 'technical'", query)
+        self.assertIn("LOWER(ISNULL(c.Titulo, '')) NOT LIKE '%negocio%'", query)
+        self.assertEqual(params, (10, 3))
 
     def test_returns_none_when_user_id_is_null(self):
         import memory_service

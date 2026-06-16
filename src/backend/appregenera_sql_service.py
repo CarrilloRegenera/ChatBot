@@ -145,6 +145,25 @@ def search_licitaciones(reference: str, take: int = 10) -> List[Dict[str, Any]]:
         return _rows_to_dicts(cursor)
 
 
+def search_licitaciones_by_client_text(client_text: str, take: int = 50) -> List[Dict[str, Any]]:
+    like = f"%{client_text.strip()}%"
+    with appregenera_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT TOP (?) Id, NumeroProyecto, NumeroOferta, Obra, Cliente, Estado, TipoObra,
+                   ImporteContratado, Produccion, Plan2026, Plan2027, Plan2028, Plan2029,
+                   Produccion2026, Produccion2027, Produccion2028, Produccion2029, ProduccionPrevio
+            FROM dbo.Licitaciones
+            WHERE Cliente LIKE ?
+            ORDER BY Cliente, NumeroProyecto, NumeroOferta
+            """,
+            take,
+            like,
+        )
+        return _rows_to_dicts(cursor)
+
+
 def get_licitacion_detail(entity_id: str) -> Dict[str, Any] | None:
     with appregenera_conn() as conn:
         cursor = conn.cursor()

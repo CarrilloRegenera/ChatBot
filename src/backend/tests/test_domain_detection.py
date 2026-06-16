@@ -59,6 +59,9 @@ CASES = [
     ("operacion_mantenimiento/FV_plant_OM.pdf", "fotovoltaica_om"),
     # Grupos electrógenos
     ("grupos_electrogenos/ISO-8528-1.pdf", "grupos_electrogenos"),
+    # OPS
+    ("ops/EOPSA_Guia_OPS_ES_Completa.pdf", "ops"),
+    ("ops/EMSA_Guidance_on_SSE_PART1.pdf", "ops"),
     # No-deriva: filenames con substring 'lat' que NO son alta tensión
     ("pendiente_ocr/Plataforma_inspeccion.pdf", "pendiente_ocr"),
     ("general/regulator_de_tension.pdf", "general"),
@@ -103,6 +106,10 @@ TAXONOMY_CASES = [
         "grupos_electrogenos/ISO-8528-5-2018.pdf",
         {"department": "mantenimiento", "document_type": "norma", "confidentiality": "internal"},
     ),
+    (
+        "ops/EOPSA_Guia_OPS_ES_Completa.pdf",
+        {"department": "ingenieria", "document_type": "guia_tecnica", "confidentiality": "internal"},
+    ),
 ]
 
 
@@ -131,6 +138,27 @@ def test_expected_domains_uses_configured_reference_patterns():
     assert "guias_tecnicas" in _expected_domains("Que es la ITC BT 40?")
     assert "alta_tension" in _expected_domains("Resumen de la ITC LAT 09")
     assert "guias_tecnicas" in _expected_domains("Que exige UNE 12464-1?")
+    assert "ops" in _expected_domains("Que es OPS y como funciona la shore-side electricity?")
+    assert "ops" in _expected_domains("Resumen de IEC 80005 para OPS")
+
+
+def test_ops_phrase_queries_cover_eopsa_checklists():
+    phrases = _domain_phrase_queries(
+        "Segun la checklist OPS de EOPSA, que se debe revisar antes de conectar?"
+    )
+    assert "EOPSA" in phrases
+    assert "Lista de Verificacion OPS" in phrases
+    assert "Lista de Verificacion para una Licitacion OPS Completa y Exitosa" in phrases
+    assert "ORIGEN DE LA FUENTE DE ALIMENTACION" in phrases
+    assert "DATOS ELECTRICOS DE ENTRADA DE LA RED" in phrases
+
+
+def test_expected_domains_avoids_substring_false_positives():
+    detected = _expected_domains(
+        "Que criterios usa ISO 8528-5 para evaluar la respuesta transitoria de grupos electrogenos?"
+    )
+    assert "grupos_electrogenos" in detected
+    assert "rite" not in detected
 
 
 def test_exact_refs_preserve_itc_family_prefix():

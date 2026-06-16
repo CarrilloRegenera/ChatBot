@@ -16,9 +16,11 @@ from appregenera_sql_service import (
     query_licitaciones_aggregate as sql_query_licitaciones_aggregate,
     query_produccion_aggregate as sql_query_produccion_aggregate,
     search_licitaciones as sql_search_licitaciones,
+    search_licitaciones_by_client_text as sql_search_licitaciones_by_client_text,
     search_produccion as sql_search_produccion,
 )
 from config import APPREGENERA_DEV_BYPASS_KEY
+from ops_domain import OPS_DOCUMENTARY_HINTS, is_ops_standard_reference
 from business_query_schema import (
     BUSINESS_SCHEMA,
     CLOSURE_FIELD_HINTS,
@@ -78,6 +80,7 @@ _DOCUMENTARY_HINTS = (
     "arranque",
     "calefaccion",
     "mantenimiento",
+    *OPS_DOCUMENTARY_HINTS,
 )
 
 _STRONG_BUSINESS_ROUTE_HINTS = (
@@ -114,6 +117,29 @@ _STRONG_BUSINESS_ROUTE_HINTS = (
     "codigo obra",
     "numero proyecto",
     "numero oferta",
+)
+
+_PRODUCCION_ENTITY_HINTS = (
+    "proyecto",
+    "proyectos",
+    "obra",
+    "obras",
+)
+
+_PRODUCCION_METRIC_HINTS = (
+    "importe",
+    "produccion",
+    "cartera",
+    "pendiente",
+    "rentabilidad",
+    "codigo de obra",
+    "codigo obra",
+    "cliente",
+    "tipo obra",
+    "top ",
+    "ranking",
+    "con mas",
+    "con mayor",
 )
 
 
@@ -237,7 +263,7 @@ def _extract_business_intent(question: str, *, module: str, history: List[Dict[s
             "module": module,
             "metric": metric,
             "scope": aggregate.get("scope"),
-            "filter_text": aggregate.get("filter_text"),
+            "filter_text": aggregate.get("filter_text") or parsed.get("filter_text"),
             "group_by": group_by,
         }
     )
@@ -249,6 +275,8 @@ def _looks_documentary_question(text: str) -> bool:
 
 
 def _has_strong_business_signal(text: str, reference: str | None) -> bool:
+    if is_ops_standard_reference(reference, text):
+        return False
     if reference:
         return True
     if any(hint in text for hint in _STRONG_BUSINESS_ROUTE_HINTS):
@@ -259,6 +287,8 @@ def _has_strong_business_signal(text: str, reference: str | None) -> bool:
 def detect_business_route(question: str) -> str | None:
     text = _normalize(question)
     reference = _extract_reference(question, text)
+    if is_ops_standard_reference(reference, text):
+        reference = None
     if _looks_documentary_question(text) and not _has_strong_business_signal(text, reference):
         return None
     explicit_scope = _detect_explicit_scope(text)
@@ -276,6 +306,8 @@ def detect_business_route(question: str) -> str | None:
             return "business_produccion"
 
     if any(hint in text for hint in ("control de produccion", "cierre", "cartera", "rentabilidad", "produccion estimada", "produccion marzo", "produccion abril")):
+        return "business_produccion"
+    if any(hint in text for hint in _PRODUCCION_ENTITY_HINTS) and any(metric in text for metric in _PRODUCCION_METRIC_HINTS):
         return "business_produccion"
     if any(hint in text for hint in _schema_module_hints("cierre")):
         return "business_produccion"
@@ -572,7 +604,7 @@ def _answer_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) ->
 def _answer_estudios_detail_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
     reference = parsed.get("reference")
     if not reference:
-        return None
+        return _answer_estudios_filtered_listing_sql(parsed, route=route)
 
     matches = sql_search_licitaciones(reference, take=8)
     match = _pick_best_licitacion_match(matches, reference)
@@ -671,6 +703,57 @@ def _answer_produccion_detail_sql(parsed: Dict[str, Any], *, route: str, normali
                 "code": detail.get("CodigoObra") or detail.get("LicitacionNumeroProyecto") or reference,
             }
         ],
+    }
+
+
+def _answer_estudios_filtered_listing_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
+    question_text = _normalize(parsed.get("question") or "")
+    filter_text = str(parsed.get("filter_text") or "").strip()
+    if not filter_text:
+        return None
+    if not any(token in question_text for token in ("licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas")):
+        return None
+    if not any(token in question_text for token in ("contiene", "contienen", "incluye", "incluyen", "palabra", "texto", "cliente")):
+        return None
+
+    if "cliente" in question_text:
+        matches = sql_search_licitaciones_by_client_text(filter_text, take=100)
+    else:
+        matches = sql_search_licitaciones(filter_text, take=50)
+    if not matches:
+        return {
+            "response": "No he encontrado licitaciones que encajen con ese filtro.",
+            "route": route,
+            "confidence": 0.95,
+            "sources": [],
+        }
+
+    if "cliente" in question_text:
+        needle = _normalize(filter_text)
+        matches = [
+            item for item in matches
+            if needle in _normalize(str(item.get("Cliente") or ""))
+        ]
+    if not matches:
+        return {
+            "response": "No he encontrado licitaciones cuyo cliente contenga ese texto.",
+            "route": route,
+            "confidence": 0.95,
+            "sources": [],
+        }
+
+    top_matches = matches[:5]
+    lines = []
+    for index, item in enumerate(top_matches, start=1):
+        code = item.get("NumeroProyecto") or item.get("NumeroOferta") or "-"
+        obra = item.get("Obra") or "-"
+        cliente = item.get("Cliente") or "-"
+        lines.append(f"{index}. {code} - {obra}: cliente = {cliente}")
+    return {
+        "response": f"Licitaciones que contienen '{filter_text}'{(' en cliente' if 'cliente' in question_text else '')}: " + " | ".join(lines),
+        "route": route,
+        "confidence": 1.0,
+        "sources": [{"source": "AppRegenera SQL", "module": "estudios"}],
     }
 
 
@@ -839,6 +922,7 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
     normalized = _normalize(question)
     history_context = _extract_history_context(history)
     reference = _resolve_reference(question, normalized, history)
+    filter_text = _extract_filter_text(question, normalized)
     years = _extract_explicit_years(normalized, reference)
     year_text = _strip_reference_for_year_detection(normalized, reference)
     year_match = re.search(r"\b(20\d{2})\b", year_text)
@@ -873,12 +957,25 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
     )
     if inherited_fields:
         fields = inherited_fields
+    reference_follow_up_fields = _inherit_reference_follow_up_fields(
+        normalized,
+        module=module,
+        history=history,
+        reference=reference,
+        current_fields=fields,
+        year=year,
+        month=month,
+        cuatrimestre=cuatrimestre,
+    )
+    if reference_follow_up_fields:
+        fields = reference_follow_up_fields
     aggregate = _detect_aggregate(question, normalized, module=module, fields=fields, year=year, reference=reference)
     expected_client = _extract_expected_client(question, normalized)
     return {
         "question": question,
         "reference": reference,
         "fields": fields,
+        "filter_text": filter_text,
         "year": year,
         "years": years,
         "cuatrimestre": cuatrimestre,
@@ -1057,6 +1154,45 @@ def _inherit_follow_up_fields(
         )
         if narrowed_fields:
             return narrowed_fields
+    return None
+
+
+def _inherit_reference_follow_up_fields(
+    text: str,
+    *,
+    module: str,
+    history: List[Dict[str, Any]],
+    reference: str | None,
+    current_fields: List[str],
+    year: int | None,
+    month: int | None,
+    cuatrimestre: int | None,
+) -> List[str] | None:
+    if not reference or not _looks_like_follow_up(text):
+        return None
+
+    default_fields = ["importeContratado", "cliente", "estado"] if module == "estudios" else ["nombreObra", "importeContratado"]
+    if current_fields != default_fields:
+        return None
+
+    for index in range(len(history or []) - 1, -1, -1):
+        previous_question = str((history or [])[index].get("question") or "").strip()
+        if not previous_question:
+            continue
+        previous_parsed = _parse_question(previous_question, module=module, history=(history or [])[:index])
+        previous_fields = previous_parsed.get("fields") or []
+        if not previous_fields:
+            continue
+        narrowed_fields = _narrow_fields_to_period(
+            previous_fields,
+            module=module,
+            year=year,
+            month=month,
+            cuatrimestre=cuatrimestre,
+        )
+        inherited = narrowed_fields or previous_fields
+        if inherited:
+            return _dedupe(inherited)
     return None
 
 
@@ -1264,6 +1400,17 @@ def _extract_area(text: str) -> str | None:
 
 
 def _extract_filter_text(original_question: str, normalized: str) -> str | None:
+    keyword_match = re.search(
+        r"\b(?:palabra|texto|cadena)\s+([a-z0-9][a-z0-9 .&/-]{1,40})(?:\s+en\s+su\s+\w+|\s+en\s+\w+|\?|$)",
+        normalized,
+    )
+    if keyword_match:
+        candidate = re.sub(r"\s+", " ", keyword_match.group(1)).strip(" -?.")
+        candidate = re.sub(r"\s+en\s+su\s+\w+$", "", candidate).strip(" -?.")
+        candidate = re.sub(r"\s+en\s+\w+$", "", candidate).strip(" -?.")
+        if candidate:
+            return candidate.upper() if candidate.isalpha() and len(candidate) <= 12 else candidate
+
     candidates = re.findall(r"\b(?:de|del|de la|de los|de las|para)\s+([a-z0-9][a-z0-9 .&/-]{1,60})", normalized)
     cleaned_candidates: List[str] = []
     for candidate in candidates:

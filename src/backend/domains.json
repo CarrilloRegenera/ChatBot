@@ -765,6 +765,155 @@
       ],
       "scoring": {}
     },
+    "ops": {
+      "department": "ingenieria",
+      "document_type": "guia_tecnica",
+      "confidentiality": "internal",
+      "trigger_terms": [
+        "ops",
+        "on shore power supply",
+        "shore power",
+        "shore side electricity",
+        "shore-side electricity",
+        "sse",
+        "cold ironing",
+        "eopsa",
+        "emsa guidance",
+        "emsa guidance on sse",
+        "iec 80005",
+        "ieee 80005",
+        "iso 80005",
+        "80005-1",
+        "electrificacion de atraques",
+        "electrificacion de buques",
+        "suministro electrico a buques",
+        "conexion buque puerto",
+        "conexiones buque puerto",
+        "atraque electrificado",
+        "atraques electrificados",
+        "puerto electrificado",
+        "puertos electrificados"
+      ],
+      "trigger_regex": [
+        "\\bops\\b",
+        "\\bsse\\b",
+        "\\b80005(?:-1)?\\b"
+      ],
+      "source_tokens": [
+        "ops",
+        "shore_power",
+        "shore-power",
+        "shore",
+        "sse",
+        "eopsa",
+        "emsa",
+        "80005",
+        "iec-80005",
+        "ieee-80005"
+      ],
+      "source_phrases": [
+        "on shore power supply",
+        "shore side electricity",
+        "shore-side electricity",
+        "cold ironing"
+      ],
+      "folder_prefixes": [
+        "ops"
+      ],
+      "phrase_queries": [
+        {
+          "if_contains": [
+            "ops"
+          ],
+          "emit": [
+            "on shore power supply",
+            "shore-side electricity",
+            "shore side electricity",
+            "cold ironing",
+            "SSE"
+          ]
+        },
+        {
+          "if_contains": [
+            "sse"
+          ],
+          "emit": [
+            "shore-side electricity",
+            "on shore power supply",
+            "cold ironing",
+            "OPS"
+          ]
+        },
+        {
+          "if_contains": [
+            "80005"
+          ],
+          "emit": [
+            "IEC/ISO/IEEE 80005-1",
+            "shore-side electricity",
+            "high voltage shore connection"
+          ]
+        },
+        {
+          "if_contains": [
+            "eopsa"
+          ],
+          "emit": [
+            "EOPSA",
+            "Lista de Verificacion OPS",
+            "Lista de Verificacion para una Licitacion OPS Completa y Exitosa",
+            "Anexo 1",
+            "Guia OPS"
+          ]
+        },
+        {
+          "if_contains": [
+            "checklist"
+          ],
+          "emit": [
+            "Lista de Verificacion OPS",
+            "Lista de Verificacion para una Licitacion OPS Completa y Exitosa",
+            "Anexo 1",
+            "EOPSA"
+          ]
+        },
+        {
+          "if_contains": [
+            "lista de verificacion"
+          ],
+          "emit": [
+            "Lista de Verificacion OPS",
+            "Lista de Verificacion para una Licitacion OPS Completa y Exitosa",
+            "Anexo 1",
+            "EOPSA"
+          ]
+        },
+        {
+          "if_contains": [
+            "conectar"
+          ],
+          "emit": [
+            "Lista de Verificacion OPS",
+            "ORIGEN DE LA FUENTE DE ALIMENTACION",
+            "DATOS ELECTRICOS DE ENTRADA DE LA RED",
+            "Anexo 1"
+          ]
+        },
+        {
+          "if_contains": [
+            "licitacion",
+            "ops"
+          ],
+          "emit": [
+            "Licitacion OPS Completa y Exitosa",
+            "Lista de Verificacion OPS",
+            "Anexo 1",
+            "EOPSA"
+          ]
+        }
+      ],
+      "scoring": {}
+    },
     "pendiente_ocr": {
       "department": "general",
       "document_type": "pendiente_ocr",

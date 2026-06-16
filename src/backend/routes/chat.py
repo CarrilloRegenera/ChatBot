@@ -375,7 +375,38 @@ def send_message(data: MessageRequest, request: Request):
             business_route = business_result.get("route", route)
             response = business_result["response"]
             elapsed = int((time.time() - start) * 1000)
-            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
+            db_ms = 0
+            try:
+                stage_metrics_db_start = time.time()
+                business_trace = business_result.get("trace", {}) or {}
+                business_sources = business_result.get("sources", []) or []
+                business_path = str(business_trace.get("path") or "").strip().lower()
+                business_model = "appregenera_sql" if business_path == "sql" else ("appregenera_http" if business_path == "http" else "appregenera")
+                _memory_service().record_interaction_pending(
+                    conversation_id=data.conversation_id,
+                    question=data.question,
+                    answer=response,
+                    sources=business_sources,
+                    context="",
+                    confidence=float(business_result.get("confidence", 1.0)),
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    model=business_model,
+                    base_model=business_model,
+                    final_model=business_model,
+                    base_confidence=float(business_result.get("confidence", 1.0)),
+                    final_confidence=float(business_result.get("confidence", 1.0)),
+                    escalated=False,
+                    escalation_reason="",
+                    route=business_route,
+                    from_memory=False,
+                    elapsed_ms=elapsed,
+                )
+                db_ms += int((time.time() - stage_metrics_db_start) * 1000)
+            except Exception:
+                logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo registrar InteraccionesRAG de negocio")
+            db_ms += _save_chat_message(data.conversation_id, data.question, response, elapsed)
             _log_chat_event(
                 event="CHAT",
                 conversation_id=data.conversation_id,
@@ -583,9 +614,15 @@ def get_pending_knowledge(limit: int = 50):
 
 
 @router.get("/knowledge/my-pending")
-def get_my_pending_knowledge(request: Request, limit: int = 50):
+def get_my_pending_knowledge(request: Request, limit: int = 50, chat_mode: str | None = None):
     request_user_id = resolve_request_user_id(request)
-    return {"pending": _memory_service().list_pending_interactions(limit=limit, user_id=request_user_id)}
+    return {
+        "pending": _memory_service().list_pending_interactions(
+            limit=limit,
+            user_id=request_user_id,
+            chat_mode=chat_mode,
+        )
+    }
 
 
 @router.get("/admin/metrics")

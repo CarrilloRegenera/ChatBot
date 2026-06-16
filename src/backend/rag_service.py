@@ -1702,13 +1702,21 @@ def _expected_document_variants(question: str, expected_domains: List[str]) -> L
     return variants
 
 
+def _contains_configured_term(text: str, term: str) -> bool:
+    normalized_text = _normalize_text(text or "")
+    normalized_term = _normalize_text(term or "")
+    if not normalized_text or not normalized_term:
+        return False
+    return re.search(rf"(?<![a-z0-9]){re.escape(normalized_term)}(?![a-z0-9])", normalized_text) is not None
+
+
 def _expected_domains(question: str) -> List[str]:
     normalized = _normalize_text(question or "")
     domains = []
     for name, cfg in _DOMAIN_CFG["domains"].items():
         if not cfg.get("trigger_terms") and not cfg.get("trigger_regex") and not cfg.get("reference_patterns"):
             continue
-        matched = any(t in normalized for t in cfg.get("trigger_terms", []))
+        matched = any(_contains_configured_term(normalized, t) for t in cfg.get("trigger_terms", []))
         if not matched:
             matched = any(re.search(p, normalized) for p in cfg.get("trigger_regex", []))
         if not matched:
@@ -1723,7 +1731,7 @@ def _matched_domain_query_terms(question: str, domain: str) -> List[str]:
     cfg = _DOMAIN_CFG["domains"].get(domain, {})
     terms = [
         term for term in cfg.get("trigger_terms", [])
-        if term and _normalize_text(term) in normalized
+        if term and _contains_configured_term(normalized, term)
     ]
     for pattern in cfg.get("reference_patterns", []):
         for match in re.finditer(pattern, normalized):

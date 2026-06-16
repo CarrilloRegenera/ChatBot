@@ -13,6 +13,7 @@ def test_technical_questions_without_core_regulation_words_go_to_knowledge():
         "El alimentador de una cerca electrica puede alimentarse:",
         "Cuando y por quien deben realizarse inspecciones periodicas en lineas de AT?",
         "Que criterios usa ISO 8528-5 para evaluar la respuesta transitoria de grupos electrogenos?",
+        "Que es el OPS en puertos y como funciona el shore power?",
     ]
 
     for question in questions:
@@ -50,12 +51,23 @@ def test_business_estudio_reference_routes_to_business_licitaciones():
         assert classify_question(question)["route"] == "business_licitaciones", question
 
 
+def test_ops_standard_reference_is_not_misrouted_to_business_produccion():
+    questions = [
+        "Resumen de IEC 80005 para OPS y suministro electrico a buques",
+        "Segun ISO 80005-1, que es la shore-side electricity en OPS?",
+    ]
+
+    for question in questions:
+        assert classify_question(question)["route"] == "knowledge", question
+
+
 def test_documentary_manual_questions_are_not_misrouted_to_business_or_out_of_scope():
     questions = [
         "Si me llega el equipo a obra, que deberia comprobar en la recepcion y antes de moverlo?",
         "Entonces, para corregir esa situacion de baja carga, que recomienda el manual y cuanto deberian durar como maximo las pruebas semanales sin carga?",
         "En epoca fria, si el grupo es automatico, que condicion de temperatura pide el manual y que elementos preve para ayudar al arranque?",
         "Para cerrar, si el grupo pasa mucho tiempo parado, que rutina minima de mantenimiento recomienda el manual y que precaucion previa hay antes de intervenirlo?",
+        "Segun la guia EOPSA, que es la shore-side electricity en OPS?",
     ]
 
     for question in questions:

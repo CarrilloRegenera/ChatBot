@@ -3,6 +3,7 @@ import unicodedata
 from typing import Dict
 
 from config import MIN_QUERY_LENGTH
+from ops_domain import OPS_DOCUMENTARY_HINTS, OPS_TECHNICAL_HINTS, is_ops_standard_reference
 
 
 GREETING_PATTERNS = (
@@ -49,6 +50,7 @@ DOCUMENTARY_HINTS = {
     "manual", "pdf", "documentacion", "documento", "normativa", "normativo",
     "norma", "reglamento", "apartado", "seccion", "capitulo", "pagina",
     "pag.", "segun el manual", "segun el documento", "segun el pdf",
+    *OPS_DOCUMENTARY_HINTS,
 }
 
 TECHNICAL_HINTS = {
@@ -66,6 +68,7 @@ TECHNICAL_HINTS = {
     "desenganche", "recepcion", "izado", "combustible", "escape", "ventilacion",
     "refrigeracion", "baja carga", "banco de carga", "magnetotermico", "calefactor",
     "calefaccion", "automatico", "grupo movil", "grupo automatico", "himoinsa",
+    *OPS_TECHNICAL_HINTS,
 }
 
 BUSINESS_LICITACIONES_HINTS = {
@@ -163,7 +166,7 @@ def classify_question(question: str) -> Dict[str, str]:
     has_produccion_code = bool(PRODUCCION_CODE_PATTERN.search(normalized))
     if has_licitacion_reference:
         return {"route": "business_licitaciones", "message": ""}
-    if has_produccion_code and not any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):
+    if has_produccion_code and not is_ops_standard_reference(PRODUCCION_CODE_PATTERN.search(normalized).group(0), normalized) and not any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):
         return {"route": "business_produccion", "message": ""}
 
     if documentary_or_technical and not _has_strong_business_signal(normalized):

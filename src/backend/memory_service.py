@@ -258,15 +258,47 @@ def get_interaction_owner_user_id(interaction_id: int) -> int | None:
     return int(row[0]) if row and row[0] is not None else None
 
 
-def list_pending_interactions(limit: int = 50, user_id: int | None = None) -> List[Dict]:
+def _normalize_pending_chat_mode(chat_mode: str | None) -> str | None:
+    normalized = (chat_mode or "").strip().lower()
+    if normalized == "business":
+        return "business"
+    if normalized == "technical":
+        return "technical"
+    return None
+
+
+def list_pending_interactions(
+    limit: int = 50,
+    user_id: int | None = None,
+    chat_mode: str | None = None,
+) -> List[Dict]:
     limit = max(1, min(int(limit or 50), 200))
+    normalized_chat_mode = _normalize_pending_chat_mode(chat_mode)
     with db_conn() as conn:
         cursor = conn.cursor()
         params = [limit]
         user_filter = ""
+        chat_mode_filter = ""
         if user_id is not None:
             user_filter = " AND c.UsuarioId = ?"
             params.append(int(user_id))
+        if normalized_chat_mode == "business":
+            chat_mode_filter = (
+                " AND ("
+                "LOWER(LTRIM(RTRIM(ISNULL(c.ChatMode, '')))) = 'business' "
+                "OR LOWER(LTRIM(RTRIM(ISNULL(i.Ruta, '')))) IN ('business_licitaciones', 'business_produccion')"
+                ")"
+            )
+        elif normalized_chat_mode == "technical":
+            chat_mode_filter = (
+                " AND ("
+                "("
+                "LOWER(LTRIM(RTRIM(ISNULL(c.ChatMode, '')))) = 'technical' "
+                "OR (ISNULL(c.ChatMode, '') = '' AND LOWER(LTRIM(RTRIM(ISNULL(i.Ruta, '')))) NOT IN ('business_licitaciones', 'business_produccion'))"
+                ")"
+                " OR (ISNULL(c.ChatMode, '') = '' AND LOWER(ISNULL(c.Titulo, '')) NOT LIKE '%negocio%')"
+                ")"
+            )
         cursor.execute(
             f"""
             SELECT TOP (?)
@@ -287,6 +319,7 @@ def list_pending_interactions(limit: int = 50, user_id: int | None = None) -> Li
             LEFT JOIN dbo.Usuarios u ON u.Id = c.UsuarioId
             WHERE i.Estado = 'pendiente'
               {user_filter}
+              {chat_mode_filter}
             ORDER BY i.FechaCreacion DESC
             """,
             *params,

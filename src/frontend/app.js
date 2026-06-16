@@ -2137,7 +2137,11 @@ async function loadMyPendingInteractions() {
     if (!container) return;
     container.innerHTML = `<div class="pending-card"><div class="pending-answer">Cargando...</div></div>`;
     try {
-        const res = await fetch(`${API}/knowledge/my-pending?limit=50`, { headers: getUserHeaders() });
+        const query = new URLSearchParams({ limit: "50" });
+        if (activeChatMode) {
+            query.set("chat_mode", activeChatMode);
+        }
+        const res = await fetch(`${API}/knowledge/my-pending?${query.toString()}`, { headers: getUserHeaders() });
         if (!res.ok) throw new Error("Error al cargar interacciones");
         const data = await res.json();
         renderMyPendingList(data.pending || []);

@@ -52,10 +52,29 @@ class BusinessQueryServiceTests(unittest.TestCase):
             "Si me llega el equipo a obra, que deberia comprobar en la recepcion y antes de moverlo?",
             "Entonces, para corregir esa situacion de baja carga, que recomienda el manual y cuanto deberian durar como maximo las pruebas semanales sin carga?",
             "En epoca fria, si el grupo es automatico, que condicion de temperatura pide el manual y que elementos preve para ayudar al arranque?",
+            "Segun la guia EOPSA, que es el OPS y como se relaciona con la shore-side electricity?",
         ]
 
         for question in questions:
             self.assertIsNone(business.detect_business_route(question), question)
+
+    def test_detect_business_route_keeps_ops_project_references_in_business(self):
+        self.assertEqual(
+            business.detect_business_route("Que backlog tiene OPS-240-2026"),
+            "business_licitaciones",
+        )
+        self.assertEqual(
+            business.detect_business_route("Que cliente tiene EST-188-2025 del proyecto OPS"),
+            "business_licitaciones",
+        )
+
+    def test_detect_business_route_ignores_ops_standard_codes(self):
+        self.assertIsNone(
+            business.detect_business_route("Resumen de IEC 80005 para OPS y suministro electrico a buques")
+        )
+        self.assertIsNone(
+            business.detect_business_route("Segun ISO 80005-1, que es la shore-side electricity?")
+        )
 
     def test_parse_margen_previsto_maps_to_rentabilidad(self):
         parsed = business._parse_question(
@@ -177,6 +196,55 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["reference"], "26018")
         self.assertEqual(parsed["year"], 2026)
         self.assertEqual(parsed["fields"], ["importeContratado2026"])
+
+    def test_text_filter_questions_capture_filter_text(self):
+        parsed = business._parse_question(
+            "Que licitaciones contienen la palabra OPS EN SU CLIENTE",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(parsed["filter_text"], "OPS")
+        self.assertEqual(parsed["fields"], ["cliente"])
+
+    def test_follow_up_reference_reuses_previous_metric_in_produccion(self):
+        parsed = business._parse_question(
+            "y el 26004?",
+            module="produccion",
+            history=[{"question": "cuanto importe contratado tiene el proyecto 26001"}],
+        )
+
+        self.assertEqual(parsed["reference"], "26004")
+        self.assertEqual(parsed["fields"], ["importeContratado"])
+
+    def test_filtered_listing_by_client_uses_specific_client_search(self):
+        parsed = business._parse_question(
+            "Que licitaciones contienen la palabra OPS en su cliente",
+            module="estudios",
+            history=[],
+        )
+        mocked_rows = [
+            {"NumeroProyecto": "26018", "NumeroOferta": "EST-084-2026", "Obra": "Concesion OPS", "Cliente": "REGENERA OPS"},
+        ]
+        with (
+            patch.object(business, "sql_search_licitaciones_by_client_text", return_value=mocked_rows) as client_search,
+            patch.object(business, "sql_search_licitaciones") as generic_search,
+        ):
+            result = business._answer_estudios_filtered_listing_sql(parsed, route="business_licitaciones")
+
+        client_search.assert_called_once_with("OPS", take=100)
+        generic_search.assert_not_called()
+        self.assertIn("REGENERA OPS", result["response"])
+
+    def test_business_intent_preserves_non_aggregate_filter_text(self):
+        intent = business._extract_business_intent(
+            "Que licitaciones contienen la palabra OPS en su cliente",
+            module="estudios",
+            history=[],
+        )
+
+        self.assertEqual(intent["intent"], "unknown")
+        self.assertEqual(intent["filter_text"], "OPS")
 
     def test_numeric_reference_can_identify_produccion_module(self):
         self.assertEqual(business._detect_reference_module("26001"), "produccion")
