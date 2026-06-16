@@ -153,6 +153,16 @@ def test_ops_phrase_queries_cover_eopsa_checklists():
     assert "DATOS ELECTRICOS DE ENTRADA DE LA RED" in phrases
 
 
+def test_ops_document_variants_distinguish_normative_base_and_checklists():
+    assert _document_variant_from_source("ops/01_normativa_base/BS ISO IEC IEEE 80005-1_2012.pdf") == "normativa_base"
+    assert _document_variant_from_source("ops/03_checklist_implantacion/EOPSA_Checklist_OPS_ES.pdf") == "checklist_implantacion"
+    assert _expected_document_variants("Que es OPS segun la IEC 80005-1?", ["ops"]) == ["normativa_base"]
+    assert _expected_document_variants(
+        "Segun la checklist OPS de EOPSA, que se debe revisar antes de conectar?",
+        ["ops"],
+    ) == ["checklist_implantacion"]
+
+
 def test_expected_domains_avoids_substring_false_positives():
     detected = _expected_domains(
         "Que criterios usa ISO 8528-5 para evaluar la respuesta transitoria de grupos electrogenos?"

@@ -769,6 +769,32 @@
       "department": "ingenieria",
       "document_type": "guia_tecnica",
       "confidentiality": "internal",
+      "document_variants": [
+        {
+          "variant_key": "normativa_base",
+          "filename_patterns": ["80005-1", "80005_1", "bs iso iec ieee 80005-1"],
+          "query_triggers": [
+            "80005",
+            "80005-1",
+            "iec 80005",
+            "ieee 80005",
+            "iso 80005",
+            "hvsc",
+            "high voltage shore connection"
+          ]
+        },
+        {
+          "variant_key": "checklist_implantacion",
+          "filename_patterns": ["eopsa", "checklist", "guia_ops_es", "anexo 1"],
+          "query_triggers": [
+            "eopsa",
+            "checklist",
+            "lista de verificacion",
+            "anexo 1",
+            "licitacion ops"
+          ]
+        }
+      ],
       "trigger_terms": [
         "ops",
         "on shore power supply",
@@ -808,6 +834,7 @@
         "eopsa",
         "emsa",
         "80005",
+        "hvsc",
         "iec-80005",
         "ieee-80005"
       ],
