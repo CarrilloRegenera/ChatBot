@@ -84,6 +84,7 @@ BUSINESS_PRODUCCION_HINTS = {
 BUSINESS_COMMON_HINTS = {
     "importe contratado", "cliente", "estado", "comentarios",
     "numero proyecto", "numero oferta", "tipo obra",
+    "en curso", "recientes", "mas recientes", "vinculadas", "vinculados", "relacionadas", "relacionados", "top", "ranking",
 }
 
 LICITACION_REFERENCE_PATTERN = re.compile(r"\b(?:est[-\s]?\d{1,4}[-\s]?20\d{2}|[a-z]{2,6}-\d{1,5}-20\d{2})\b")
@@ -136,6 +137,10 @@ def _has_strong_business_signal(text: str) -> bool:
         return True
     if "importe contratado" in text:
         return True
+    if any(token in text for token in ("cliente", "estado", "en curso", "top", "ranking")) and any(
+        entity in text for entity in ("proyecto", "proyectos", "obra", "obras", "licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas")
+    ):
+        return True
     return False
 
 
@@ -168,6 +173,14 @@ def classify_question(question: str) -> Dict[str, str]:
         return {"route": "business_licitaciones", "message": ""}
     if has_produccion_code and not is_ops_standard_reference(PRODUCCION_CODE_PATTERN.search(normalized).group(0), normalized) and not any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):
         return {"route": "business_produccion", "message": ""}
+    if any(token in normalized for token in ("proyecto", "proyectos", "obra", "obras")) and any(
+        token in normalized for token in ("cliente", "en curso", "actualmente", "estado")
+    ) and not any(token in normalized for token in ("licitacion", "licitaciones", "oferta", "ofertas", "estudio", "estudios")):
+        return {"route": "business_produccion", "message": ""}
+    if any(token in normalized for token in ("licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas")) and any(
+        token in normalized for token in ("recientes", "mas recientes", "relacionadas", "relacionados", "vinculadas", "vinculados", "top", "ranking")
+    ):
+        return {"route": "business_licitaciones", "message": ""}
 
     if documentary_or_technical and not _has_strong_business_signal(normalized):
         return {"route": "knowledge", "message": ""}

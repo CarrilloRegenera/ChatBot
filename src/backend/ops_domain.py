@@ -26,6 +26,13 @@ OPS_TECHNICAL_HINTS = (
     "ieee 80005",
     "iso 80005",
     "80005-1",
+    "80005-2",
+    "80005-3",
+    "hvsc",
+    "lvsc",
+    "data communication",
+    "monitorizacion y control",
+    "monitoring and control",
     "electrificacion de atraques",
     "electrificacion de buques",
     "suministro electrico a buques",
@@ -44,10 +51,16 @@ OPS_DOCUMENTARY_HINTS = OPS_TECHNICAL_HINTS + (
     "checklist ops",
     "shore-side",
     "shore side",
+    "planificacion y explotacion",
+    "redaccion de proyectos",
+    "programa de necesidades",
+    "pliegos de condiciones",
+    "questionnaire results",
+    "world ports climate action",
 )
 
 
-_OPS_STANDARD_REFERENCE_RE = re.compile(r"\b80005(?:-1)?\b")
+_OPS_STANDARD_REFERENCE_RE = re.compile(r"\b80005(?:-[123])?\b")
 
 
 def _normalize_ops_text(text: str) -> str:

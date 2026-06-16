@@ -116,6 +116,8 @@ def search_licitaciones(reference: str, take: int = 10) -> List[Dict[str, Any]]:
         cursor.execute(
             """
             SELECT TOP (?) Id, NumeroProyecto, NumeroOferta, Obra, Cliente, Estado, TipoObra,
+                   FechaPresentacion, FechaApertura, FechaAdjudicacion, CreatedDate, UpdatedDate,
+                   Pendiente, Concurso,
                    ImporteContratado, Produccion, Plan2026, Plan2027, Plan2028, Plan2029,
                    Produccion2026, Produccion2027, Produccion2028, Produccion2029, ProduccionPrevio
             FROM dbo.Licitaciones
@@ -152,6 +154,8 @@ def search_licitaciones_by_client_text(client_text: str, take: int = 50) -> List
         cursor.execute(
             """
             SELECT TOP (?) Id, NumeroProyecto, NumeroOferta, Obra, Cliente, Estado, TipoObra,
+                   FechaPresentacion, FechaApertura, FechaAdjudicacion, CreatedDate, UpdatedDate,
+                   Pendiente, Concurso,
                    ImporteContratado, Produccion, Plan2026, Plan2027, Plan2028, Plan2029,
                    Produccion2026, Produccion2027, Produccion2028, Produccion2029, ProduccionPrevio
             FROM dbo.Licitaciones
@@ -336,6 +340,7 @@ def search_produccion(reference: str, take: int = 10) -> List[Dict[str, Any]]:
             SELECT TOP (?) p.Id, p.CodigoObra, p.NombreObra, p.TipoObra, p.ImporteContratado, p.Cartera2026,
                    p.ProduccionMarzo, p.ProduccionAbril, p.ProduccionMayo, p.ProduccionJunio,
                    p.ProduccionJulio, p.ProduccionSeptiembre, p.Pendiente2026, p.Diferencia, p.Comentarios,
+                   p.Finalizada, p.Oculta, p.CreatedDate, p.UpdatedDate,
                    l.NumeroProyecto, l.NumeroOferta, l.Cliente, l.Estado
             FROM dbo.ProyectosProduccionSync p
             LEFT JOIN dbo.Licitaciones l ON l.Id = p.LicitacionId

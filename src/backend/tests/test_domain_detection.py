@@ -163,6 +163,45 @@ def test_ops_document_variants_distinguish_normative_base_and_checklists():
     ) == ["checklist_implantacion"]
 
 
+def test_ops_document_variants_cover_monitoring_summary_and_project_planning():
+    assert _document_variant_from_source("ops/01_normativa_base/iecieee80005-2_2016.pdf") == "monitorizacion_control"
+    assert _document_variant_from_source(
+        "ops/04_resumen_sectorial/On_shore_power_supply_summary-surveys_final.pdf"
+    ) == "resumen_sectorial"
+    assert _document_variant_from_source(
+        "ops/05_planificacion_proyecto/OPS - Redaccion de Proyectos - Recomendaciones.pdf"
+    ) == "planificacion_proyecto"
+    variants_80005_2 = _expected_document_variants(
+        "Segun la IEC 80005-2, que datos se usan para monitorizacion y control?",
+        ["ops"],
+    )
+    assert "monitorizacion_control" in variants_80005_2
+    assert _expected_document_variants(
+        "Que dice el survey de WPCAP sobre conexiones OPS exitosas?",
+        ["ops"],
+    ) == ["resumen_sectorial"]
+    assert _expected_document_variants(
+        "Que recomienda OPS para pliegos de condiciones y programa de necesidades?",
+        ["ops"],
+    ) == ["planificacion_proyecto"]
+
+
+def test_ops_phrase_queries_cover_project_and_monitoring_questions():
+    phrases = _domain_phrase_queries(
+        "Segun la IEC 80005-2, que datos se usan para monitorizacion y control SCADA?"
+    )
+    assert "IEC/IEEE 80005-2" in phrases
+    assert "data communication for monitoring and control" in phrases
+    assert "SCADA" in phrases
+
+    project_phrases = _domain_phrase_queries(
+        "Que recomienda OPS para pliegos de condiciones y programa de necesidades?"
+    )
+    assert "PLIEGOS DE CONDICIONES" in project_phrases
+    assert "Programa de necesidades" in project_phrases
+    assert "REDACCION DE PROYECTOS OPS" in project_phrases
+
+
 def test_expected_domains_avoids_substring_false_positives():
     detected = _expected_domains(
         "Que criterios usa ISO 8528-5 para evaluar la respuesta transitoria de grupos electrogenos?"

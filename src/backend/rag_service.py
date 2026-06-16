@@ -621,6 +621,17 @@ collection = _get_or_reset_collection(chroma_client, COLLECTION_NAME, _embedding
 table_collection = _get_or_reset_collection(chroma_client, TABLE_COLLECTION_NAME, _embedding_fn)
 
 
+def _ensure_active_chroma_collections() -> None:
+    global collection, table_collection
+    try:
+        collection.count()
+        table_collection.count()
+    except Exception:
+        logger.warning("Coleccion Chroma no disponible; recreando handles locales")
+        collection = _get_or_reset_collection(chroma_client, COLLECTION_NAME, _embedding_fn)
+        table_collection = _get_or_reset_collection(chroma_client, TABLE_COLLECTION_NAME, _embedding_fn)
+
+
 def _find_chunk_boundary(text: str, chunk_size: int = CHUNK_SIZE, grace: int = CHUNK_SENTENCE_GRACE) -> int:
     if len(text) <= chunk_size:
         return len(text)
@@ -2111,6 +2122,7 @@ def _search_documents_detailed_chroma(
     if _embedding_fn is None:
         logger.error("Busqueda RAG deshabilitada: embedding model '%s' no disponible", RERANK_MODEL)
         return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+    _ensure_active_chroma_collections()
 
     clean_question = _clean_question(question)
     mentions_bt40 = _query_mentions_bt40(clean_question)

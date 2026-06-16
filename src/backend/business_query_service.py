@@ -142,6 +142,35 @@ _PRODUCCION_METRIC_HINTS = (
     "con mayor",
 )
 
+_BUSINESS_PRODUCCION_LISTING_HINTS = (
+    "proyecto",
+    "proyectos",
+    "obra",
+    "obras",
+    "en curso",
+    "actualmente",
+    "activa",
+    "activas",
+    "curso",
+)
+
+_BUSINESS_ESTUDIOS_LISTING_HINTS = (
+    "licitacion",
+    "licitaciones",
+    "estudio",
+    "estudios",
+    "oferta",
+    "ofertas",
+    "recientes",
+    "mas recientes",
+    "relacionadas",
+    "relacionados",
+    "vinculadas",
+    "vinculados",
+    "top",
+    "ranking",
+)
+
 
 def _normalize(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
@@ -281,6 +310,10 @@ def _has_strong_business_signal(text: str, reference: str | None) -> bool:
         return True
     if any(hint in text for hint in _STRONG_BUSINESS_ROUTE_HINTS):
         return True
+    if any(token in text for token in ("cliente", "estado", "en curso", "actualmente")) and any(
+        entity in text for entity in ("proyecto", "proyectos", "obra", "obras", "licitacion", "licitaciones", "estudio", "estudios")
+    ):
+        return True
     return False
 
 
@@ -304,6 +337,18 @@ def detect_business_route(question: str) -> str | None:
             return "business_produccion"
         if re.fullmatch(r"\d{5}", reference):
             return "business_produccion"
+    if (
+        any(hint in text for hint in ("proyecto", "proyectos", "obra", "obras"))
+        and any(hint in text for hint in ("cliente", "en curso", "actualmente", "estado", "importe", "produccion"))
+        and "licitacion" not in text
+        and "licitaciones" not in text
+    ):
+        return "business_produccion"
+    if (
+        any(hint in text for hint in ("licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas"))
+        and any(hint in text for hint in ("recientes", "mas recientes", "relacionadas", "relacionados", "vinculadas", "vinculados", "top", "ranking", "cliente"))
+    ):
+        return "business_licitaciones"
 
     if any(hint in text for hint in ("control de produccion", "cierre", "cartera", "rentabilidad", "produccion estimada", "produccion marzo", "produccion abril")):
         return "business_produccion"
@@ -429,8 +474,20 @@ def _answer_business_question_sql(
             )
 
         if module == "estudios":
+            filtered_listing_result = _answer_estudios_filtered_listing_sql(parsed, route=route)
+            if filtered_listing_result:
+                return _with_business_trace(
+                    filtered_listing_result,
+                    _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="filtered_listing"),
+                )
             detail_result = _answer_estudios_detail_sql(parsed, route=route)
         else:
+            filtered_listing_result = _answer_produccion_filtered_listing_sql(parsed, route=route)
+            if filtered_listing_result:
+                return _with_business_trace(
+                    filtered_listing_result,
+                    _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="filtered_listing"),
+                )
             detail_result = _answer_produccion_detail_sql(parsed, route=route, normalized_question=normalized)
 
         if detail_result:
@@ -706,37 +763,41 @@ def _answer_produccion_detail_sql(parsed: Dict[str, Any], *, route: str, normali
     }
 
 
-def _answer_estudios_filtered_listing_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
+def _answer_produccion_filtered_listing_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
     question_text = _normalize(parsed.get("question") or "")
     filter_text = str(parsed.get("filter_text") or "").strip()
     if not filter_text:
         return None
-    if not any(token in question_text for token in ("licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas")):
+    if not any(token in question_text for token in ("proyecto", "proyectos", "obra", "obras")):
         return None
-    if not any(token in question_text for token in ("contiene", "contienen", "incluye", "incluyen", "palabra", "texto", "cliente")):
+    if not (
+        _looks_like_filtered_listing_request(question_text)
+        or _looks_like_active_production_listing_query(question_text)
+        or _looks_like_ranked_listing_query(question_text)
+    ):
         return None
 
-    if "cliente" in question_text:
-        matches = sql_search_licitaciones_by_client_text(filter_text, take=100)
-    else:
-        matches = sql_search_licitaciones(filter_text, take=50)
+    matches = sql_search_produccion(filter_text, take=100)
     if not matches:
         return {
-            "response": "No he encontrado licitaciones que encajen con ese filtro.",
+            "response": "No he encontrado proyectos de produccion que encajen con ese filtro.",
             "route": route,
             "confidence": 0.95,
             "sources": [],
         }
 
-    if "cliente" in question_text:
+    if _is_explicit_client_field_filter(question_text):
         needle = _normalize(filter_text)
         matches = [
-            item for item in matches
+            item
+            for item in matches
             if needle in _normalize(str(item.get("Cliente") or ""))
         ]
+
+    matches = _sort_produccion_listing_matches(matches, question_text=question_text)
     if not matches:
         return {
-            "response": "No he encontrado licitaciones cuyo cliente contenga ese texto.",
+            "response": "No he encontrado proyectos en produccion que encajen con ese filtro.",
             "route": route,
             "confidence": 0.95,
             "sources": [],
@@ -745,12 +806,116 @@ def _answer_estudios_filtered_listing_sql(parsed: Dict[str, Any], *, route: str)
     top_matches = matches[:5]
     lines = []
     for index, item in enumerate(top_matches, start=1):
+        code = item.get("CodigoObra") or item.get("NumeroProyecto") or item.get("NumeroOferta") or "-"
+        obra = item.get("NombreObra") or "-"
+        cliente = item.get("Cliente") or "-"
+        estado = item.get("Estado") or ("En curso" if item.get("Finalizada") in (False, 0, None) else "Finalizada")
+        lines.append(f"{index}. {code} - {obra}: cliente = {cliente}; estado = {estado}")
+
+    qualifier = "en curso" if _looks_like_active_production_listing_query(question_text) else "filtrados"
+    if _looks_like_ranked_listing_query(question_text):
+        qualifier = "top"
+    return {
+        "response": f"Proyectos {qualifier} relacionados con '{filter_text}': " + " | ".join(lines),
+        "route": route,
+        "confidence": 1.0,
+        "sources": [{"source": "AppRegenera SQL", "module": "produccion"}],
+    }
+
+
+def _answer_estudios_filtered_listing_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
+    question_text = _normalize(parsed.get("question") or "")
+    filter_text = str(parsed.get("filter_text") or "").strip()
+    if not filter_text:
+        return None
+    if not any(
+        token in question_text
+        for token in ("licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas", "proyecto", "proyectos", "obra", "obras")
+    ):
+        return None
+    explicit_client_filter = _is_explicit_client_field_filter(question_text)
+    is_client_filter_query = explicit_client_filter and any(
+        token in question_text for token in ("contiene", "contienen", "incluye", "incluyen", "palabra", "texto", "cliente")
+    )
+    is_backlog_listing_query = (
+        _looks_like_filtered_listing_request(question_text)
+        and any(token in question_text for token in ("adjudicada", "adjudicadas", "adjudicado", "adjudicados", "backlog", "ganada", "ganadas"))
+    )
+    is_related_listing_query = (
+        _looks_like_filtered_listing_request(question_text)
+        and any(token in question_text for token in ("relacionadas", "relacionados", "vinculadas", "vinculados", "recientes", "mas recientes", "top", "ranking"))
+    )
+    if not is_client_filter_query and not is_backlog_listing_query and not is_related_listing_query:
+        return None
+
+    if explicit_client_filter:
+        matches = sql_search_licitaciones_by_client_text(filter_text, take=100)
+    else:
+        matches = sql_search_licitaciones(filter_text, take=100)
+    if not matches:
+        return {
+            "response": "No he encontrado licitaciones que encajen con ese filtro.",
+            "route": route,
+            "confidence": 0.95,
+            "sources": [],
+        }
+
+    if explicit_client_filter:
+        needle = _normalize(filter_text)
+        matches = [
+            item for item in matches
+            if needle in _normalize(str(item.get("Cliente") or ""))
+        ]
+    if is_backlog_listing_query:
+        matches = [
+            item
+            for item in matches
+            if _normalize(str(item.get("Estado") or "")).startswith(("adjudicada", "completada"))
+        ]
+    if not matches:
+        if is_backlog_listing_query:
+            return {
+                "response": "No he encontrado licitaciones adjudicadas que encajen con ese filtro.",
+                "route": route,
+                "confidence": 0.95,
+                "sources": [],
+            }
+        return {
+            "response": "No he encontrado licitaciones cuyo cliente contenga ese texto.",
+            "route": route,
+            "confidence": 0.95,
+            "sources": [],
+        }
+
+    matches = _sort_estudios_listing_matches(matches, question_text=question_text)
+    top_matches = matches[:5]
+    lines = []
+    for index, item in enumerate(top_matches, start=1):
         code = item.get("NumeroProyecto") or item.get("NumeroOferta") or "-"
         obra = item.get("Obra") or "-"
         cliente = item.get("Cliente") or "-"
-        lines.append(f"{index}. {code} - {obra}: cliente = {cliente}")
+        if is_backlog_listing_query or is_related_listing_query or _looks_like_recent_listing_query(question_text):
+            estado = item.get("Estado") or "-"
+            lines.append(f"{index}. {code} - {obra}: cliente = {cliente}; estado = {estado}")
+        else:
+            lines.append(f"{index}. {code} - {obra}: cliente = {cliente}")
+    if is_backlog_listing_query:
+        return {
+            "response": f"Licitaciones adjudicadas que encajan con '{filter_text}': " + " | ".join(lines),
+            "route": route,
+            "confidence": 1.0,
+            "sources": [{"source": "AppRegenera SQL", "module": "estudios"}],
+        }
+    if is_related_listing_query:
+        qualifier = "mas recientes" if _looks_like_recent_listing_query(question_text) else "top"
+        return {
+            "response": f"Licitaciones {qualifier} relacionadas con '{filter_text}': " + " | ".join(lines),
+            "route": route,
+            "confidence": 1.0,
+            "sources": [{"source": "AppRegenera SQL", "module": "estudios"}],
+        }
     return {
-        "response": f"Licitaciones que contienen '{filter_text}'{(' en cliente' if 'cliente' in question_text else '')}: " + " | ".join(lines),
+        "response": f"Licitaciones que contienen '{filter_text}'{(' en cliente' if explicit_client_filter else '')}: " + " | ".join(lines),
         "route": route,
         "confidence": 1.0,
         "sources": [{"source": "AppRegenera SQL", "module": "estudios"}],
@@ -1295,6 +1460,14 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
     if has_specific_reference and not is_top:
         return None
 
+    if (
+        is_count
+        and asks_plural
+        and _looks_like_filtered_listing_request(text)
+        and any(token in text for token in ("adjudicada", "adjudicadas", "adjudicado", "adjudicados"))
+    ):
+        return None
+
     metric = _detect_count_metric(text, module) if is_count else _detect_aggregate_metric(text, fields, module=module, year=year)
     if not metric:
         return None
@@ -1375,6 +1548,16 @@ def _is_count_request(text: str) -> bool:
     return not any(marker in text for marker in numeric_metric_markers)
 
 
+def _looks_like_filtered_listing_request(text: str) -> bool:
+    return bool(
+        (
+            re.search(r"^(que|cuales|dame|listame|lista|muestrame|indicame|ensename)\s+(?:el\s+|la\s+)?(?:top\s+de\s+)?(?:proyectos|obras|estudios|licitaciones|ofertas)\b", text)
+            or re.search(r"^(que|cuales)\s+son\s+las?\s+(?:\d+\s+)?(?:proyectos|obras|estudios|licitaciones|ofertas)\b", text)
+        )
+        and any(token in text for token in (" son ", " contienen ", " incluyen ", " hay ", " recientes", " relacionadas", " vinculadas", " vinculados", " top ", " ranking ", " cliente"))
+    )
+
+
 def _detect_count_metric(text: str, module: str) -> str:
     if "cierre" in text or "cierres" in text or _contains_cierre_hint(text):
         return "cierre:count"
@@ -1400,6 +1583,26 @@ def _extract_area(text: str) -> str | None:
 
 
 def _extract_filter_text(original_question: str, normalized: str) -> str | None:
+    relation_match = re.search(
+        r"\b(?:relacionad[oa]s?|vinculad[oa]s?|asociad[oa]s?)\s+(?:con|a)\s+([a-z0-9][a-z0-9 .&/-]{1,40}?)(?:\s+con\s+su\s+cliente|\s+con\s+cliente|\s*$)",
+        normalized,
+    )
+    if relation_match:
+        candidate = re.sub(r"\s+", " ", relation_match.group(1)).strip(" -?.")
+        candidate = re.sub(r"^(el|la|los|las)\s+", "", candidate).strip()
+        if candidate:
+            return candidate.upper() if candidate.isalpha() and len(candidate) <= 12 else candidate
+
+    client_match = re.search(
+        r"\b(?:para el|para la|para los|para las|para|del|de la|de los|de las|de)\s+cliente\s+(?:(?:el|la|los|las)\s+)?([a-z0-9][a-z0-9 .&/-]{1,40}?)(?:\s*$)",
+        normalized,
+    )
+    if client_match:
+        candidate = re.sub(r"\s+", " ", client_match.group(1)).strip(" -?.")
+        candidate = re.sub(r"^(el|la|los|las)\s+", "", candidate).strip()
+        if candidate:
+            return candidate.upper() if candidate.isalpha() and len(candidate) <= 12 else candidate
+
     keyword_match = re.search(
         r"\b(?:palabra|texto|cadena)\s+([a-z0-9][a-z0-9 .&/-]{1,40})(?:\s+en\s+su\s+\w+|\s+en\s+\w+|\?|$)",
         normalized,
@@ -1408,6 +1611,7 @@ def _extract_filter_text(original_question: str, normalized: str) -> str | None:
         candidate = re.sub(r"\s+", " ", keyword_match.group(1)).strip(" -?.")
         candidate = re.sub(r"\s+en\s+su\s+\w+$", "", candidate).strip(" -?.")
         candidate = re.sub(r"\s+en\s+\w+$", "", candidate).strip(" -?.")
+        candidate = re.sub(r"^(el|la|los|las)\s+", "", candidate).strip()
         if candidate:
             return candidate.upper() if candidate.isalpha() and len(candidate) <= 12 else candidate
 
@@ -1464,6 +1668,90 @@ def _build_source_info_response(parsed: Dict[str, Any], *, module: str, route: s
         "confidence": 1.0,
         "sources": [{"source": f"AppRegenera SQL {source_name}", "module": module}],
     }
+
+
+def _is_explicit_client_field_filter(question_text: str) -> bool:
+    return any(
+        phrase in question_text
+        for phrase in (
+            "en su cliente",
+            "en cliente",
+            "cliente contiene",
+            "cliente contenga",
+            "del cliente ",
+            "para el cliente ",
+            "para cliente ",
+        )
+    )
+
+
+def _looks_like_recent_listing_query(question_text: str) -> bool:
+    return any(token in question_text for token in ("recientes", "mas recientes", "ultimas", "ultimos"))
+
+
+def _looks_like_ranked_listing_query(question_text: str) -> bool:
+    return any(token in question_text for token in ("top", "ranking"))
+
+
+def _looks_like_active_production_listing_query(question_text: str) -> bool:
+    return any(token in question_text for token in ("en curso", "actualmente", "activa", "activas"))
+
+
+def _sort_estudios_listing_matches(matches: List[Dict[str, Any]], *, question_text: str) -> List[Dict[str, Any]]:
+    if _looks_like_recent_listing_query(question_text):
+        return sorted(
+            matches,
+            key=lambda item: (
+                item.get("FechaAdjudicacion")
+                or item.get("FechaPresentacion")
+                or item.get("UpdatedDate")
+                or item.get("CreatedDate")
+                or datetime.min
+            ),
+            reverse=True,
+        )
+
+    if _looks_like_ranked_listing_query(question_text):
+        return sorted(
+            matches,
+            key=lambda item: (
+                parse_decimal(item.get("ImporteContratado")) or 0.0,
+                parse_decimal(item.get("Produccion")) or 0.0,
+                parse_decimal(item.get("Plan2026")) or 0.0,
+            ),
+            reverse=True,
+        )
+
+    return matches
+
+
+def _sort_produccion_listing_matches(matches: List[Dict[str, Any]], *, question_text: str) -> List[Dict[str, Any]]:
+    ordered = matches
+    if _looks_like_active_production_listing_query(question_text):
+        ordered = [
+            item for item in ordered
+            if item.get("Finalizada") in (False, 0, None)
+            and _normalize(str(item.get("Estado") or "")).strip() not in {"completada", "finalizada"}
+        ]
+
+    if _looks_like_ranked_listing_query(question_text):
+        ordered = sorted(
+            ordered,
+            key=lambda item: (
+                parse_decimal(item.get("ImporteContratado")) or 0.0,
+                parse_decimal(item.get("Cartera2026")) or 0.0,
+                parse_decimal(item.get("Pendiente2026")) or 0.0,
+            ),
+            reverse=True,
+        )
+    elif _looks_like_recent_listing_query(question_text):
+        ordered = sorted(
+            ordered,
+            key=lambda item: item.get("UpdatedDate") or item.get("CreatedDate") or datetime.min,
+            reverse=True,
+        )
+
+    return ordered
 
 
 def _infer_source_module_from_history(history: List[Dict[str, Any]], fallback: str) -> str:

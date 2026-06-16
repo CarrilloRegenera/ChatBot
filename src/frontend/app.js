@@ -417,6 +417,7 @@ const DEPLOYMENTS_PAGE_SIZE = 25;
 let confirmModalResolver = null;
 let loadingStateDepth = 0;
 const PENDING_MESSAGE_KEY = "chatbot_pending_message";
+let authRecoveryInProgress = false;
 const LAST_UNLOAD_KEY = "chatbot_last_unload";
 function normalizeMojibakeText(input) {
     const text = String(input ?? "");
@@ -458,6 +459,30 @@ function clearSession() {
     localStorage.removeItem(CHAT_MODE_STORAGE_KEY);
 }
 
+async function handleUnauthorizedSession() {
+    if (authRecoveryInProgress) return;
+    authRecoveryInProgress = true;
+    try {
+        currentUser = null;
+        currentConversation = null;
+        activeChatMode = null;
+        conversationMessagesCache.clear();
+        clearSession();
+        clearPendingMessage();
+        document.getElementById("chat-messages").innerHTML = "";
+        document.getElementById("conversation-list").innerHTML = "";
+        showWelcomeState();
+        updateAdminVisibility();
+        showView("login");
+    } finally {
+        authRecoveryInProgress = false;
+    }
+}
+
+function isUnauthorizedResponse(res) {
+    return res?.status === 401 || res?.status === 403;
+}
+
 function restoreSession() {
     const rawUser = localStorage.getItem("chatbot_user");
     const rawConversation = localStorage.getItem("chatbot_conversation_id");
@@ -481,6 +506,31 @@ function restoreSession() {
     activeChatMode = normalizeChatMode(localStorage.getItem(CHAT_MODE_STORAGE_KEY)) || null;
 
     return true;
+}
+
+async function tryRestoreEntraSessionSilently() {
+    if (!ENTRA_CONFIG.enabled) return false;
+    if (sessionStorage.getItem(ENTRA_SKIP_AUTOLOGIN_ONCE_KEY) === "1") {
+        sessionStorage.removeItem(ENTRA_SKIP_AUTOLOGIN_ONCE_KEY);
+        return false;
+    }
+    try {
+        const client = await getMsalClient();
+        const account = client.getActiveAccount() || client.getAllAccounts()[0];
+        if (!account) return false;
+        client.setActiveAccount(account);
+        const tokenResult = await client.acquireTokenSilent({
+            account,
+            scopes: ENTRA_CONFIG.apiScope ? [ENTRA_CONFIG.apiScope] : ["openid", "profile", "email"],
+        });
+        const entraToken = tokenResult?.accessToken || tokenResult?.idToken || "";
+        if (!entraToken) return false;
+        await finalizeEntraSession(entraToken);
+        return true;
+    } catch (err) {
+        console.warn("No se pudo restaurar la sesion de Microsoft en segundo plano:", err);
+        return false;
+    }
 }
 
 function savePendingMessage(payload) {
@@ -909,8 +959,8 @@ function renderConversationMessages(messages) {
     if ((messages || []).length > 0) {
         showMessagesState();
         (messages || []).forEach((msg) => {
-            appendMessage("user", msg.question);
-            appendMessage("assistant", msg.response);
+            appendConversationMessage("user", msg.question, msg);
+            appendConversationMessage("assistant", msg.response, msg);
         });
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
         return;
@@ -968,7 +1018,14 @@ function logout() {
     if (wasEntraSession) {
         sessionStorage.setItem(ENTRA_SKIP_AUTOLOGIN_ONCE_KEY, "1");
         getMsalClient()
-            .then((client) => client.logoutPopup({ postLogoutRedirectUri: SPA_REDIRECT_URI }))
+            .then(async (client) => {
+                try {
+                    client.setActiveAccount(null);
+                } catch {}
+                if (typeof client.clearCache === "function") {
+                    await client.clearCache();
+                }
+            })
             .catch(() => {})
             .finally(() => window.location.assign(SPA_REDIRECT_URI));
         return;
@@ -990,6 +1047,10 @@ async function createConversation(reloadList = true) {
             headers: { "Content-Type": "application/json", ...getUserHeaders() },
             body: JSON.stringify({ user_id: currentUser.id, title: config.newConversationTitle, chat_mode: activeChatMode }),
         });
+        if (isUnauthorizedResponse(res)) {
+            await handleUnauthorizedSession();
+            return;
+        }
 
         const data = await res.json();
         currentConversation = data.conversation_id;
@@ -1025,6 +1086,10 @@ async function loadConversations() {
         const res = await fetch(`${API}/conversations/${currentUser.id}`, {
             headers: getUserHeaders(),
         });
+        if (isUnauthorizedResponse(res)) {
+            await handleUnauthorizedSession();
+            return;
+        }
         const data = await res.json();
 
         const list = document.getElementById("conversation-list");
@@ -1039,9 +1104,16 @@ async function loadConversations() {
 
         if (conversations.length === 0) {
             await createConversation(false);
+            if (!currentUser) {
+                return;
+            }
             const retryRes = await fetch(`${API}/conversations/${currentUser.id}`, {
                 headers: getUserHeaders(),
             });
+            if (isUnauthorizedResponse(retryRes)) {
+                await handleUnauthorizedSession();
+                return;
+            }
             const retryData = await retryRes.json();
             const retryAllConversations = retryData.conversations || [];
             retryAllConversations.forEach((conv) => setConversationMode(conv.id, normalizeChatMode(conv.mode) || "technical"));
@@ -1097,6 +1169,10 @@ async function selectConversation(id, options = {}) {
         const res = await fetch(`${API}/conversations/${id}/messages`, {
             headers: getUserHeaders(),
         });
+        if (isUnauthorizedResponse(res)) {
+            await handleUnauthorizedSession();
+            return;
+        }
         const data = await res.json();
 
         if (requestId !== activeConversationRequest || currentConversation !== id) {
@@ -1200,6 +1276,97 @@ function appendMessage(role, text) {
     messagesDiv.appendChild(row);
 }
 
+function createInlineFeedbackActions(message) {
+    if (!message?.interaction_id || !currentUser) return null;
+    if (String(message.interaction_state || "").toLowerCase() !== "pendiente") return null;
+
+    const actions = document.createElement("div");
+    actions.className = "inline-feedback-actions";
+
+    const approveBtn = document.createElement("button");
+    approveBtn.type = "button";
+    approveBtn.className = "inline-feedback-btn approve";
+    approveBtn.title = "Aprobar respuesta";
+    approveBtn.setAttribute("aria-label", "Aprobar respuesta");
+    approveBtn.innerHTML = "&#10003;";
+    approveBtn.onclick = async () => {
+        approveBtn.disabled = true;
+        rejectBtn.disabled = true;
+        const ok = await submitInlineFeedback(message.interaction_id, "validate");
+        if (!ok) {
+            approveBtn.disabled = false;
+            rejectBtn.disabled = false;
+            return;
+        }
+        actions.remove();
+    };
+
+    const rejectBtn = document.createElement("button");
+    rejectBtn.type = "button";
+    rejectBtn.className = "inline-feedback-btn reject";
+    rejectBtn.title = "Rechazar respuesta";
+    rejectBtn.setAttribute("aria-label", "Rechazar respuesta");
+    rejectBtn.innerHTML = "&#10005;";
+    rejectBtn.onclick = async () => {
+        approveBtn.disabled = true;
+        rejectBtn.disabled = true;
+        const ok = await submitInlineFeedback(message.interaction_id, "reject");
+        if (!ok) {
+            approveBtn.disabled = false;
+            rejectBtn.disabled = false;
+            return;
+        }
+        actions.remove();
+    };
+
+    actions.appendChild(approveBtn);
+    actions.appendChild(rejectBtn);
+    return actions;
+}
+
+async function submitInlineFeedback(interactionId, action) {
+    if (!currentUser || !interactionId) return false;
+    try {
+        const res = await fetch(`${API}/knowledge/${interactionId}/${action}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...getUserHeaders() },
+            body: JSON.stringify({ reviewer: currentUser.nombre || currentUser.email || "usuario" }),
+        });
+        if (isUnauthorizedResponse(res)) {
+            await handleUnauthorizedSession();
+            return false;
+        }
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data?.detail || "No se pudo registrar el feedback.");
+        }
+        return true;
+    } catch (err) {
+        alert(err?.message || "No se pudo registrar el feedback.");
+        return false;
+    }
+}
+
+function appendConversationMessage(role, text, message = null) {
+    const messagesDiv = document.getElementById("chat-messages");
+    const row = document.createElement("div");
+    row.className = `message-row ${role}`;
+
+    const bubble = document.createElement("div");
+    bubble.className = "message-bubble";
+    bubble.textContent = normalizeMojibakeText(text);
+    row.appendChild(bubble);
+
+    if (role === "assistant") {
+        const actions = createInlineFeedbackActions(message);
+        if (actions) {
+            row.appendChild(actions);
+        }
+    }
+
+    messagesDiv.appendChild(row);
+}
+
 function historyContainsQuestion(messages, question) {
     const normalizedQuestion = String(question || "").replace(/\s+/g, " ").trim();
     return (messages || []).some((msg) => String(msg.question || "").replace(/\s+/g, " ").trim() === normalizedQuestion);
@@ -1233,8 +1400,8 @@ async function reconcilePendingMessage(conversationId) {
             showMessagesState();
             const messagesDiv = document.getElementById("chat-messages");
             if (!messagesDiv.textContent.includes(pending.question)) {
-                appendMessage("user", pending.question);
-                appendMessage("assistant", pending.response || "Procesando respuesta...");
+                appendConversationMessage("user", pending.question, pending);
+                appendConversationMessage("assistant", pending.response || "Procesando respuesta...", pending);
             }
         }
     } catch (err) {
@@ -1358,7 +1525,7 @@ async function sendMessage() {
         input.style.height = "auto";
 
         showMessagesState();
-        appendMessage("user", question);
+        appendConversationMessage("user", question, { question });
         savePendingMessage({
             conversationId,
             question,
@@ -1375,6 +1542,12 @@ async function sendMessage() {
             headers: { "Content-Type": "application/json", ...getAdminHeaders() },
             body: JSON.stringify({ conversation_id: conversationId, question, chat_mode: activeChatMode }),
         });
+        if (isUnauthorizedResponse(res)) {
+            removeTypingIndicator();
+            await handleUnauthorizedSession();
+            clearPendingMessage();
+            return;
+        }
 
         const data = await res.json();
         if (!res.ok) {
@@ -1382,7 +1555,13 @@ async function sendMessage() {
         }
 
         removeTypingIndicator();
-        appendMessage("assistant", data.response);
+        appendConversationMessage("assistant", data.response, {
+            question,
+            response: data.response,
+            interaction_id: data.interaction_id,
+            interaction_state: data.interaction_id ? "pendiente" : "",
+            confidence: data.confidence,
+        });
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
         conversationMessagesCache.delete(conversationId);
         savePendingMessage({
@@ -1391,6 +1570,8 @@ async function sendMessage() {
             response: data.response,
             createdAt: Date.now(),
             status: "answered",
+            interaction_id: data.interaction_id,
+            interaction_state: data.interaction_id ? "pendiente" : "",
         });
 
         const activeItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
@@ -1414,7 +1595,7 @@ async function sendMessage() {
         });
     } catch (err) {
         removeTypingIndicator();
-        appendMessage("assistant", err?.message || "Error de conexión con el servidor.");
+        appendConversationMessage("assistant", err?.message || "Error de conexión con el servidor.");
         clearPendingMessage();
     } finally {
         setSendingState(false);
@@ -2204,64 +2385,52 @@ async function rejectMyInteraction(interactionId) {
 
 // ===== INIT =====
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
     updateEntraLoginVisibility();
     updateModeCopy();
     const unloadMark = consumePageUnloadMark();
     const hasRedirectResponse = hasEntraRedirectResponse();
-    const restoredSession = restoreSession();
     if (unloadMark) {
         console.warn("La página se recargó o descargó durante la sesión:", unloadMark);
     }
-    if (restoredSession && currentUser) {
+
+    if (hasRedirectResponse) {
+        setLoadingState(true, "Conectando...");
+        try {
+            await handleEntraRedirect();
+        } catch (err) {
+            const loginError = document.getElementById("login-error");
+            if (loginError) {
+                loginError.textContent = err?.message || "No se pudo iniciar sesión con Microsoft";
+            }
+        } finally {
+            setLoadingState(false);
+        }
+    } else {
+        const restoredSession = restoreSession();
+        if (restoredSession && currentUser?.authProvider === "entra") {
+            const restoredEntraSession = await tryRestoreEntraSessionSilently();
+            if (!restoredEntraSession) {
+                await handleUnauthorizedSession();
+            }
+        }
+    }
+
+    if (currentUser) {
         setUserChrome();
         updateAdminVisibility();
         if (activeChatMode) {
             updateModeCopy();
             showView("chat");
-            loadConversations();
+            await loadConversations();
         } else {
             showModeSelector();
         }
-    } else {
-        updateAdminVisibility();
-        showView("login");
-    }
-
-    if (!hasRedirectResponse) {
         return;
     }
 
-    setLoadingState(true, "Conectando...");
-    handleEntraRedirect()
-        .catch((err) => {
-            const loginError = document.getElementById("login-error");
-            if (loginError) {
-                loginError.textContent = err?.message || "No se pudo iniciar sesión con Microsoft";
-            }
-        })
-        .finally(() => {
-            try {
-                if (!currentUser && restoreSession()) {
-                    setUserChrome();
-                    updateAdminVisibility();
-                    if (activeChatMode) {
-                        updateModeCopy();
-                        showView("chat");
-                        loadConversations();
-                    } else {
-                        showModeSelector();
-                    }
-                } else {
-                    if (!currentUser) {
-                        updateAdminVisibility();
-                        showView("login");
-                    }
-                }
-            } finally {
-                setLoadingState(false);
-            }
-        });
+    updateAdminVisibility();
+    showView("login");
 });
 
 window.addEventListener("beforeunload", markPageUnload);
