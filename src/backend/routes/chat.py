@@ -175,6 +175,43 @@ def _should_apply_history_hints(question: str) -> bool:
     return normalized.startswith(("que ", "qué ", "cual ", "cuál ", "como ", "cómo "))
 
 
+def _is_followup_prefix_question(question: str) -> bool:
+    normalized = " ".join((question or "").strip().lower().split())
+    if not normalized:
+        return False
+    return bool(_FOLLOWUP_PREFIX_RE.search(normalized))
+
+
+def _recover_route_from_history(
+    question: str,
+    *,
+    chat_mode: str,
+    route: str,
+    business_route_hint: str | None,
+    history: List[Dict[str, str]] | None = None,
+) -> str:
+    if business_route_hint:
+        return business_route_hint
+
+    recent_history = history or []
+    if not _is_followup_prefix_question(question):
+        return route
+
+    if chat_mode == "technical" and route in {"smalltalk", "invalid", "out_of_scope"}:
+        return "knowledge"
+
+    if chat_mode == "business" and route in {"smalltalk", "invalid", "out_of_scope", "knowledge"}:
+        for item in reversed(recent_history):
+            previous_question = str(item.get("question", "") or "").strip()
+            if not previous_question:
+                continue
+            inferred = detect_business_route(previous_question)
+            if inferred in {"business_licitaciones", "business_produccion"}:
+                return inferred
+
+    return route
+
+
 def _augment_retrieval_question(question: str) -> str:
     normalized = " ".join((question or "").strip().lower().split())
     if not normalized:
@@ -367,12 +404,18 @@ def send_message(data: MessageRequest, request: Request):
     try:
         start = time.time()
         chat_mode = _get_conversation_chat_mode(data.conversation_id)
+        route_history = _get_recent_history(data.conversation_id, limit=6)
         stage_router_start = time.time()
         route_info = classify_question(data.question)
         route = route_info["route"]
         business_route_hint = detect_business_route(data.question)
-        if business_route_hint:
-            route = business_route_hint
+        route = _recover_route_from_history(
+            data.question,
+            chat_mode=chat_mode,
+            route=route,
+            business_route_hint=business_route_hint,
+            history=route_history,
+        )
         router_ms = int((time.time() - stage_router_start) * 1000)
 
         if chat_mode == "business":
@@ -453,7 +496,7 @@ def send_message(data: MessageRequest, request: Request):
                 data.question,
                 user_token=user_token,
                 preferred_route=route,
-                history=_get_recent_history(data.conversation_id, limit=6),
+                history=route_history,
             )
             business_route = business_result.get("route", route)
             response = business_result["response"]
@@ -545,11 +588,7 @@ def send_message(data: MessageRequest, request: Request):
                 )
             else:
                 history = _get_recent_history(data.conversation_id, limit=2)
-                history_for_hints = (
-                    _get_recent_history(data.conversation_id, limit=6)
-                    if _should_apply_history_hints(data.question)
-                    else []
-                )
+                history_for_hints = route_history if _should_apply_history_hints(data.question) else []
                 recent_text = " ".join(
                     f"{h.get('question', '')} {h.get('response', '')}".strip()
                     for h in history_for_hints

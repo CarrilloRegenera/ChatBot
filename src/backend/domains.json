@@ -849,7 +849,7 @@
             "planificacion ops",
             "explotacion ops",
             "redaccion de proyectos",
-            "proyecto ops",
+            "redaccion de proyectos ops",
             "pliegos de condiciones",
             "programa de necesidades",
             "puntos de verificacion",
@@ -861,6 +861,73 @@
             "normativa de aplicacion",
             "afir",
             "puertos del estado"
+          ]
+        },
+        {
+          "variant_key": "financiacion_afif",
+          "filename_patterns": [
+            "afif",
+            "cef-t",
+            "call-fiche",
+            "guia_solicitantes",
+            "procedimiento subvencion"
+          ],
+          "query_triggers": [
+            "afif",
+            "cef-t",
+            "cef transport",
+            "subvencion afif",
+            "ayudas afif",
+            "convocatoria afif",
+            "comunicacion de interes",
+            "conformidad de estado miembro",
+            "funding & tender opportunities",
+            "solicitud afif"
+          ]
+        },
+        {
+          "variant_key": "estudio_viabilidad",
+          "filename_patterns": [
+            "est.",
+            "estudio",
+            "malaga",
+            "valencia",
+            "santander",
+            "huelva",
+            "sevilla",
+            "vigo"
+          ],
+          "query_triggers": [
+            "estudio de viabilidad",
+            "estudio tecnico economico",
+            "estudio tecnico-economico",
+            "viabilidad ops",
+            "demanda energetica",
+            "solucion recomendada",
+            "muelle objetivo",
+            "buques objetivo",
+            "potencia instalada necesaria"
+          ]
+        },
+        {
+          "variant_key": "anteproyecto_referencia",
+          "filename_patterns": [
+            "anteproyecto",
+            "proyecto ejecucion",
+            "bilbao",
+            "barcelona",
+            "algeciras",
+            "las palmas"
+          ],
+          "query_triggers": [
+            "anteproyecto",
+            "anteproyecto ops",
+            "proyecto de ejecucion",
+            "memoria del proyecto",
+            "infraestructura electrica",
+            "terminal msc",
+            "puerto de bilbao",
+            "santurtzi"
           ]
         }
       ],
@@ -895,6 +962,21 @@
         "world ports climate action",
         "wpcap",
         "successful ops connections",
+        "afif",
+        "cef-t",
+        "cef transport",
+        "subvencion afif",
+        "comunicacion de interes",
+        "conformidad de estado miembro",
+        "estudio tecnico-economico",
+        "estudio de viabilidad",
+        "viabilidad ops",
+        "muelle objetivo",
+        "buques objetivo",
+        "potencia instalada necesaria",
+        "anteproyecto",
+        "proyecto de ejecucion",
+        "infraestructura electrica",
         "electrificacion de atraques",
         "electrificacion de buques",
         "suministro electrico a buques",
@@ -927,7 +1009,11 @@
         "questionnaire",
         "wpcap",
         "iec-80005",
-        "ieee-80005"
+        "ieee-80005",
+        "afif",
+        "cef",
+        "viabilidad",
+        "anteproyecto"
       ],
       "source_phrases": [
         "on shore power supply",
@@ -1089,8 +1175,8 @@
         },
         {
           "if_contains": [
-            "proyecto",
-            "ops"
+            "redaccion",
+            "proyecto"
           ],
           "emit": [
             "REDACCION DE PROYECTOS OPS",
@@ -1143,6 +1229,61 @@
             "Lista de Verificacion OPS",
             "Anexo 1",
             "EOPSA"
+          ]
+        },
+        {
+          "if_contains": [
+            "afif"
+          ],
+          "emit": [
+            "CEF-T-AFIF-2024",
+            "Comunicacion de interes",
+            "conformidad de Estado miembro",
+            "Funding & Tender Opportunities"
+          ]
+        },
+        {
+          "if_contains": [
+            "cef-t"
+          ],
+          "emit": [
+            "CEF-T-AFIF-2024",
+            "Comunicacion de interes",
+            "solicitud para la conformidad de Estado miembro",
+            "Funding & Tender Opportunities"
+          ]
+        },
+        {
+          "if_contains": [
+            "viabilidad"
+          ],
+          "emit": [
+            "Estudio tecnico-economico",
+            "demanda energetica",
+            "solucion recomendada",
+            "potencia instalada necesaria"
+          ]
+        },
+        {
+          "if_contains": [
+            "demanda energetica"
+          ],
+          "emit": [
+            "Caracterizacion de la demanda energetica",
+            "solucion recomendada",
+            "potencia instalada necesaria",
+            "voltaje y frecuencia de suministro"
+          ]
+        },
+        {
+          "if_contains": [
+            "anteproyecto"
+          ],
+          "emit": [
+            "ANTEPROYECTO",
+            "infraestructura electrica",
+            "conexion de los buques a la red electrica terrestre",
+            "Memoria"
           ]
         }
       ],
