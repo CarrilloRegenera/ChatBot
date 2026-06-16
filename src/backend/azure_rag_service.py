@@ -16,6 +16,10 @@ from azure.search.documents.indexes.models import (
     SearchFieldDataType,
     SearchIndex,
     SearchableField,
+    SemanticConfiguration,
+    SemanticField,
+    SemanticPrioritizedFields,
+    SemanticSearch,
     SimpleField,
     VectorSearch,
     VectorSearchProfile,
@@ -61,6 +65,7 @@ from rag_service import (
 )
 
 _VECTOR_DIMS = 384  # multilingual-e5-small
+_SEMANTIC_CONFIG_NAME = "semantic-config"
 
 
 logger = logging.getLogger(__name__)
@@ -156,6 +161,24 @@ def _build_index_fields() -> List:
     ]
 
 
+def _build_semantic_config() -> SemanticConfiguration:
+    return SemanticConfiguration(
+        name=_SEMANTIC_CONFIG_NAME,
+        prioritized_fields=SemanticPrioritizedFields(
+            content_fields=[SemanticField(field_name="content")],
+            title_fields=[SemanticField(field_name="section")],
+            keywords_fields=[SemanticField(field_name="topics")],
+        ),
+    )
+
+
+def _build_semantic_search() -> SemanticSearch:
+    return SemanticSearch(
+        default_configuration_name=_SEMANTIC_CONFIG_NAME,
+        configurations=[_build_semantic_config()],
+    )
+
+
 def ensure_azure_index() -> None:
     """Crea o actualiza el índice de Azure AI Search con el schema actual.
 
@@ -184,6 +207,14 @@ def ensure_azure_index() -> None:
             )
         else:
             logger.info("Índice '%s': schema ya actualizado", AZURE_SEARCH_INDEX_NAME)
+        if not existing.semantic_search:
+            existing.semantic_search = _build_semantic_search()
+            index_client.create_or_update_index(existing)
+            logger.info("Índice '%s': semantic configuration añadida", AZURE_SEARCH_INDEX_NAME)
+        elif not any(c.name == _SEMANTIC_CONFIG_NAME for c in (existing.semantic_search.configurations or [])):
+            existing.semantic_search.configurations.append(_build_semantic_config())
+            index_client.create_or_update_index(existing)
+            logger.info("Índice '%s': semantic configuration '%s' añadida", AZURE_SEARCH_INDEX_NAME, _SEMANTIC_CONFIG_NAME)
     except ResourceNotFoundError:
         vector_search = VectorSearch(
             algorithms=[HnswAlgorithmConfiguration(name="hnsw-config")],
@@ -193,9 +224,10 @@ def ensure_azure_index() -> None:
             name=AZURE_SEARCH_INDEX_NAME,
             fields=all_fields,
             vector_search=vector_search,
+            semantic_search=_build_semantic_search(),
         )
         index_client.create_index(index)
-        logger.info("Índice '%s' creado desde cero", AZURE_SEARCH_INDEX_NAME)
+        logger.info("Índice '%s' creado desde cero con semantic config", AZURE_SEARCH_INDEX_NAME)
 
 
 def _ensure_index_schema_for_search() -> bool:
@@ -530,19 +562,24 @@ def search_documents_detailed_azure(
         "article_refs",
         "it_section_refs",
     ]
-    select_fields = enriched_select if _ensure_index_schema_for_search() else legacy_select
+    semantic_ok = _ensure_index_schema_for_search()
+    select_fields = enriched_select if semantic_ok else legacy_select
     try:
-        results = _search_client().search(
-            search_text=question,
-            vector_queries=[vector_query],
-            filter=domain_filter,
-            top=max(n_results * 2, 12),
-            select=select_fields,
-        )
+        search_kwargs = {
+            "search_text": question,
+            "vector_queries": [vector_query],
+            "filter": domain_filter,
+            "top": max(n_results * 2, 12),
+            "select": select_fields,
+        }
+        if semantic_ok:
+            search_kwargs["query_type"] = "semantic"
+            search_kwargs["semantic_configuration_name"] = _SEMANTIC_CONFIG_NAME
+        results = _search_client().search(**search_kwargs)
     except HttpResponseError:
         if select_fields == legacy_select:
             raise
-        logger.warning("Azure Search no acepta campos enriquecidos; reintentando con select legacy")
+        logger.warning("Azure Search: fallback a select legacy sin semantic ranker")
         results = _search_client().search(
             search_text=question,
             vector_queries=[vector_query],
