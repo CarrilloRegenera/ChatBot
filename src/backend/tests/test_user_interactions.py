@@ -316,6 +316,30 @@ class TestHistoryHintApplication(unittest.TestCase):
 
         self.assertTrue(chat._should_apply_history_hints("cual es la periodicidad?"))
 
+    def test_technical_followup_route_recovers_knowledge_from_smalltalk(self):
+        import routes.chat as chat
+
+        recovered = chat._recover_route_from_history(
+            "y en Valencia?",
+            chat_mode="technical",
+            route="smalltalk",
+            business_route_hint=None,
+            history=[{"question": "Segun el estudio de viabilidad OPS, cual es la demanda energetica y la potencia instalada necesaria?"}],
+        )
+        self.assertEqual(recovered, "knowledge")
+
+    def test_business_followup_route_recovers_previous_business_route(self):
+        import routes.chat as chat
+
+        recovered = chat._recover_route_from_history(
+            "y para REGENERA OPS?",
+            chat_mode="business",
+            route="knowledge",
+            business_route_hint=None,
+            history=[{"question": "Que proyectos tenemos en curso para el cliente EOPSA?"}],
+        )
+        self.assertEqual(recovered, "business_produccion")
+
     def test_retrieval_question_is_augmented_for_rite_evaporadores_followup(self):
         import routes.chat as chat
 

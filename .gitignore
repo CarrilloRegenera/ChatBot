@@ -27,6 +27,7 @@ docs/
 *.pkl
 tmp-chatbot-*.log
 tmp-frontend-*.log
+tmp-logs/
 
 # Test and deployment artifacts
 .pytest_cache/

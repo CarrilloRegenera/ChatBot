@@ -62,6 +62,9 @@ CASES = [
     # OPS
     ("ops/EOPSA_Guia_OPS_ES_Completa.pdf", "ops"),
     ("ops/EMSA_Guidance_on_SSE_PART1.pdf", "ops"),
+    ("ops/06_financiacion_afif/Procedimiento subvención AFIF.pdf", "ops"),
+    ("ops/07_estudios_viabilidad/Est. Terminal Cruceros - Malaga.pdf", "ops"),
+    ("ops/08_anteproyectos_referencia/ANTEPROYECTO-OPS-PUERTO-BILBAO.pdf", "ops"),
     # No-deriva: filenames con substring 'lat' que NO son alta tensión
     ("pendiente_ocr/Plataforma_inspeccion.pdf", "pendiente_ocr"),
     ("general/regulator_de_tension.pdf", "general"),
@@ -187,6 +190,30 @@ def test_ops_document_variants_cover_monitoring_summary_and_project_planning():
     ) == ["planificacion_proyecto"]
 
 
+def test_ops_document_variants_cover_afif_viability_and_anteproject():
+    assert _document_variant_from_source(
+        "ops/06_financiacion_afif/Procedimiento subvención AFIF.pdf"
+    ) == "financiacion_afif"
+    assert _document_variant_from_source(
+        "ops/07_estudios_viabilidad/Est. Terminal Cruceros - Malaga.pdf"
+    ) == "estudio_viabilidad"
+    assert _document_variant_from_source(
+        "ops/08_anteproyectos_referencia/ANTEPROYECTO-OPS-PUERTO-BILBAO.pdf"
+    ) == "anteproyecto_referencia"
+    assert _expected_document_variants(
+        "Que exige AFIF para la comunicacion de interes y la conformidad de Estado miembro?",
+        ["ops"],
+    ) == ["financiacion_afif"]
+    assert _expected_document_variants(
+        "Segun el estudio de viabilidad OPS, como se caracteriza la demanda energetica y la solucion recomendada?",
+        ["ops"],
+    ) == ["estudio_viabilidad"]
+    assert _expected_document_variants(
+        "Segun el anteproyecto OPS del puerto de Bilbao, que incluye la memoria de la infraestructura electrica?",
+        ["ops"],
+    ) == ["anteproyecto_referencia"]
+
+
 def test_ops_phrase_queries_cover_project_and_monitoring_questions():
     phrases = _domain_phrase_queries(
         "Segun la IEC 80005-2, que datos se usan para monitorizacion y control SCADA?"
@@ -201,6 +228,29 @@ def test_ops_phrase_queries_cover_project_and_monitoring_questions():
     assert "PLIEGOS DE CONDICIONES" in project_phrases
     assert "Programa de necesidades" in project_phrases
     assert "REDACCION DE PROYECTOS OPS" in project_phrases
+
+
+def test_ops_phrase_queries_cover_afif_viability_and_anteproject_questions():
+    afif_phrases = _domain_phrase_queries(
+        "Que exige AFIF para la comunicacion de interes y la conformidad de Estado miembro?"
+    )
+    assert "CEF-T-AFIF-2024" in afif_phrases
+    assert "Comunicacion de interes" in afif_phrases
+    assert "conformidad de Estado miembro" in afif_phrases
+
+    viability_phrases = _domain_phrase_queries(
+        "Segun el estudio de viabilidad OPS, cual es la demanda energetica y la potencia instalada necesaria?"
+    )
+    assert "Estudio tecnico-economico" in viability_phrases
+    assert "demanda energetica" in viability_phrases
+    assert "potencia instalada necesaria" in viability_phrases
+
+    anteproject_phrases = _domain_phrase_queries(
+        "Que incluye el anteproyecto OPS del puerto de Bilbao en la memoria de infraestructura electrica?"
+    )
+    assert "ANTEPROYECTO" in anteproject_phrases
+    assert "infraestructura electrica" in anteproject_phrases
+    assert "Memoria" in anteproject_phrases
 
 
 def test_expected_domains_avoids_substring_false_positives():

@@ -43,6 +43,19 @@ OPS_TECHNICAL_HINTS = (
     "atraques electrificados",
     "puerto electrificado",
     "puertos electrificados",
+    "afif",
+    "cef-t",
+    "cef transport",
+    "subvencion afif",
+    "comunicacion de interes",
+    "conformidad de estado miembro",
+    "estudio tecnico-economico",
+    "estudio de viabilidad",
+    "viabilidad ops",
+    "demanda energetica",
+    "solucion recomendada",
+    "anteproyecto ops",
+    "infraestructura electrica",
 )
 
 
@@ -57,6 +70,13 @@ OPS_DOCUMENTARY_HINTS = OPS_TECHNICAL_HINTS + (
     "pliegos de condiciones",
     "questionnaire results",
     "world ports climate action",
+    "afif",
+    "cef-t",
+    "subvencion afif",
+    "comunicacion de interes",
+    "conformidad de estado miembro",
+    "estudio de viabilidad",
+    "anteproyecto ops",
 )
 
 

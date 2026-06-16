@@ -77,6 +77,9 @@ def test_ops_standard_reference_is_not_misrouted_to_business_produccion():
         "Segun ISO 80005-1, que es la shore-side electricity en OPS?",
         "Segun la IEC 80005-2, como funciona la monitorizacion y control del OPS?",
         "Que recomienda OPS para pliegos de condiciones y programa de necesidades?",
+        "Segun el estudio de viabilidad OPS, cual es la demanda energetica y la potencia instalada necesaria?",
+        "Que exige AFIF para la comunicacion de interes y la conformidad de Estado miembro?",
+        "Que incluye el anteproyecto OPS del puerto de Bilbao en la memoria de infraestructura electrica?",
     ]
 
     for question in questions:

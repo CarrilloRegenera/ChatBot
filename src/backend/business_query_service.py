@@ -171,6 +171,28 @@ _BUSINESS_ESTUDIOS_LISTING_HINTS = (
     "ranking",
 )
 
+_OPS_SPECIALIZED_DOCUMENTARY_HINTS = (
+    "estudio de viabilidad",
+    "viabilidad ops",
+    "estudio tecnico economico",
+    "estudio tecnico-economico",
+    "demanda energetica",
+    "solucion recomendada",
+    "muelle objetivo",
+    "buques objetivo",
+    "potencia instalada necesaria",
+    "anteproyecto",
+    "anteproyecto ops",
+    "infraestructura electrica",
+    "memoria de infraestructura",
+    "comunicacion de interes",
+    "conformidad de estado miembro",
+    "subvencion afif",
+    "ayudas afif",
+    "cef-t",
+    "funding tender opportunities",
+)
+
 
 def _normalize(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
@@ -303,8 +325,14 @@ def _looks_documentary_question(text: str) -> bool:
     return any(hint in text for hint in _DOCUMENTARY_HINTS)
 
 
+def _looks_ops_specialized_documentary_question(text: str) -> bool:
+    return any(hint in text for hint in _OPS_SPECIALIZED_DOCUMENTARY_HINTS)
+
+
 def _has_strong_business_signal(text: str, reference: str | None) -> bool:
     if is_ops_standard_reference(reference, text):
+        return False
+    if _looks_ops_specialized_documentary_question(text):
         return False
     if reference:
         return True
@@ -322,6 +350,8 @@ def detect_business_route(question: str) -> str | None:
     reference = _extract_reference(question, text)
     if is_ops_standard_reference(reference, text):
         reference = None
+    if _looks_ops_specialized_documentary_question(text) and not reference:
+        return None
     if _looks_documentary_question(text) and not _has_strong_business_signal(text, reference):
         return None
     explicit_scope = _detect_explicit_scope(text)
@@ -766,17 +796,23 @@ def _answer_produccion_detail_sql(parsed: Dict[str, Any], *, route: str, normali
 def _answer_produccion_filtered_listing_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
     question_text = _normalize(parsed.get("question") or "")
     filter_text = str(parsed.get("filter_text") or "").strip()
+    listing_follow_up = bool(parsed.get("listing_follow_up"))
+    listing_context = parsed.get("listing_context") or {}
+    inherited_active_listing = listing_follow_up and bool(listing_context.get("active"))
     if not filter_text:
         return None
-    if not any(token in question_text for token in ("proyecto", "proyectos", "obra", "obras")):
+    if not listing_follow_up and not any(token in question_text for token in ("proyecto", "proyectos", "obra", "obras")):
         return None
     if not (
         _looks_like_filtered_listing_request(question_text)
         or _looks_like_active_production_listing_query(question_text)
         or _looks_like_ranked_listing_query(question_text)
+        or inherited_active_listing
+        or listing_follow_up
     ):
         return None
 
+    exact_client_target = _is_exact_client_target_query(question_text)
     matches = sql_search_produccion(filter_text, take=100)
     if not matches:
         return {
@@ -786,13 +822,8 @@ def _answer_produccion_filtered_listing_sql(parsed: Dict[str, Any], *, route: st
             "sources": [],
         }
 
-    if _is_explicit_client_field_filter(question_text):
-        needle = _normalize(filter_text)
-        matches = [
-            item
-            for item in matches
-            if needle in _normalize(str(item.get("Cliente") or ""))
-        ]
+    if _is_explicit_client_field_filter(question_text) or exact_client_target:
+        matches = _apply_client_filter(matches, filter_text, exact_client_target=exact_client_target)
 
     matches = _sort_produccion_listing_matches(matches, question_text=question_text)
     if not matches:
@@ -812,7 +843,7 @@ def _answer_produccion_filtered_listing_sql(parsed: Dict[str, Any], *, route: st
         estado = item.get("Estado") or ("En curso" if item.get("Finalizada") in (False, 0, None) else "Finalizada")
         lines.append(f"{index}. {code} - {obra}: cliente = {cliente}; estado = {estado}")
 
-    qualifier = "en curso" if _looks_like_active_production_listing_query(question_text) else "filtrados"
+    qualifier = "en curso" if (_looks_like_active_production_listing_query(question_text) or inherited_active_listing) else "filtrados"
     if _looks_like_ranked_listing_query(question_text):
         qualifier = "top"
     return {
@@ -826,29 +857,32 @@ def _answer_produccion_filtered_listing_sql(parsed: Dict[str, Any], *, route: st
 def _answer_estudios_filtered_listing_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
     question_text = _normalize(parsed.get("question") or "")
     filter_text = str(parsed.get("filter_text") or "").strip()
+    listing_follow_up = bool(parsed.get("listing_follow_up"))
+    listing_context = parsed.get("listing_context") or {}
     if not filter_text:
         return None
-    if not any(
+    if not listing_follow_up and not any(
         token in question_text
         for token in ("licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas", "proyecto", "proyectos", "obra", "obras")
     ):
         return None
     explicit_client_filter = _is_explicit_client_field_filter(question_text)
+    exact_client_target = _is_exact_client_target_query(question_text)
     is_client_filter_query = explicit_client_filter and any(
         token in question_text for token in ("contiene", "contienen", "incluye", "incluyen", "palabra", "texto", "cliente")
     )
     is_backlog_listing_query = (
-        _looks_like_filtered_listing_request(question_text)
+        (_looks_like_filtered_listing_request(question_text) or listing_follow_up)
         and any(token in question_text for token in ("adjudicada", "adjudicadas", "adjudicado", "adjudicados", "backlog", "ganada", "ganadas"))
-    )
+    ) or (listing_follow_up and bool(listing_context.get("backlog")))
     is_related_listing_query = (
-        _looks_like_filtered_listing_request(question_text)
+        (_looks_like_filtered_listing_request(question_text) or listing_follow_up)
         and any(token in question_text for token in ("relacionadas", "relacionados", "vinculadas", "vinculados", "recientes", "mas recientes", "top", "ranking"))
-    )
-    if not is_client_filter_query and not is_backlog_listing_query and not is_related_listing_query:
+    ) or (listing_follow_up and bool(listing_context.get("recent") or listing_context.get("ranked")))
+    if not is_client_filter_query and not is_backlog_listing_query and not is_related_listing_query and not exact_client_target and not listing_follow_up:
         return None
 
-    if explicit_client_filter:
+    if explicit_client_filter or exact_client_target:
         matches = sql_search_licitaciones_by_client_text(filter_text, take=100)
     else:
         matches = sql_search_licitaciones(filter_text, take=100)
@@ -860,12 +894,8 @@ def _answer_estudios_filtered_listing_sql(parsed: Dict[str, Any], *, route: str)
             "sources": [],
         }
 
-    if explicit_client_filter:
-        needle = _normalize(filter_text)
-        matches = [
-            item for item in matches
-            if needle in _normalize(str(item.get("Cliente") or ""))
-        ]
+    if explicit_client_filter or exact_client_target:
+        matches = _apply_client_filter(matches, filter_text, exact_client_target=exact_client_target and not _is_client_contains_query(question_text))
     if is_backlog_listing_query:
         matches = [
             item
@@ -1086,8 +1116,19 @@ def _build_module_candidates(preferred_module: str, explicit_scope: str | None, 
 def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
     normalized = _normalize(question)
     history_context = _extract_history_context(history)
-    reference = _resolve_reference(question, normalized, history)
+    explicit_reference = _extract_reference(question, normalized)
     filter_text = _extract_filter_text(question, normalized)
+    listing_context = _extract_history_listing_context(history, module=module)
+    listing_follow_up = bool(
+        _looks_like_follow_up(normalized)
+        and _looks_like_listing_refinement(normalized, module=module)
+        and listing_context
+    )
+    reference = explicit_reference or _resolve_reference(question, normalized, history)
+    if listing_follow_up and explicit_reference is None:
+        reference = None
+        if not filter_text:
+            filter_text = listing_context.get("filter_text")
     years = _extract_explicit_years(normalized, reference)
     year_text = _strip_reference_for_year_detection(normalized, reference)
     year_match = re.search(r"\b(20\d{2})\b", year_text)
@@ -1149,6 +1190,8 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
         "per_year": per_year,
         "aggregate": aggregate,
         "expected_client": expected_client,
+        "listing_follow_up": listing_follow_up,
+        "listing_context": listing_context,
     }
 
 
@@ -1166,6 +1209,94 @@ def _extract_history_context(history: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "month": month,
             }
     return {}
+
+
+def _extract_history_listing_context(history: List[Dict[str, Any]], *, module: str) -> Dict[str, Any]:
+    entity_tokens = ("proyecto", "proyectos", "obra", "obras") if module == "produccion" else (
+        "licitacion",
+        "licitaciones",
+        "estudio",
+        "estudios",
+        "oferta",
+        "ofertas",
+        "proyecto",
+        "proyectos",
+        "obra",
+        "obras",
+    )
+    for item in reversed(history or []):
+        history_question = str(item.get("question") or "")
+        history_normalized = _normalize(history_question)
+        if not any(token in history_normalized for token in entity_tokens):
+            continue
+        if module == "produccion":
+            is_listing = (
+                _looks_like_filtered_listing_request(history_normalized)
+                or _looks_like_active_production_listing_query(history_normalized)
+                or _looks_like_ranked_listing_query(history_normalized)
+            )
+        else:
+            is_listing = (
+                _looks_like_filtered_listing_request(history_normalized)
+                or _looks_like_recent_listing_query(history_normalized)
+                or _looks_like_ranked_listing_query(history_normalized)
+            )
+        if not is_listing:
+            continue
+        filter_text = _extract_filter_text(history_question, history_normalized)
+        return {
+            "question": history_question,
+            "filter_text": filter_text,
+            "active": _looks_like_active_production_listing_query(history_normalized),
+            "backlog": any(
+                token in history_normalized
+                for token in ("adjudicada", "adjudicadas", "adjudicado", "adjudicados", "backlog", "ganada", "ganadas")
+            ),
+            "recent": _looks_like_recent_listing_query(history_normalized),
+            "ranked": _looks_like_ranked_listing_query(history_normalized),
+        }
+    return {}
+
+
+def _looks_like_listing_refinement(text: str, *, module: str) -> bool:
+    if module == "produccion":
+        return any(
+            token in text
+            for token in (
+                " en curso",
+                " actualmente",
+                " activa",
+                " activas",
+                " cliente",
+                " para ",
+                " top ",
+                " ranking",
+                " relacionados",
+                " relacionadas",
+                " vinculados",
+                " vinculadas",
+            )
+        )
+    return any(
+        token in text
+        for token in (
+            " adjudicad",
+            " ganad",
+            " backlog",
+            " cliente",
+            " para ",
+            " recientes",
+            " ultimas",
+            " ultimos",
+            " top ",
+            " ranking",
+            " relacionados",
+            " relacionadas",
+            " vinculados",
+            " vinculadas",
+            " solo ",
+        )
+    )
 
 
 def _looks_like_follow_up(text: str) -> bool:
@@ -1683,6 +1814,79 @@ def _is_explicit_client_field_filter(question_text: str) -> bool:
             "para cliente ",
         )
     )
+
+
+def _is_client_contains_query(question_text: str) -> bool:
+    return _is_explicit_client_field_filter(question_text) and any(
+        token in question_text
+        for token in ("contiene", "contienen", "incluye", "incluyen", "palabra", "texto", "cadena")
+    )
+
+
+def _is_exact_client_target_query(question_text: str) -> bool:
+    normalized = f" {question_text.strip()} "
+    if any(
+        phrase in normalized
+        for phrase in (
+            " del cliente ",
+            " para el cliente ",
+            " para la cliente ",
+            " para cliente ",
+            " cliente es ",
+            " cliente sea ",
+        )
+    ):
+        return True
+    return bool(re.search(r"(?:^|\s)(?:y\s+)?para\s+[a-z][a-z0-9 .&/-]{1,40}\??\s*$", question_text))
+
+
+def _canonicalize_client_name(text: str) -> str:
+    canonical = _normalize(text)
+    canonical = canonical.replace(".", " ")
+    canonical = re.sub(
+        r"\b(s a|sa|s l|sl|s l u|slu|s a u|sau|sociedad anonima|sociedad limitada|sociedad limitada unipersonal)\b",
+        " ",
+        canonical,
+    )
+    canonical = re.sub(r"\s+", " ", canonical).strip()
+    return canonical
+
+
+def _apply_client_filter(
+    matches: List[Dict[str, Any]],
+    filter_text: str,
+    *,
+    exact_client_target: bool,
+) -> List[Dict[str, Any]]:
+    if not matches:
+        return []
+    needle = _normalize(filter_text)
+    if not needle:
+        return matches
+    if not exact_client_target:
+        return [
+            item
+            for item in matches
+            if needle in _normalize(str(item.get("Cliente") or ""))
+        ]
+
+    canonical_needle = _canonicalize_client_name(filter_text)
+    exact_matches = [
+        item
+        for item in matches
+        if _canonicalize_client_name(str(item.get("Cliente") or "")) == canonical_needle
+    ]
+    if exact_matches:
+        return exact_matches
+
+    return [
+        item
+        for item in matches
+        if canonical_needle and re.search(
+            rf"(?<!\w){re.escape(canonical_needle)}(?!\w)",
+            _canonicalize_client_name(str(item.get("Cliente") or "")),
+        )
+    ]
 
 
 def _looks_like_recent_listing_query(question_text: str) -> bool:
