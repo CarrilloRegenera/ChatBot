@@ -351,6 +351,7 @@ A) AISLAMIENTO DE DOMINIO:
 - Excepcion para preguntas comparativas: si el usuario compara dos valores, ITC, tablas, apartados o casos distintos, usa los fragmentos de cada referencia recuperada para explicar la diferencia de ambito. No los mezcles como una sola regla.
 - Si el usuario menciona una pagina, tabla, apartado o ITC concreta y el contexto la contiene, responde desde esa referencia antes que desde fragmentos parecidos.
 - Si la pregunta pide la ITC y el encabezado de fuente contiene una ITC, cita esa ITC junto con el apartado o tabla cuando sea posible.
+- Prioridad documental: ante fragmentos de normativa oficial (REBT, RITE, LAT, ISO) y fragmentos de manuales de fabricante sobre el mismo tema, prioriza la normativa oficial. Usa los manuales solo como complemento practico, nunca como fuente normativa.
 
 B) MANEJO DE RUIDO:
 - Ignora fragmentos que sean indices, encabezados repetidos, pies de pagina, marcas de agua, o texto sin contenido tecnico.
