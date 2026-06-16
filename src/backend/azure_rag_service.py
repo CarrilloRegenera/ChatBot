@@ -39,11 +39,15 @@ from config import (
     BLOB_STORAGE_CONNECTION_STRING,
     ENABLE_RERANK,
     MAX_CHUNKS_PER_SOURCE,
+    RERANK_BM25_WEIGHT,
+    RERANK_WEIGHT,
+    STOPWORDS,
     TOP_K_RESULTS,
 )
 from rag_service import (
     OCR_MIN_TEXT_CHARS_PER_PAGE,
     RERANK_MODEL,
+    _bm25_score,
     _clean_question,
     _embedding_fn,
     _encode_passage,
@@ -61,6 +65,7 @@ from rag_service import (
     _source_domain_key,
     _split_text,
     _st_model,
+    _tokenize,
     _looks_like_table_block,
 )
 
@@ -474,6 +479,19 @@ def sync_documents_from_blob() -> Dict[str, int]:
 _VARIANT_BOOST = 0.15
 _ARTICLE_REF_BOOST = 0.12
 _IT_SECTION_REF_BOOST = 0.10
+_DOMAIN_MATCH_BOOST = 12.0
+_DOMAIN_MISMATCH_PENALTY = -30.0
+
+
+def _domain_boost(item: dict, expected_domains: set) -> float:
+    if not expected_domains:
+        return 0.0
+    item_domain = _normalize_text(str(item.get("domain") or item.get("category") or ""))
+    if not item_domain:
+        return 0.0
+    if item_domain in expected_domains:
+        return _DOMAIN_MATCH_BOOST
+    return _DOMAIN_MISMATCH_PENALTY
 
 
 def _apply_hint_boosts(
@@ -593,19 +611,35 @@ def search_documents_detailed_azure(
 
     _apply_hint_boosts(candidates, expected_variants, hint_article_refs, hint_it_section_refs)
 
+    query_tokens = {t for t in _tokenize(clean_question) if t not in STOPWORDS and len(t) >= 4}
+    candidate_texts = [
+        _decode_chunk_corruption(item.get("content", ""), item.get("source_path", ""))
+        for item in candidates
+    ]
+    avg_doc_len = sum(len(t.split()) for t in candidate_texts) / max(len(candidate_texts), 1)
+    domain_set = set(domains) if domains else set()
+
     if ENABLE_RERANK and _st_model is not None and candidates:
         query_emb = _st_model.encode(clean_question, convert_to_tensor=True)
-        candidate_texts = [
-            _decode_chunk_corruption(item.get("content", ""), item.get("source_path", ""))
-            for item in candidates
-        ]
         candidate_embs = _st_model.encode(candidate_texts, convert_to_tensor=True)
-        scores = cos_sim(query_emb, candidate_embs)[0].tolist()
-        for i, score in enumerate(scores):
-            scores[i] = score + candidates[i].get("_hint_boost", 0.0)
-        candidates = [
-            item for _, item in sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-        ]
+        sem_scores = cos_sim(query_emb, candidate_embs)[0].tolist()
+        scored = []
+        for i, item in enumerate(candidates):
+            bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
+            hint_boost = item.get("_hint_boost", 0.0)
+            domain_boost = _domain_boost(item, domain_set)
+            final = (float(sem_scores[i]) * RERANK_WEIGHT) + (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost
+            scored.append((final, item))
+        candidates = [item for _, item in sorted(scored, key=lambda x: x[0], reverse=True)]
+    elif candidates:
+        scored = []
+        for i, item in enumerate(candidates):
+            bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
+            hint_boost = item.get("_hint_boost", 0.0)
+            domain_boost = _domain_boost(item, domain_set)
+            final = (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost
+            scored.append((final, item))
+        candidates = [item for _, item in sorted(scored, key=lambda x: x[0], reverse=True)]
 
     selected = []
     source_counts: Dict[str, int] = {}
