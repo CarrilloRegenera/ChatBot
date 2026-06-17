@@ -17,6 +17,7 @@ from models import (
 )
 from query_router import classify_question
 from routes.auth_helpers import assert_admin, resolve_request_user_id
+from routing_signals import has_concrete_business_reference
 
 
 router = APIRouter()
@@ -44,6 +45,11 @@ _EXPLICIT_TECHNICAL_ANCHOR_RE = re.compile(
     r"\b(?:rebt|rite|ralt|itc|bt-?\d+|iec|ieee|iso|80005(?:-[123])?|ops|eopsa|shore power|cold ironing|afir)\b",
     flags=re.IGNORECASE,
 )
+
+
+def _normalize_followup_text(question: str) -> str:
+    normalized = " ".join((question or "").strip().lower().split())
+    return normalized.lstrip("¿?¡!.,;:()[]{}\"' ")
 
 
 def _memory_service():
@@ -145,7 +151,7 @@ def _q_preview(text: str, size: int = 90) -> str:
 
 
 def _should_apply_history_hints(question: str) -> bool:
-    normalized = " ".join((question or "").strip().lower().split())
+    normalized = _normalize_followup_text(question)
     if not normalized:
         return False
     if _FOLLOWUP_PREFIX_RE.search(normalized):
@@ -176,7 +182,7 @@ def _should_apply_history_hints(question: str) -> bool:
 
 
 def _is_followup_prefix_question(question: str) -> bool:
-    normalized = " ".join((question or "").strip().lower().split())
+    normalized = _normalize_followup_text(question)
     if not normalized:
         return False
     return bool(_FOLLOWUP_PREFIX_RE.search(normalized))
@@ -190,7 +196,9 @@ def _recover_route_from_history(
     business_route_hint: str | None,
     history: List[Dict[str, str]] | None = None,
 ) -> str:
-    if business_route_hint:
+    if business_route_hint and chat_mode == "business":
+        return business_route_hint
+    if business_route_hint and chat_mode == "technical" and has_concrete_business_reference(question):
         return business_route_hint
 
     recent_history = history or []
@@ -220,6 +228,35 @@ def _augment_retrieval_question(question: str) -> str:
         return f"{question} Tabla 3.1 RITE IT 3.3 Limpieza de los evaporadores una vez por temporada"
     if "condensadores" in normalized and any(token in normalized for token in ("periodicidad", "limpieza")):
         return f"{question} Tabla 3.1 RITE IT 3.3 Limpieza de los condensadores una vez por temporada"
+    if "80005-1" in normalized and any(token in normalized for token in ("tensiones", "tension", "hvsc")):
+        return f"{question} 6.6 kV 11 kV High Voltage Shore Connection HVSC nominal voltage"
+    if "80005-1" in normalized and "equipotential bonding" in normalized:
+        return f"{question} equipotential bonding safety circuit shore earthing electrode"
+    if "80005-2" in normalized or ("parte 2" in normalized and any(token in normalized for token in ("80005", "iec", "ieee"))):
+        return f"{question} data communication monitoring and control interfaces ship shore"
+    if "emsa part 2" in normalized and any(token in normalized for token in ("ambitos", "cubre", "ambito")):
+        return f"{question} Planning Operations Safety"
+    if "eopsa" in normalized and any(token in normalized for token in ("fuente de alimentacion", "informacion de red", "dno", "dso")):
+        return (
+            f"{question} EOPSA Checklist OPS Anexo 1 DNO Operador de Red de Distribucion "
+            "DSO Operador del Sistema de Distribucion origen de la fuente de alimentacion"
+        )
+    if any(token in normalized for token in ("esquema principal", "cinco bloques", "modulo ops")):
+        return (
+            f"{question} Subestacion y red Modulo OPS Cajas de conexion en bordemuelle "
+            "Sistema de gestion de cables Conexion al cuadro electrico del barco"
+        )
+    if "modulo ops" in normalized and any(token in normalized for token in ("funcion", "cumple", "sirve")):
+        return f"{question} Modulo OPS Convierte voltaje y frecuencia"
+    if "guia eopsa" in normalized and "licitacion" in normalized:
+        return (
+            f"{question} reducir la incertidumbre mejorar la calidad de las licitaciones "
+            "instalaciones seguras fiables preparadas para el futuro"
+        )
+    if "malaga" in normalized and any(token in normalized for token in ("tipo de documento", "cruceros", "puerto")):
+        return f"{question} estudio tecnico-economico terminal de cruceros puerto de malaga"
+    if "bilbao" in normalized and any(token in normalized for token in ("de que trata", "trata", "puerto")):
+        return f"{question} infraestructura electrica conexion de los buques red electrica terrestre santurtzi"
     return question
 
 

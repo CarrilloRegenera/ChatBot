@@ -149,6 +149,22 @@ def _asks_for_document_inventory(text: str) -> bool:
 
 
 def _has_strong_business_signal(text: str) -> bool:
+    mixed_business_markers = (
+        "cliente",
+        "importe",
+        "presupuesto",
+        "produccion",
+        "estado",
+        "en curso",
+        "top",
+        "ranking",
+    )
+    if (
+        has_explicit_technical_reference(text)
+        and not has_concrete_business_reference(text)
+        and not any(marker in text for marker in mixed_business_markers)
+    ):
+        return False
     if LICITACION_REFERENCE_PATTERN.search(text):
         return True
     if PRODUCCION_CODE_PATTERN.search(text):

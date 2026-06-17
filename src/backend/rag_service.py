@@ -1799,6 +1799,53 @@ def detect_hint_it_section_refs(text: str) -> List[str]:
     return _extract_it_section_refs(_clean_question(text))
 
 
+def _variant_bridge_terms(
+    clean_question: str,
+    expected_domains: List[str],
+    expected_document_variants: List[str],
+    *,
+    structural_followup_query: bool,
+) -> List[str]:
+    """Obtiene términos puente desde domains.json para consultas ambiguas.
+
+    Reutiliza los query_triggers configurados de la variante documental esperada
+    para enriquecer búsquedas cortas o de seguimiento, sin hardcodear preguntas
+    concretas en código.
+    """
+    if not expected_document_variants:
+        return []
+
+    normalized_question = _normalize_text(clean_question or "")
+    question_tokens = {token for token in _tokenize(normalized_question) if token and token not in STOPWORDS}
+    short_or_ambiguous = structural_followup_query or len(question_tokens) <= 9
+    bridge_terms: List[str] = []
+    seen: set[str] = set()
+
+    for domain_name in expected_domains:
+        cfg = _DOMAIN_CFG["domains"].get(domain_name, {})
+        for variant in cfg.get("document_variants", []):
+            variant_key = str(variant.get("variant_key") or "")
+            if variant_key not in expected_document_variants:
+                continue
+            triggers = [str(trigger).strip() for trigger in variant.get("query_triggers", []) if str(trigger).strip()]
+            selected: List[str] = []
+            for trigger in triggers:
+                normalized_trigger = _normalize_text(trigger)
+                trigger_tokens = {token for token in _tokenize(normalized_trigger) if token and token not in STOPWORDS}
+                if question_tokens and trigger_tokens and question_tokens & trigger_tokens:
+                    selected.append(trigger)
+            if not selected and short_or_ambiguous:
+                selected = triggers[:3]
+            for term in selected[:4]:
+                normalized_term = _normalize_text(term)
+                if not normalized_term or normalized_term in seen:
+                    continue
+                seen.add(normalized_term)
+                bridge_terms.append(term)
+
+    return bridge_terms[:8]
+
+
 def _query_mentions_bt40(question: str) -> bool:
     normalized = _normalize_text(question or "")
     compact = re.sub(r"[^a-z0-9]+", "", normalized)
@@ -2207,12 +2254,29 @@ def _search_documents_detailed_chroma(
             query_profile["phrase_queries"] = query_profile["phrase_queries"] + new_terms
             logger.debug("auto_technical_terms añadidos: %s", new_terms)
     structural_followup_query = bool(query_profile["article_refs"] or query_profile["it_section_refs"])
+    variant_bridge_terms = _variant_bridge_terms(
+        clean_question,
+        expected_domains,
+        expected_document_variants,
+        structural_followup_query=structural_followup_query,
+    )
+    if variant_bridge_terms:
+        existing_phrase_queries = {_normalize_text(term) for term in query_profile["phrase_queries"]}
+        appended = []
+        for term in variant_bridge_terms:
+            normalized_term = _normalize_text(term)
+            if normalized_term and normalized_term not in existing_phrase_queries:
+                query_profile["phrase_queries"].append(term)
+                existing_phrase_queries.add(normalized_term)
+                appended.append(term)
+        if appended:
+            logger.debug("variant_bridge_terms añadidos: %s", appended)
     semantic_query = clean_question
-    if structural_followup_query and (expected_domains or expected_document_variants):
-        semantic_parts = [clean_question] + expected_domains + expected_document_variants
+    if structural_followup_query and (expected_domains or expected_document_variants or variant_bridge_terms):
+        semantic_parts = [clean_question] + expected_domains + expected_document_variants + variant_bridge_terms
         semantic_query = " ".join(part for part in semantic_parts if part).strip()
         logger.debug("semantic_query enriquecida con foco conversacional: %s", semantic_query)
-        for term in expected_domains + expected_document_variants:
+        for term in expected_domains + expected_document_variants + variant_bridge_terms:
             normalized_term = _normalize_text(term)
             if normalized_term and normalized_term not in core_terms:
                 core_terms.append(normalized_term)

@@ -61,12 +61,21 @@ OPS_TECHNICAL_HINTS = (
 
 OPS_DOCUMENTARY_HINTS = OPS_TECHNICAL_HINTS + (
     "guia eopsa",
+    "guia ops completa",
+    "guia completa de eopsa",
+    "guia para una licitacion ops completa y exitosa",
     "checklist ops",
+    "lista de verificacion",
+    "lista de verificacion completa",
     "shore-side",
     "shore side",
     "planificacion y explotacion",
     "redaccion de proyectos",
     "programa de necesidades",
+    "modulo ops",
+    "subestacion de conversion",
+    "sistema de gestion de cables",
+    "cms",
     "pliegos de condiciones",
     "questionnaire results",
     "world ports climate action",
@@ -76,7 +85,14 @@ OPS_DOCUMENTARY_HINTS = OPS_TECHNICAL_HINTS + (
     "comunicacion de interes",
     "conformidad de estado miembro",
     "estudio de viabilidad",
+    "estudio de malaga",
+    "estudio malaga",
+    "estudio tecnico-economico",
     "anteproyecto ops",
+    "puerto de malaga",
+    "terminal de cruceros",
+    "puerto de bilbao",
+    "santurtzi",
 )
 
 

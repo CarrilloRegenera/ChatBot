@@ -815,6 +815,11 @@
             "iso 80005",
             "hvsc",
             "high voltage shore connection",
+            "6.6 kv",
+            "11 kv",
+            "equipotential bonding",
+            "dry dock",
+            "dry docking",
             "shore-to-ship",
             "shore to ship",
             "conexion shore-to-ship",
@@ -832,6 +837,9 @@
             "data communication",
             "monitorizacion y control",
             "monitoring and control",
+            "ship to shore",
+            "shore to ship",
+            "parte 2",
             "interfaz de comunicacion",
             "scada",
             "control remoto"
@@ -861,6 +869,7 @@
             "guia emsa parte 2",
             "emsa sse part 2",
             "part 2 sobre sse",
+            "planning operations safety",
             "operacion o seguridad",
             "operacion practica",
             "explotacion practica",
@@ -875,6 +884,10 @@
             "eopsa checklist",
             "checklist ops",
             "anexo 1",
+            "fuente de alimentacion",
+            "informacion de red",
+            "dno",
+            "dso",
             "origen de la fuente de alimentacion",
             "automatizacion y supervision"
           ]
@@ -886,6 +899,10 @@
             "guia eopsa",
             "guia para una licitacion ops completa y exitosa",
             "licitacion ops completa y exitosa",
+            "para que sirve la guia",
+            "reducir la incertidumbre",
+            "mejorar la calidad de las licitaciones",
+            "instalaciones seguras",
             "cms",
             "subestacion",
             "modos de operacion",
@@ -924,6 +941,11 @@
             "planificacion del proyecto",
             "explotacion ops",
             "explotacion del servicio",
+            "cinco bloques",
+            "subestacion y red",
+            "modulo ops",
+            "cajas de conexion",
+            "cuadro electrico del barco",
             "esquemas de explotacion",
             "operadores de terminales"
           ]
@@ -1020,6 +1042,8 @@
             "estudio de viabilidad malaga",
             "viabilidad ops malaga",
             "terminal de cruceros de malaga",
+            "estudio tecnico-economico malaga",
+            "puerto de malaga",
             "malaga",
             "demanda energetica malaga",
             "potencia necesaria malaga"
@@ -1043,7 +1067,9 @@
             "infraestructura electrica",
             "terminal msc",
             "puerto de bilbao",
-            "santurtzi"
+            "santurtzi",
+            "red electrica terrestre",
+            "conexion de los buques"
           ]
         }
       ],
