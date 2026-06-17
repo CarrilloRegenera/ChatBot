@@ -730,6 +730,7 @@ def send_message(data: MessageRequest, request: Request):
                     "final_confidence": generated.get("final_confidence", confidence),
                     "escalated": bool(generated.get("escalated", False)),
                     "escalation_reason": generated.get("escalation_reason", ""),
+                    "usage_breakdown": generated.get("usage_breakdown", {}),
                 }
                 response = format_answer_for_user(response, sources, question=data.question)
                 elapsed_partial = int((time.time() - start) * 1000)

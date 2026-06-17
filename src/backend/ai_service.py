@@ -411,6 +411,33 @@ def _extract_usage(response) -> Dict[str, int]:
     }
 
 
+def _usage_zero() -> Dict[str, int]:
+    return {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def _usage_copy(usage: Optional[Dict[str, int]]) -> Dict[str, int]:
+    payload = usage or {}
+    return {
+        "prompt_tokens": int(payload.get("prompt_tokens", 0) or 0),
+        "completion_tokens": int(payload.get("completion_tokens", 0) or 0),
+        "total_tokens": int(payload.get("total_tokens", 0) or 0),
+    }
+
+
+def _usage_add(*usages: Optional[Dict[str, int]]) -> Dict[str, int]:
+    merged = _usage_zero()
+    for usage in usages:
+        payload = _usage_copy(usage)
+        merged["prompt_tokens"] += payload["prompt_tokens"]
+        merged["completion_tokens"] += payload["completion_tokens"]
+        merged["total_tokens"] += payload["total_tokens"]
+    return merged
+
+
 def _extract_response_text(response) -> str:
     choices = getattr(response, "choices", None) or []
     if choices:
@@ -1246,6 +1273,12 @@ def generate_ai_response_with_fallback(
     result["retrieval_quality"] = _retrieval_quality(retrieval_stats)
     result["table_coverage_ratio"] = table_coverage_ratio
     result["escalation_reason"] = escalation_reason or ""
+    base_usage = _usage_copy(result.get("usage"))
+    result["usage_breakdown"] = {
+        "base": base_usage,
+        "final": _usage_copy(result.get("usage")),
+        "total": _usage_copy(result.get("usage")),
+    }
 
     if not escalation_reason:
         result["final_model"] = result.get("model", OPENAI_MODEL)
@@ -1278,6 +1311,12 @@ def generate_ai_response_with_fallback(
         result_pro["retrieval_quality"] = _retrieval_quality(retrieval_stats)
         result_pro["base_model"] = result.get("source_model") or OPENAI_MODEL
         result_pro["final_model"] = LLM_SECONDARY_MODEL
+        result_pro["usage_breakdown"] = {
+            "base": base_usage,
+            "final": _usage_copy(result_pro.get("usage")),
+            "total": _usage_add(base_usage, result_pro.get("usage")),
+        }
+        result_pro["usage"] = _usage_copy(result_pro["usage_breakdown"]["total"])
         _, secondary_confidence = validate_answer(question, result_pro["text"], context, sources)
         if question_profile.get("table"):
             if table_coverage_ratio < 0.35:
@@ -1317,6 +1356,11 @@ def generate_ai_response_with_fallback(
         result["confidence"] = result["final_confidence"]
         result["escalated"] = False
         result["retries"] = max(int(result.get("retries", 0) or 0), int(getattr(exc, "retries", 0) or 0))
+        result["usage_breakdown"] = {
+            "base": base_usage,
+            "final": _usage_copy(result.get("usage")),
+            "total": _usage_copy(result.get("usage")),
+        }
         return result
 
 
