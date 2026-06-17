@@ -278,6 +278,7 @@
                 <button id="admin-tab-deployments" class="admin-view-tab active" type="button" onclick="setAdminView('deployments', this)">Despliegues</button>
                 <button id="admin-tab-overview" class="admin-view-tab" type="button" onclick="setAdminView('overview', this)">Resumen y modelos</button>
                 <button id="admin-tab-pending" class="admin-view-tab" type="button" onclick="setAdminView('pending', this)">Interacciones pendientes</button>
+                <button id="admin-tab-observability" class="admin-view-tab" type="button" onclick="setAdminView('observability', this)">Observabilidad</button>
             </div>
             <div id="admin-view-deployments" class="admin-view-section">
                 <div class="deploy-admin-grid">
@@ -351,6 +352,38 @@
                     </div>
                 </div>
                 <div id="admin-pending-list" class="admin-pending-list"></div>
+            </div>
+            <div id="admin-view-observability" class="admin-view-section hidden">
+                <div class="admin-section-header">
+                    <h4>Observabilidad de retrieval</h4>
+                    <button class="admin-refresh-btn" type="button" onclick="loadObservabilityPanel()">Actualizar</button>
+                </div>
+                <div id="obs-summary-grid" class="admin-metrics-grid"></div>
+                <div class="admin-section">
+                    <div class="admin-section-header">
+                        <h4>Por ruta</h4>
+                    </div>
+                    <div id="obs-by-route" class="admin-model-comparison"></div>
+                </div>
+                <div class="admin-section">
+                    <div class="admin-section-header">
+                        <h4>Evolucion semanal</h4>
+                    </div>
+                    <div id="obs-timeline-chart" class="obs-timeline-chart"></div>
+                    <div id="obs-timeline-legend" class="obs-timeline-legend"></div>
+                </div>
+                <div class="admin-section">
+                    <div class="admin-section-header">
+                        <h4>Comparar entre despliegues</h4>
+                    </div>
+                    <div class="obs-compare-selectors">
+                        <select id="obs-deploy-a" class="admin-user-filter" aria-label="Despliegue A"></select>
+                        <span>vs</span>
+                        <select id="obs-deploy-b" class="admin-user-filter" aria-label="Despliegue B"></select>
+                        <button class="admin-refresh-btn" type="button" onclick="compareDeployments()">Comparar</button>
+                    </div>
+                    <div id="obs-compare-result" class="obs-compare-result"></div>
+                </div>
             </div>
         </div>
     </div>

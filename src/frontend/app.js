@@ -2132,31 +2132,16 @@ function setAdminRange(days, button) {
 }
 
 function setAdminView(view, button = null) {
-    adminActiveView = view === "pending" ? "pending" : view === "overview" ? "overview" : "deployments";
-    const deploymentsSection = document.getElementById("admin-view-deployments");
-    const overviewSection = document.getElementById("admin-view-overview");
-    const pendingSection = document.getElementById("admin-view-pending");
-    const deploymentsTab = document.getElementById("admin-tab-deployments");
-    const overviewTab = document.getElementById("admin-tab-overview");
-    const pendingTab = document.getElementById("admin-tab-pending");
-
-    if (deploymentsSection) {
-        deploymentsSection.classList.toggle("hidden", adminActiveView !== "deployments");
-    }
-    if (overviewSection) {
-        overviewSection.classList.toggle("hidden", adminActiveView !== "overview");
-    }
-    if (pendingSection) {
-        pendingSection.classList.toggle("hidden", adminActiveView !== "pending");
-    }
-    if (deploymentsTab) {
-        deploymentsTab.classList.toggle("active", adminActiveView === "deployments");
-    }
-    if (overviewTab) {
-        overviewTab.classList.toggle("active", adminActiveView === "overview");
-    }
-    if (pendingTab) {
-        pendingTab.classList.toggle("active", adminActiveView === "pending");
+    const validViews = ["deployments", "overview", "pending", "observability"];
+    adminActiveView = validViews.includes(view) ? view : "deployments";
+    validViews.forEach((v) => {
+        const section = document.getElementById(`admin-view-${v}`);
+        const tab = document.getElementById(`admin-tab-${v}`);
+        if (section) section.classList.toggle("hidden", adminActiveView !== v);
+        if (tab) tab.classList.toggle("active", adminActiveView === v);
+    });
+    if (adminActiveView === "observability") {
+        loadObservabilityPanel();
     }
     if (button) {
         button.blur();
@@ -2296,6 +2281,272 @@ async function rejectInteraction(interactionId) {
         return;
     }
     loadAdminPanel();
+}
+
+// ===== OBSERVABILIDAD =====
+
+let obsTimelineData = null;
+let obsDeployments = [];
+
+async function loadObservabilityPanel() {
+    if (!currentUser) return;
+    try {
+        const [statsRes, timelineRes] = await Promise.all([
+            fetch(`${API}/admin/retrieval-stats?days=${adminRangeDays}`, { headers: getAdminHeaders() }),
+            fetch(`${API}/admin/retrieval-stats/timeline?weeks=12`, { headers: getAdminHeaders() }),
+        ]);
+        if (!statsRes.ok || !timelineRes.ok) throw new Error("Error cargando observabilidad");
+        const stats = await statsRes.json();
+        const timeline = await timelineRes.json();
+        obsTimelineData = timeline.timeline || [];
+        obsDeployments = timeline.deployments || [];
+        renderObsSummary(stats);
+        renderObsByRoute(stats.by_route || []);
+        renderObsTimeline(obsTimelineData, obsDeployments);
+        populateDeploySelectors(obsDeployments);
+    } catch (err) {
+        console.error("Error loading observability:", err);
+    }
+}
+
+function renderObsSummary(stats) {
+    const grid = document.getElementById("obs-summary-grid");
+    if (!grid) return;
+    const rejRate = stats.rejection_rate || 0;
+    const valRate = stats.validation_rate || 0;
+    const conf = stats.avg_confidence || 0;
+    const lowConf = stats.low_confidence || 0;
+    const sinInfo = stats.sin_info || 0;
+    const total = stats.total || 0;
+
+    function statusClass(metric, value) {
+        if (metric === "rejection") return value > 0.15 ? "obs-card-bad" : value > 0.05 ? "obs-card-warn" : "obs-card-good";
+        if (metric === "validation") return value > 0.3 ? "obs-card-good" : value > 0.1 ? "obs-card-warn" : "obs-card-neutral";
+        if (metric === "confidence") return value >= 0.8 ? "obs-card-good" : value >= 0.65 ? "obs-card-warn" : "obs-card-bad";
+        if (metric === "low_conf") return value === 0 ? "obs-card-good" : value <= 3 ? "obs-card-warn" : "obs-card-bad";
+        if (metric === "sin_info") return value === 0 ? "obs-card-good" : value <= 2 ? "obs-card-warn" : "obs-card-bad";
+        return "obs-card-neutral";
+    }
+
+    const cards = [
+        { label: "Total interacciones", value: formatNumber(total), cls: "obs-card-neutral" },
+        { label: "Tasa rechazo", value: `${(rejRate * 100).toFixed(1)}%`, cls: statusClass("rejection", rejRate) },
+        { label: "Tasa validacion", value: `${(valRate * 100).toFixed(1)}%`, cls: statusClass("validation", valRate) },
+        { label: "Confianza media", value: conf.toFixed(3), cls: statusClass("confidence", conf) },
+        { label: "Confianza baja", value: formatNumber(lowConf), cls: statusClass("low_conf", lowConf) },
+        { label: "Sin informacion", value: formatNumber(sinInfo), cls: statusClass("sin_info", sinInfo) },
+        { label: "Pendientes", value: formatNumber(stats.pendientes), cls: "obs-card-neutral" },
+        { label: "Validadas", value: formatNumber(stats.validadas), cls: statusClass("validation", valRate) },
+    ];
+    grid.innerHTML = cards.map((c) =>
+        `<div class="metric-card ${c.cls}"><span>${c.label}</span><strong>${c.value}</strong></div>`
+    ).join("");
+}
+
+function renderObsByRoute(routes) {
+    const container = document.getElementById("obs-by-route");
+    if (!container) return;
+    if (!routes.length) {
+        container.innerHTML = "<p>Sin datos por ruta</p>";
+        return;
+    }
+    const maxTotal = Math.max(...routes.map((r) => r.total), 1);
+    const rows = routes.map((r) => {
+        const pct = Math.round((r.total / maxTotal) * 100);
+        const rejPct = r.total ? Math.round((r.rechazadas / r.total) * 100) : 0;
+        const confCls = (r.avg_confidence || 0) >= 0.8 ? "obs-card-good" : (r.avg_confidence || 0) >= 0.65 ? "obs-card-warn" : "obs-card-bad";
+        return `<div class="obs-route-card">
+            <div class="obs-route-card-header">
+                <strong>${r.route}</strong>
+                <span>${formatNumber(r.total)} interacciones</span>
+            </div>
+            <div class="obs-route-bar-bg">
+                <div class="obs-route-bar-fill" style="width:${pct}%">
+                    ${rejPct > 0 ? `<div class="obs-route-bar-rej" style="width:${rejPct}%"></div>` : ""}
+                </div>
+            </div>
+            <div class="obs-route-card-metrics">
+                <span>Rechazo: <strong>${(r.rejection_rate * 100).toFixed(1)}%</strong></span>
+                <span class="${confCls}">Confianza: <strong>${(r.avg_confidence || 0).toFixed(3)}</strong></span>
+            </div>
+        </div>`;
+    }).join("");
+    container.innerHTML = rows;
+}
+
+function renderObsTimeline(timeline, deploys) {
+    const chart = document.getElementById("obs-timeline-chart");
+    const legend = document.getElementById("obs-timeline-legend");
+    if (!chart) return;
+    if (!timeline.length) {
+        chart.innerHTML = "<p>Sin datos de timeline</p>";
+        if (legend) legend.innerHTML = "";
+        return;
+    }
+    const maxTotal = Math.max(...timeline.map((w) => w.total), 1);
+    const deployDates = deploys.map((d) => (d.started_at || "").slice(0, 10));
+    const chartH = 140;
+
+    const bars = timeline.map((w) => {
+        const okCount = w.total - w.rechazadas;
+        const barH = Math.max(Math.round((w.total / maxTotal) * chartH), 4);
+        const rejH = w.total ? Math.round((w.rechazadas / maxTotal) * chartH) : 0;
+        const okH = barH - rejH;
+        const conf = w.avg_confidence || 0;
+        const confStr = (conf * 100).toFixed(0);
+        const confCls = conf >= 0.8 ? "obs-conf-good" : conf >= 0.65 ? "obs-conf-warn" : "obs-conf-bad";
+        const hasDeploy = deployDates.some((dd) => dd >= w.week && dd < nextWeek(w.week));
+        const weekDeploys = deploys.filter((d) => {
+            const dd = (d.started_at || "").slice(0, 10);
+            return dd >= w.week && dd < nextWeek(w.week);
+        });
+        const deployLabel = weekDeploys.length ? weekDeploys.map((d) => `${d.branch} (${d.conclusion})`).join(", ") : "";
+        const deployMarker = hasDeploy
+            ? `<div class="obs-deploy-line" title="Deploy: ${deployLabel}"></div><div class="obs-deploy-icon" title="Deploy: ${deployLabel}">&#9650;</div>`
+            : "";
+
+        return `<div class="obs-bar-col" title="Semana ${w.week}&#10;OK: ${okCount} | Rechazadas: ${w.rechazadas}&#10;Confianza: ${confStr}%&#10;Sin info: ${w.sin_info}">
+            <div class="obs-bar-area" style="height:${chartH}px">
+                ${deployMarker}
+                <div class="obs-bar-stack" style="height:${barH}px">
+                    <div class="obs-bar ok" style="flex:${okH}"></div>
+                    ${rejH > 0 ? `<div class="obs-bar rej" style="flex:${rejH}"></div>` : ""}
+                </div>
+            </div>
+            <span class="obs-bar-label">${w.week.slice(5)}</span>
+            <span class="obs-bar-count">${w.total}</span>
+            <span class="obs-conf-value ${confCls}">${confStr}%</span>
+        </div>`;
+    }).join("");
+
+    chart.innerHTML = `<div class="obs-chart-wrapper">
+        <div class="obs-y-axis">
+            <span>${maxTotal}</span>
+            <span>${Math.round(maxTotal / 2)}</span>
+            <span>0</span>
+        </div>
+        <div class="obs-bars-container">${bars}</div>
+    </div>`;
+
+    if (legend) {
+        legend.innerHTML = `
+            <span class="obs-legend-item"><span class="obs-legend-color obs-legend-ok"></span> OK</span>
+            <span class="obs-legend-item"><span class="obs-legend-color obs-legend-rej"></span> Rechazadas</span>
+            <span class="obs-legend-item"><span class="obs-legend-color obs-legend-deploy"></span> Despliegue</span>
+            <span class="obs-legend-item obs-legend-conf-label">Confianza: <span class="obs-conf-good">buena</span> / <span class="obs-conf-warn">media</span> / <span class="obs-conf-bad">baja</span></span>
+        `;
+    }
+}
+
+function nextWeek(dateStr) {
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().slice(0, 10);
+}
+
+function populateDeploySelectors(deploys) {
+    const selA = document.getElementById("obs-deploy-a");
+    const selB = document.getElementById("obs-deploy-b");
+    if (!selA || !selB) return;
+    const successDeploys = deploys.filter((d) => d.conclusion === "success");
+    const options = successDeploys.map((d) =>
+        `<option value="${d.id}">#${d.id} — ${d.branch} (${(d.completed_at || "").slice(0, 10)})</option>`
+    ).join("");
+    selA.innerHTML = `<option value="">Seleccionar despliegue A</option>${options}`;
+    selB.innerHTML = `<option value="">Seleccionar despliegue B</option>${options}`;
+}
+
+async function compareDeployments() {
+    const a = document.getElementById("obs-deploy-a")?.value;
+    const b = document.getElementById("obs-deploy-b")?.value;
+    const container = document.getElementById("obs-compare-result");
+    if (!container) return;
+    if (!a || !b) {
+        container.innerHTML = "<p>Selecciona ambos despliegues</p>";
+        return;
+    }
+    if (a === b) {
+        container.innerHTML = "<p>Selecciona dos despliegues diferentes</p>";
+        return;
+    }
+    container.innerHTML = "<p>Comparando...</p>";
+    try {
+        const res = await fetch(`${API}/admin/retrieval-stats/compare?deploy_a=${a}&deploy_b=${b}`, {
+            headers: getAdminHeaders(),
+        });
+        if (!res.ok) throw new Error("Error comparando despliegues");
+        const data = await res.json();
+        renderCompareResult(data, container);
+    } catch (err) {
+        container.innerHTML = `<p>Error: ${err.message}</p>`;
+    }
+}
+
+function renderCompareResult(data, container) {
+    const pa = data.period_a;
+    const pb = data.period_b;
+    const d = data.deltas;
+    function deltaClass(val, inverted = false) {
+        if (Math.abs(val) < 0.001) return "obs-delta-neutral";
+        const good = inverted ? val < 0 : val > 0;
+        return good ? "obs-delta-good" : "obs-delta-bad";
+    }
+    function deltaStr(val, isPercent = true) {
+        const sign = val > 0 ? "+" : "";
+        if (isPercent) return `${sign}${(val * 100).toFixed(2)}pp`;
+        return `${sign}${val}`;
+    }
+    function arrow(val, inverted = false) {
+        if (Math.abs(val) < 0.001) return "&#8212;";
+        const good = inverted ? val < 0 : val > 0;
+        return good ? "&#9650;" : "&#9660;";
+    }
+    const dateA = data.deploy_a.completed_at.slice(0, 10);
+    const dateB = data.deploy_b.completed_at.slice(0, 10);
+    const sinInfoDelta = pb.sin_info - pa.sin_info;
+    const totalDelta = pb.total - pa.total;
+
+    container.innerHTML = `
+        <div class="obs-compare-summary">
+            <div class="obs-compare-verdict ${d.avg_confidence >= 0 && d.rejection_rate <= 0 ? 'obs-verdict-good' : 'obs-verdict-bad'}">
+                ${d.avg_confidence >= 0 && d.rejection_rate <= 0
+                    ? "El despliegue B mejora o mantiene las metricas"
+                    : "El despliegue B muestra regresion en alguna metrica"}
+            </div>
+        </div>
+        <div class="obs-compare-table">
+            <div class="obs-compare-row obs-compare-header">
+                <span>Metrica</span>
+                <span>Antes (${dateA})</span>
+                <span>Despues (${dateB})</span>
+                <span>Cambio</span>
+            </div>
+            <div class="obs-compare-row">
+                <span>Volumen</span>
+                <span>${pa.total}</span>
+                <span>${pb.total}</span>
+                <span>${deltaStr(totalDelta, false)}</span>
+            </div>
+            <div class="obs-compare-row">
+                <span>Tasa rechazo</span>
+                <span>${(pa.rejection_rate * 100).toFixed(1)}%</span>
+                <span>${(pb.rejection_rate * 100).toFixed(1)}%</span>
+                <span class="${deltaClass(d.rejection_rate, true)}">${arrow(d.rejection_rate, true)} ${deltaStr(d.rejection_rate)}</span>
+            </div>
+            <div class="obs-compare-row">
+                <span>Confianza media</span>
+                <span>${pa.avg_confidence.toFixed(3)}</span>
+                <span>${pb.avg_confidence.toFixed(3)}</span>
+                <span class="${deltaClass(d.avg_confidence)}">${arrow(d.avg_confidence)} ${deltaStr(d.avg_confidence)}</span>
+            </div>
+            <div class="obs-compare-row">
+                <span>Sin informacion</span>
+                <span>${pa.sin_info}</span>
+                <span>${pb.sin_info}</span>
+                <span class="${sinInfoDelta <= 0 ? 'obs-delta-good' : 'obs-delta-bad'}">${sinInfoDelta <= 0 ? '&#9650;' : '&#9660;'} ${deltaStr(sinInfoDelta, false)}</span>
+            </div>
+        </div>
+    `;
 }
 
 // ===== MIS RESPUESTAS =====
