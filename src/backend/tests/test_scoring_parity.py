@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from azure_rag_service import (
     _apply_hint_boosts,
+    _azure_document_variant,
     _domain_boost,
     _DOMAIN_MATCH_BOOST,
     _DOMAIN_MISMATCH_PENALTY,
@@ -97,3 +98,11 @@ def test_hint_boosts_combined():
     from azure_rag_service import _VARIANT_BOOST, _ARTICLE_REF_BOOST, _IT_SECTION_REF_BOOST
     expected = _VARIANT_BOOST + _ARTICLE_REF_BOOST + _IT_SECTION_REF_BOOST
     assert abs(candidates[0]["_hint_boost"] - expected) < 0.001
+
+
+def test_azure_document_variant_falls_back_to_source_path():
+    item = {
+        "document_variant": "",
+        "source_path": "ops/07_estudios_viabilidad/Est. Terminal Cruceros - Malaga.pdf",
+    }
+    assert _azure_document_variant(item) == "estudio_viabilidad_malaga"

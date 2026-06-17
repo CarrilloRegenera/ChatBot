@@ -548,7 +548,7 @@ def _apply_hint_boosts(
     for item in candidates:
         boost = 0.0
         if variant_set:
-            doc_variant = _normalize_text(str(item.get("document_variant", "") or ""))
+            doc_variant = _azure_document_variant(item)
             if doc_variant and doc_variant in variant_set:
                 boost += _VARIANT_BOOST
         if article_set:
@@ -560,6 +560,18 @@ def _apply_hint_boosts(
             if item_it and any(ref in item_it for ref in it_set):
                 boost += _IT_SECTION_REF_BOOST
         item["_hint_boost"] = boost
+
+
+def _azure_document_variant(item: dict) -> str:
+    doc_variant = _normalize_text(str(item.get("document_variant", "") or ""))
+    if doc_variant:
+        return doc_variant
+    source_path = str(item.get("source_path") or item.get("blob_path") or "")
+    if not source_path:
+        return ""
+    from rag_service import _document_variant_from_source
+
+    return _normalize_text(_document_variant_from_source(source_path))
 
 
 def search_documents_detailed_azure(
@@ -690,7 +702,7 @@ def search_documents_detailed_azure(
             content_norm = _normalize_text(
                 f"{item.get('section', '')} {item.get('document_name', '')} {item.get('file_name', '')} {item.get('content', '')}"
             )
-            variant = str(item.get("document_variant", "") or "")
+            variant = _azure_document_variant(item)
             variant_hit = 1 if expected_document_variants and variant in expected_document_variants else 0
             phrase_hits = sum(1 for phrase in phrase_queries if _normalize_text(phrase) in content_norm)
             return variant_hit, phrase_hits
@@ -701,7 +713,7 @@ def search_documents_detailed_azure(
         variant_set = {_normalize_text(v) for v in expected_document_variants}
         variant_candidates = [
             item for item in candidates
-            if _normalize_text(str(item.get("document_variant", "") or "")) in variant_set
+            if _azure_document_variant(item) in variant_set
         ]
         if variant_candidates and (
             candidates[0] not in variant_candidates

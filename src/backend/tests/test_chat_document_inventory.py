@@ -1,8 +1,10 @@
 import sys
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import rag_service
 from routes.chat import _format_document_inventory_response
 
 
@@ -27,3 +29,14 @@ def test_format_document_inventory_response_groups_domains_and_counts():
 def test_format_document_inventory_response_handles_empty_inventory():
     response = _format_document_inventory_response({})
     assert "no veo documentos tecnicos indexados" in response.lower()
+
+
+def test_list_indexed_sources_dispatches_to_azure_backend():
+    with mock.patch.object(rag_service, "RAG_BACKEND", "azure_search"), mock.patch(
+        "azure_rag_service.list_indexed_sources",
+        return_value={"ops/demo.pdf": "hash"},
+    ) as azure_list:
+        result = rag_service.list_indexed_sources()
+
+    azure_list.assert_called_once_with()
+    assert result == {"ops/demo.pdf": "hash"}
