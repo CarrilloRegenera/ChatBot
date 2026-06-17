@@ -890,6 +890,42 @@ def _row_document(table_title: str, headers: List[str], row: List[str]) -> str:
     return f"FILA_TABLA. {title}. " + "; ".join(pairs) + "."
 
 
+_LEGEND_PATTERN = re.compile(
+    r"^(\d*\s*[a-z*])\s+(.+)",
+    re.IGNORECASE,
+)
+
+
+def _extract_table_legend(data: List[List], n_cols: int) -> Dict[str, str]:
+    """Extrae leyenda de abreviaturas de las filas finales de una tabla.
+
+    Filas de leyenda: solo la primera celda tiene texto, el resto vacío.
+    Ejemplo: ['t una vez por temporada (AÑO).', '', '', '']
+    """
+    legend: Dict[str, str] = {}
+    for row in reversed(data):
+        cells = [str(c or "").strip() for c in row]
+        if sum(1 for c in cells if c) != 1:
+            break
+        text = cells[0]
+        m = _LEGEND_PATTERN.match(text)
+        if not m:
+            break
+        abbrev = re.sub(r"\s+", " ", m.group(1)).strip().lower()
+        meaning = re.sub(r"\s+", " ", m.group(2)).strip().rstrip(".")
+        legend[abbrev] = meaning
+    return legend
+
+
+def _expand_legend_value(value: str, legend: Dict[str, str]) -> str:
+    if not legend or not value:
+        return value
+    key = value.strip().lower()
+    if key in legend:
+        return f"{value} ({legend[key]})"
+    return value
+
+
 def _extract_table_row_chunks(page, page_text: str) -> List[Dict[str, object]]:
     try:
         tables = page.find_tables()
@@ -905,10 +941,19 @@ def _extract_table_row_chunks(page, page_text: str) -> List[Dict[str, object]]:
             continue
         if not data or len(data) < 2:
             continue
+        n_cols = len(data[0])
+        legend = _extract_table_legend(data, n_cols)
         raw_headers = [str(cell or "").strip() for cell in data[0]]
-        if sum(1 for value in raw_headers if value) < 2 and len(data) > 1:
-            raw_headers = [str(cell or "").strip() for cell in data[1]]
-            body = data[2:]
+        filled_header_count = sum(1 for value in raw_headers if value)
+        if filled_header_count < 2 and len(data) > 1:
+            candidate_row1 = [str(cell or "").strip() for cell in data[1]]
+            filled_row1 = sum(1 for v in candidate_row1 if v)
+            if filled_row1 >= 2 and not any(v.isdigit() and len(v) <= 3 for v in candidate_row1 if v):
+                raw_headers = candidate_row1
+                body = data[2:]
+            else:
+                raw_headers = [f"columna_{i + 1}" for i in range(n_cols)]
+                body = data[1:]
         else:
             body = data[1:]
         headers = [re.sub(r"\s+", " ", value) or f"columna_{idx + 1}" for idx, value in enumerate(raw_headers)]
@@ -916,11 +961,14 @@ def _extract_table_row_chunks(page, page_text: str) -> List[Dict[str, object]]:
         if not table_title:
             title_match = re.search(r"Tabla\s+\d+[^.]{0,160}", flat_page, re.IGNORECASE)
             table_title = title_match.group(0) if title_match else f"Tabla {table_index}"
-        for row_index, row in enumerate(body, start=1):
+        legend_count = len(legend)
+        body_end = len(body) - legend_count if legend_count else len(body)
+        for row_index, row in enumerate(body[:body_end], start=1):
             values = [str(cell or "").strip() for cell in row]
             if sum(1 for value in values if value) < 2:
                 continue
-            doc = _row_document(table_title, headers, values)
+            expanded = [_expand_legend_value(v, legend) for v in values]
+            doc = _row_document(table_title, headers, expanded)
             if doc:
                 rows.append({
                     "document": doc,
