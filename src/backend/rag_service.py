@@ -2014,6 +2014,10 @@ def _get_indexed_sources() -> Dict[str, str]:
 
 
 def list_indexed_sources() -> Dict[str, str]:
+    if RAG_BACKEND == "azure_search":
+        from azure_rag_service import list_indexed_sources as list_indexed_sources_azure
+
+        return list_indexed_sources_azure()
     return _get_indexed_sources()
 
 
