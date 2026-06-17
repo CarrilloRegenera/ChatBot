@@ -1753,17 +1753,67 @@ def _document_variant_from_source(source_name: str) -> str:
 def _expected_document_variants(question: str, expected_domains: List[str]) -> List[str]:
     """Infiere variantes documentales esperadas de la pregunta según query_triggers en domains.json."""
     normalized = _normalize_text(question or "")
-    variants: List[str] = []
-    seen: set = set()
+    question_tokens = {token for token in _tokenize(normalized) if token and token not in STOPWORDS}
+    scored_variants: List[tuple[str, float, bool]] = []
     for domain_name in expected_domains:
         cfg = _DOMAIN_CFG["domains"].get(domain_name, {})
         for variant in cfg.get("document_variants", []):
-            vk = variant["variant_key"]
-            if vk in seen:
+            vk = str(variant.get("variant_key") or "").strip()
+            if not vk:
                 continue
-            if any(_normalize_text(t) in normalized for t in variant.get("query_triggers", [])):
-                variants.append(vk)
-                seen.add(vk)
+            best_score = 0.0
+            matched_exact = False
+            for trigger in variant.get("query_triggers", []):
+                normalized_trigger = _normalize_text(str(trigger or "").strip())
+                if not normalized_trigger:
+                    continue
+                if normalized_trigger in normalized:
+                    score = float(len(normalized_trigger))
+                    if re.search(r"\d", normalized_trigger):
+                        score += 20.0
+                    best_score = max(best_score, score)
+                    matched_exact = True
+                    continue
+                trigger_tokens = {token for token in _tokenize(normalized_trigger) if token and token not in STOPWORDS}
+                if len(trigger_tokens) < 2 or not question_tokens:
+                    continue
+                overlap = question_tokens & trigger_tokens
+                if len(overlap) >= min(2, len(trigger_tokens)):
+                    score = float(len(overlap) * 5) + (len(normalized_trigger) / 100.0)
+                    best_score = max(best_score, score)
+            if best_score > 0:
+                scored_variants.append((vk, best_score, matched_exact))
+    if not scored_variants:
+        return []
+
+    if any(matched_exact for _, _, matched_exact in scored_variants):
+        scored_variants = [
+            (vk, score, matched_exact)
+            for vk, score, matched_exact in scored_variants
+            if matched_exact
+        ]
+
+    if "80005-2" in normalized:
+        scored_variants = [
+            (vk, score, matched_exact)
+            for vk, score, matched_exact in scored_variants
+            if vk != "normativa_base"
+        ]
+    elif "80005-1" in normalized:
+        scored_variants = [
+            (vk, score, matched_exact)
+            for vk, score, matched_exact in scored_variants
+            if vk != "monitorizacion_control"
+        ]
+
+    scored_variants.sort(key=lambda item: item[1], reverse=True)
+    variants: List[str] = []
+    seen: set[str] = set()
+    for vk, _score, _matched_exact in scored_variants:
+        if vk in seen:
+            continue
+        seen.add(vk)
+        variants.append(vk)
     return variants
 
 

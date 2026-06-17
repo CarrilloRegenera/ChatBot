@@ -1,12 +1,7 @@
 from fastapi import HTTPException, Request
 import unicodedata
 
-from config import (
-    ADMIN_API_KEY,
-    ADMIN_PANEL_ALLOWED_EMAILS,
-    ADMIN_PANEL_ALLOWED_NAMES,
-    ENTRA_ENABLED,
-)
+import config as cfg
 from database import db_conn
 from entra_auth import validate_entra_token
 
@@ -17,12 +12,13 @@ def _admin_identity_key(value: str) -> str:
     return " ".join(without_marks.strip().lower().split())
 
 
-ADMIN_PANEL_ALLOWED_NAME_KEYS = {_admin_identity_key(name) for name in ADMIN_PANEL_ALLOWED_NAMES}
+def _admin_panel_allowed_name_keys() -> set[str]:
+    return {_admin_identity_key(name) for name in cfg.ADMIN_PANEL_ALLOWED_NAMES}
 
 
 def assert_admin(request: Request) -> None:
     auth_header = (request.headers.get("authorization") or "").strip()
-    if ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
+    if cfg.ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
         try:
             claims = validate_entra_token(token)
@@ -34,23 +30,23 @@ def assert_admin(request: Request) -> None:
             or claims.get("upn")
             or ""
         ).strip().lower()
-        if email and email in ADMIN_PANEL_ALLOWED_EMAILS:
+        if email and email in cfg.ADMIN_PANEL_ALLOWED_EMAILS:
             return
         raise HTTPException(status_code=403, detail="Acceso solo para administradores de Entra")
 
     admin_key = (request.headers.get("x-admin-key") or "").strip()
-    if admin_key and ADMIN_API_KEY and admin_key == ADMIN_API_KEY:
+    if admin_key and cfg.ADMIN_API_KEY and admin_key == cfg.ADMIN_API_KEY:
         return
 
     user_name = (request.headers.get("x-user-name") or "").strip().lower()
     user_email = (request.headers.get("x-user-email") or "").strip().lower()
     auth_provider = (request.headers.get("x-auth-provider") or "").strip().lower()
     is_local_admin = auth_provider == "local" and user_name == "admin"
-    is_allowed_entra_email = bool(user_email and user_email in ADMIN_PANEL_ALLOWED_EMAILS)
-    is_allowed_admin_name = _admin_identity_key(user_name) in ADMIN_PANEL_ALLOWED_NAME_KEYS
+    is_allowed_entra_email = bool(user_email and user_email in cfg.ADMIN_PANEL_ALLOWED_EMAILS)
+    is_allowed_admin_name = _admin_identity_key(user_name) in _admin_panel_allowed_name_keys()
     if not (is_local_admin or is_allowed_entra_email or is_allowed_admin_name):
         raise HTTPException(status_code=403, detail="Acceso solo para rol Administrador")
-    if admin_key and ADMIN_API_KEY and admin_key != ADMIN_API_KEY:
+    if admin_key and cfg.ADMIN_API_KEY and admin_key != cfg.ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Acceso admin denegado")
 
 
@@ -66,7 +62,7 @@ def load_user_by_id(user_id: int) -> tuple | None:
 
 def resolve_request_user_id(request: Request) -> int:
     auth_header = (request.headers.get("authorization") or "").strip()
-    if ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
+    if cfg.ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
         try:
             claims = validate_entra_token(token)

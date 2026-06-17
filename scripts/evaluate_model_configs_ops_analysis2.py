@@ -264,7 +264,8 @@ def extract_source_label(source: Any) -> str:
 
 
 def extract_source_prefix(source: Any) -> str:
-    return extract_source_label(source).split(" (", 1)[0]
+    label = extract_source_label(source)
+    return re.sub(r"\s+\(pag\..*$", "", label, flags=re.IGNORECASE).strip()
 
 
 def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -547,6 +548,9 @@ def generate_html(results: Dict[str, Any], output_path: Path) -> None:
         bucket = summary["breakdown_by_part"].get(key) or {"score_0_100": 0, "avg_confidence": 0, "correctas": 0, "parciales": 0, "incorrectas": 0, "questions": 0}
         return f"{bucket['score_0_100']:.2f} / conf {bucket['avg_confidence']:.3f} / C-P-I {bucket['correctas']}-{bucket['parciales']}-{bucket['incorrectas']}"
 
+    def part_bucket(summary: Dict[str, Any], key: str) -> Dict[str, Any]:
+        return summary["breakdown_by_part"].get(key) or {"score_0_100": 0, "avg_confidence": 0, "correctas": 0, "parciales": 0, "incorrectas": 0, "questions": 0}
+
     def mode_bucket(summary: Dict[str, Any], key: str) -> Dict[str, Any]:
         return summary["breakdown_by_mode"].get(key) or {"score_0_100": 0, "avg_confidence": 0, "correctas": 0, "parciales": 0, "incorrectas": 0, "questions": 0}
 
@@ -704,10 +708,10 @@ def generate_html(results: Dict[str, Any], output_path: Path) -> None:
       </thead>
       <tbody>
         <tr><td>Score global</td><td>{left_sum['overall_score_0_100']:.2f}</td><td>{right_sum['overall_score_0_100']:.2f}</td></tr>
-        <tr><td>Negocio</td><td>{left_sum['breakdown_by_part']['business']['score_0_100']:.2f}</td><td>{right_sum['breakdown_by_part']['business']['score_0_100']:.2f}</td></tr>
+        <tr><td>Negocio</td><td>{part_bucket(left_sum, 'business')['score_0_100']:.2f}</td><td>{part_bucket(right_sum, 'business')['score_0_100']:.2f}</td></tr>
         <tr><td>Técnico total</td><td>{mode_bucket(left_sum, 'technical')['score_0_100']:.2f}</td><td>{mode_bucket(right_sum, 'technical')['score_0_100']:.2f}</td></tr>
-        <tr><td>Técnico legacy</td><td>{left_sum['breakdown_by_part']['legacy_technical']['score_0_100']:.2f}</td><td>{right_sum['breakdown_by_part']['legacy_technical']['score_0_100']:.2f}</td></tr>
-        <tr><td>OPS</td><td>{left_sum['breakdown_by_part']['ops_technical']['score_0_100']:.2f}</td><td>{right_sum['breakdown_by_part']['ops_technical']['score_0_100']:.2f}</td></tr>
+        <tr><td>Técnico legacy</td><td>{part_bucket(left_sum, 'legacy_technical')['score_0_100']:.2f}</td><td>{part_bucket(right_sum, 'legacy_technical')['score_0_100']:.2f}</td></tr>
+        <tr><td>OPS</td><td>{part_bucket(left_sum, 'ops_technical')['score_0_100']:.2f}</td><td>{part_bucket(right_sum, 'ops_technical')['score_0_100']:.2f}</td></tr>
         <tr><td>Confianza media global</td><td>{left_sum['overall_avg_confidence']:.3f}</td><td>{right_sum['overall_avg_confidence']:.3f}</td></tr>
         <tr><td>Correctas</td><td>{mode_bucket(left_sum, 'business')['correctas'] + mode_bucket(left_sum, 'technical')['correctas']}</td><td>{mode_bucket(right_sum, 'business')['correctas'] + mode_bucket(right_sum, 'technical')['correctas']}</td></tr>
         <tr><td>Parciales</td><td>{mode_bucket(left_sum, 'business')['parciales'] + mode_bucket(left_sum, 'technical')['parciales']}</td><td>{mode_bucket(right_sum, 'business')['parciales'] + mode_bucket(right_sum, 'technical')['parciales']}</td></tr>
