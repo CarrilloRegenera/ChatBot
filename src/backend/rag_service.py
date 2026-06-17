@@ -1868,6 +1868,10 @@ def _get_indexed_sources() -> Dict[str, str]:
     return sources
 
 
+def list_indexed_sources() -> Dict[str, str]:
+    return _get_indexed_sources()
+
+
 def _delete_source_chunks(source_name: str) -> None:
     for col in (collection, table_collection):
         results = col.get(where={"source": source_name}, include=[])
@@ -3438,6 +3442,14 @@ def _search_documents_detailed_chroma(
             ),
             reverse=True,
         )
+
+    if expected_document_variants and selected:
+        variant_only = [item for item in selected if _matches_variant_focus(item)]
+        if variant_only and (
+            selected[0] not in variant_only
+            or len(variant_only) >= max(2, min(n_results, max(1, n_results // 2)))
+        ):
+            selected = variant_only[:n_results]
 
     if query_profile["page_refs"] and selected:
         requested_pages = {str(page) for page in query_profile["page_refs"]}

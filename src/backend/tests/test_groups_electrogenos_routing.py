@@ -32,6 +32,16 @@ def test_documentary_manual_questions_do_not_trigger_business_route():
         assert detect_business_route(question) is None, question
 
 
+def test_mixed_business_and_technical_questions_do_not_force_business_route():
+    questions = [
+        "Tengo un proyecto con cliente, presupuesto y licitacion de OPS, que exige el RITE?",
+        "Que cliente tiene EOPSA y que dice la IEC 80005-1 sobre HVSC",
+    ]
+
+    for question in questions:
+        assert detect_business_route(question) is None, question
+
+
 def test_generator_followups_keep_domain_hint():
     hints = detect_hint_domains(
         "seguimos con el manual de grupos electrogenos y el remolque del grupo automatico"

@@ -6,6 +6,26 @@
       "document_type": "reglamento",
       "document_layer": "normativa_oficial",
       "confidentiality": "internal",
+      "document_variants": [
+        {
+          "variant_key": "reglamento_lat",
+          "filename_patterns": ["a16436", "16554", "lineas electricas de alta tension"],
+          "query_triggers": [
+            "lineas electricas de alta tension",
+            "lineas de alta tension",
+            "reglamento de alta tension",
+            "reglamento lat",
+            "itc-lat",
+            "itc lat",
+            "tensiones de paso",
+            "tension de paso",
+            "tensiones de contacto",
+            "contactos y tensiones de paso",
+            "inspecciones periodicas en lineas de at",
+            "lineas de at"
+          ]
+        }
+      ],
       "encoding": {
         "type": "shift31",
         "strategy": "full_text"
@@ -16,8 +36,13 @@
         "lineas electricas de alta",
         "linea de at",
         "lineas de at",
+        "reglamento de alta tension",
+        "reglamento lat",
         "instalacion at",
         "instalaciones at",
+        "tension de paso",
+        "tensiones de paso",
+        "tensiones de contacto",
         "avance del sector electrico",
         "a16436-16554",
         "a16436",
@@ -789,7 +814,11 @@
             "ieee 80005",
             "iso 80005",
             "hvsc",
-            "high voltage shore connection"
+            "high voltage shore connection",
+            "shore-to-ship",
+            "shore to ship",
+            "conexion shore-to-ship",
+            "conexion tierra-buque"
           ]
         },
         {
@@ -809,14 +838,58 @@
           ]
         },
         {
-          "variant_key": "checklist_implantacion",
-          "filename_patterns": ["eopsa", "checklist", "guia_ops_es", "anexo 1"],
+          "variant_key": "guia_implantacion_part1",
+          "filename_patterns": ["emsa guidance on sse_part1", "part1", "part 1"],
           "query_triggers": [
-            "eopsa",
-            "checklist",
-            "lista de verificacion",
+            "emsa part 1",
+            "emsa guidance part 1",
+            "guia emsa part 1",
+            "guia emsa parte 1",
+            "emsa sse part 1",
+            "part 1 sobre sse",
+            "calidad de energia",
+            "compatibilidad red-buque"
+          ]
+        },
+        {
+          "variant_key": "guia_implantacion_part2",
+          "filename_patterns": ["emsa guidance on sse_part2", "part2", "part 2", "version 2"],
+          "query_triggers": [
+            "emsa part 2",
+            "emsa guidance part 2",
+            "guia emsa part 2",
+            "guia emsa parte 2",
+            "emsa sse part 2",
+            "part 2 sobre sse",
+            "operacion o seguridad",
+            "operacion practica",
+            "explotacion practica",
+            "battery charging",
+            "carga de baterias"
+          ]
+        },
+        {
+          "variant_key": "eopsa_checklist",
+          "filename_patterns": ["checklist", "anexo 1"],
+          "query_triggers": [
+            "eopsa checklist",
+            "checklist ops",
             "anexo 1",
-            "licitacion ops"
+            "origen de la fuente de alimentacion",
+            "automatizacion y supervision"
+          ]
+        },
+        {
+          "variant_key": "eopsa_guia_completa",
+          "filename_patterns": ["completa"],
+          "query_triggers": [
+            "guia eopsa",
+            "guia para una licitacion ops completa y exitosa",
+            "licitacion ops completa y exitosa",
+            "cms",
+            "subestacion",
+            "modos de operacion",
+            "lista de verificacion completa dentro de la guia"
           ]
         },
         {
@@ -837,23 +910,47 @@
           ]
         },
         {
-          "variant_key": "planificacion_proyecto",
+          "variant_key": "planificacion_explotacion",
           "filename_patterns": [
-            "planificacion y explotacion",
-            "redaccion de proyectos",
-            "presentacion",
-            "recomendaciones"
+            "explotacion"
           ],
           "query_triggers": [
             "planificacion y explotacion",
             "planificacion ops",
+            "guia de planificacion",
+            "guia de explotacion",
+            "guias de explotacion",
+            "planificacion de proyecto",
+            "planificacion del proyecto",
             "explotacion ops",
-            "redaccion de proyectos",
-            "redaccion de proyectos ops",
+            "explotacion del servicio",
+            "esquemas de explotacion",
+            "operadores de terminales"
+          ]
+        },
+        {
+          "variant_key": "redaccion_proyectos_presentacion",
+          "filename_patterns": [
+            "presentacion"
+          ],
+          "query_triggers": [
+            "presentacion de redaccion de proyectos",
+            "presentacion ops",
+            "revision de proyectos ops",
+            "metodologia",
+            "enfoque de la presentacion"
+          ]
+        },
+        {
+          "variant_key": "redaccion_proyectos_recomendaciones",
+          "filename_patterns": [
+            "recomendaciones"
+          ],
+          "query_triggers": [
+            "recomendaciones de redaccion de proyectos",
             "pliegos de condiciones",
             "programa de necesidades",
             "puntos de verificacion",
-            "metodologia",
             "subestacion",
             "modulo ops",
             "sistema de gestion de cables",
@@ -864,49 +961,68 @@
           ]
         },
         {
-          "variant_key": "financiacion_afif",
+          "variant_key": "afif_guia_solicitantes",
           "filename_patterns": [
-            "afif",
-            "cef-t",
-            "call-fiche",
-            "guia_solicitantes",
-            "procedimiento subvencion"
+            "solicitantes",
+            "cef-t"
           ],
           "query_triggers": [
-            "afif",
+            "guia afif",
+            "guia de solicitantes afif",
             "cef-t",
             "cef transport",
-            "subvencion afif",
-            "ayudas afif",
             "convocatoria afif",
-            "comunicacion de interes",
-            "conformidad de estado miembro",
-            "funding & tender opportunities",
+            "funding tender opportunities",
             "solicitud afif"
           ]
         },
         {
-          "variant_key": "estudio_viabilidad",
+          "variant_key": "afif_procedimiento_subvencion",
           "filename_patterns": [
-            "est.",
-            "estudio",
-            "malaga",
-            "valencia",
-            "santander",
-            "huelva",
-            "sevilla",
-            "vigo"
+            "procedimiento",
+            "subvencion"
           ],
           "query_triggers": [
-            "estudio de viabilidad",
-            "estudio tecnico economico",
-            "estudio tecnico-economico",
-            "viabilidad ops",
-            "demanda energetica",
-            "solucion recomendada",
-            "muelle objetivo",
-            "buques objetivo",
-            "potencia instalada necesaria"
+            "procedimiento afif",
+            "procedimiento de subvencion afif",
+            "subvencion afif",
+            "ayudas afif",
+            "comunicacion de interes",
+            "conformidad de estado miembro",
+            "fase 1",
+            "sgprtl"
+          ]
+        },
+        {
+          "variant_key": "estudio_viabilidad_valencia",
+          "filename_patterns": [
+            "valencia",
+            "transversal",
+            "poniente"
+          ],
+          "query_triggers": [
+            "estudio de viabilidad valencia",
+            "viabilidad ops valencia",
+            "muelle transversal",
+            "muelle poniente",
+            "valencia",
+            "demanda energetica valencia",
+            "solucion recomendada valencia"
+          ]
+        },
+        {
+          "variant_key": "estudio_viabilidad_malaga",
+          "filename_patterns": [
+            "malaga",
+            "terminal"
+          ],
+          "query_triggers": [
+            "estudio de viabilidad malaga",
+            "viabilidad ops malaga",
+            "terminal de cruceros de malaga",
+            "malaga",
+            "demanda energetica malaga",
+            "potencia necesaria malaga"
           ]
         },
         {
@@ -939,9 +1055,15 @@
         "shore-side electricity",
         "sse",
         "cold ironing",
+        "shore-to-ship",
+        "shore to ship",
         "eopsa",
         "emsa guidance",
         "emsa guidance on sse",
+        "emsa part 1",
+        "emsa part 2",
+        "emsa parte 1",
+        "emsa parte 2",
         "iec 80005",
         "ieee 80005",
         "iso 80005",
@@ -955,6 +1077,9 @@
         "control remoto",
         "planificacion y explotacion",
         "redaccion de proyectos",
+        "guia de planificacion",
+        "guia de explotacion",
+        "guias de explotacion",
         "programa de necesidades",
         "pliegos de condiciones",
         "puntos de verificacion",
@@ -977,6 +1102,8 @@
         "anteproyecto",
         "proyecto de ejecucion",
         "infraestructura electrica",
+        "anexo 1",
+        "lista de verificacion completa",
         "electrificacion de atraques",
         "electrificacion de buques",
         "suministro electrico a buques",
@@ -1097,6 +1224,30 @@
         },
         {
           "if_contains": [
+            "emsa",
+            "part 1"
+          ],
+          "emit": [
+            "EMSA Guidance on SSE Part 1",
+            "quality of power supply",
+            "grid-ship compatibility",
+            "power quality"
+          ]
+        },
+        {
+          "if_contains": [
+            "emsa",
+            "part 2"
+          ],
+          "emit": [
+            "EMSA Guidance on SSE Part 2",
+            "operational and safety aspects",
+            "OPS operation",
+            "battery charging"
+          ]
+        },
+        {
+          "if_contains": [
             "eopsa"
           ],
           "emit": [
@@ -1105,6 +1256,16 @@
             "Lista de Verificacion para una Licitacion OPS Completa y Exitosa",
             "Anexo 1",
             "Guia OPS"
+          ]
+        },
+        {
+          "if_contains": [
+            "anexo 1"
+          ],
+          "emit": [
+            "Anexo 1 – Lista de Verificación para una Licitación OPS Completa y Exitosa",
+            "Lista de Verificación completa",
+            "EOPSA"
           ]
         },
         {
@@ -1171,6 +1332,27 @@
             "Planificacion y desarrollo del servicio de OPS",
             "esquemas de explotacion del servicio",
             "operadores de terminales"
+          ]
+        },
+        {
+          "if_contains": [
+            "guia",
+            "explotacion"
+          ],
+          "emit": [
+            "PLANIFICACION Y EXPLOTACION DE INSTALACIONES OPS",
+            "esquemas de explotacion del servicio",
+            "operadores de terminales"
+          ]
+        },
+        {
+          "if_contains": [
+            "shore-to-ship"
+          ],
+          "emit": [
+            "shore-to-ship connection and interface equipment",
+            "IEC/ISO/IEEE 80005-1",
+            "High Voltage Shore Connection"
           ]
         },
         {

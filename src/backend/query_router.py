@@ -4,6 +4,13 @@ from typing import Dict
 
 from config import MIN_QUERY_LENGTH
 from ops_domain import OPS_DOCUMENTARY_HINTS, OPS_TECHNICAL_HINTS, is_ops_standard_reference
+from routing_signals import (
+    LICITACION_REFERENCE_PATTERN,
+    PRODUCCION_CODE_PATTERN,
+    has_concrete_business_reference,
+    has_explicit_technical_reference,
+    is_mixed_scope_query,
+)
 
 
 GREETING_PATTERNS = (
@@ -87,9 +94,20 @@ BUSINESS_COMMON_HINTS = {
     "en curso", "recientes", "mas recientes", "vinculadas", "vinculados", "relacionadas", "relacionados", "top", "ranking",
 }
 
-LICITACION_REFERENCE_PATTERN = re.compile(r"\b(?:est[-\s]?\d{1,4}[-\s]?20\d{2}|[a-z]{2,6}-\d{1,5}-20\d{2})\b")
-PRODUCCION_CODE_PATTERN = re.compile(r"\b\d{5}\b")
-
+DOCUMENT_INVENTORY_HINTS = {
+    "que documentos hay",
+    "que documentos tenemos",
+    "que documentacion tenemos",
+    "que documentacion hay",
+    "documentos disponibles",
+    "documentacion disponible",
+    "estructura de documentos",
+    "estructura documental",
+    "como esta organizada la documentacion",
+    "como esta organizada la documentacion tecnica",
+    "que dominios documentales hay",
+    "que reglamentos tenemos cargados",
+}
 
 def _normalize(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
@@ -126,16 +144,24 @@ def _looks_documentary(text: str) -> bool:
     return any(hint in text for hint in DOCUMENTARY_HINTS)
 
 
+def _asks_for_document_inventory(text: str) -> bool:
+    return any(hint in text for hint in DOCUMENT_INVENTORY_HINTS)
+
+
 def _has_strong_business_signal(text: str) -> bool:
     if LICITACION_REFERENCE_PATTERN.search(text):
         return True
     if PRODUCCION_CODE_PATTERN.search(text):
-        return True
+        numeric_ref = PRODUCCION_CODE_PATTERN.search(text).group(0)
+        if not is_ops_standard_reference(numeric_ref, text):
+            return True
     if any(hint in text for hint in BUSINESS_LICITACIONES_HINTS):
         return True
     if any(hint in text for hint in BUSINESS_PRODUCCION_HINTS):
         return True
     if "importe contratado" in text:
+        return True
+    if "cliente" in text and any(token in text for token in ("tiene", "tenemos", "es", "del cliente")):
         return True
     if any(token in text for token in ("cliente", "estado", "en curso", "top", "ranking")) and any(
         entity in text for entity in ("proyecto", "proyectos", "obra", "obras", "licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas")
@@ -167,6 +193,21 @@ def classify_question(question: str) -> Dict[str, str]:
             "message": "Esa pregunta parece fuera del alcance documental actual. Haz una consulta tecnica sobre la documentacion cargada.",
         }
 
+    if _asks_for_document_inventory(normalized):
+        return {"route": "document_inventory", "message": ""}
+
+    business_signal = _has_strong_business_signal(normalized)
+    if is_mixed_scope_query(normalized, has_business_signal=business_signal) and not has_concrete_business_reference(normalized):
+        return {
+            "route": "mixed_scope",
+            "message": (
+                "La consulta mezcla negocio y documentacion tecnica. "
+                "Para responder con precision, separa la parte de negocio y la parte normativa en preguntas distintas."
+            ),
+        }
+    if documentary_or_technical and has_explicit_technical_reference(normalized) and not has_concrete_business_reference(normalized):
+        return {"route": "knowledge", "message": ""}
+
     has_licitacion_reference = bool(LICITACION_REFERENCE_PATTERN.search(normalized))
     has_produccion_code = bool(PRODUCCION_CODE_PATTERN.search(normalized))
     if has_licitacion_reference:
@@ -182,7 +223,7 @@ def classify_question(question: str) -> Dict[str, str]:
     ):
         return {"route": "business_licitaciones", "message": ""}
 
-    if documentary_or_technical and not _has_strong_business_signal(normalized):
+    if documentary_or_technical and not business_signal:
         return {"route": "knowledge", "message": ""}
 
     if any(hint in normalized for hint in BUSINESS_LICITACIONES_HINTS):

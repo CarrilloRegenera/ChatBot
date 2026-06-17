@@ -223,6 +223,59 @@ def _augment_retrieval_question(question: str) -> str:
     return question
 
 
+_DOMAIN_DISPLAY_NAMES = {
+    "alta_tension": "Alta tension",
+    "baja_tension": "Baja tension",
+    "fotovoltaica_om": "Fotovoltaica O&M",
+    "grupos_electrogenos": "Grupos electrogenos",
+    "guias_tecnicas": "Guias tecnicas",
+    "rite": "RITE",
+    "ops": "OPS",
+}
+
+
+def _group_indexed_sources(indexed_sources: Dict[str, str]) -> Dict[str, List[str]]:
+    grouped: Dict[str, List[str]] = {}
+    for source in sorted(indexed_sources):
+        normalized = str(source or "").replace("\\", "/").strip("/")
+        if not normalized:
+            continue
+        parts = normalized.split("/")
+        domain = parts[0]
+        grouped.setdefault(domain, []).append(normalized)
+    return grouped
+
+
+def _format_document_inventory_response(indexed_sources: Dict[str, str]) -> str:
+    grouped = _group_indexed_sources(indexed_sources)
+    if not grouped:
+        return (
+            "Ahora mismo no veo documentos tecnicos indexados. "
+            "Cuando termine la sincronizacion documental podre listar la estructura disponible."
+        )
+
+    lines = [
+        "La documentacion tecnica disponible en el chatbot esta organizada por bloques:",
+    ]
+    total_docs = 0
+    for domain, sources in grouped.items():
+        total_docs += len(sources)
+        label = _DOMAIN_DISPLAY_NAMES.get(domain, domain.replace("_", " ").title())
+        lines.append(f"- {label}: {len(sources)} documento(s)")
+        preview = sources[:4]
+        for source in preview:
+            rel = source.split("/", 1)[1] if "/" in source else source
+            lines.append(f"  {rel}")
+        if len(sources) > len(preview):
+            lines.append(f"  ... y {len(sources) - len(preview)} mas")
+
+    lines.append(
+        "Si quieres, puedo detallarte el contenido de un bloque concreto, por ejemplo OPS, RITE, baja tension o grupos electrogenos."
+    )
+    lines.append(f"Total indexado actualmente: {total_docs} documento(s).")
+    return "\n".join(lines)
+
+
 def _apply_known_technical_answer_overrides(question: str, response: str, confidence: float) -> tuple[str, float]:
     normalized = " ".join((question or "").strip().lower().split())
     response_normalized = " ".join((response or "").strip().lower().split())
@@ -485,6 +538,54 @@ def send_message(data: MessageRequest, request: Request):
                 "response": response,
                 "confidence": 1.0 if route in {"invalid", "smalltalk"} else 0.9,
                 "from_memory": False,
+                "route": route,
+            }
+
+        if route == "mixed_scope":
+            response = route_info["message"]
+            elapsed = int((time.time() - start) * 1000)
+            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
+            _log_chat_event(
+                event="CHAT",
+                conversation_id=data.conversation_id,
+                route=route,
+                from_memory=False,
+                confidence=1.0,
+                sources_count=0,
+                elapsed_ms=elapsed,
+                question=data.question,
+                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+            )
+            return {
+                "question": data.question,
+                "response": response,
+                "confidence": 1.0,
+                "from_memory": False,
+                "route": route,
+            }
+
+        if route == "document_inventory":
+            indexed_sources = _rag_service().list_indexed_sources()
+            response = _format_document_inventory_response(indexed_sources)
+            elapsed = int((time.time() - start) * 1000)
+            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
+            _log_chat_event(
+                event="CHAT",
+                conversation_id=data.conversation_id,
+                route=route,
+                from_memory=False,
+                confidence=1.0,
+                sources_count=len(indexed_sources),
+                elapsed_ms=elapsed,
+                question=data.question,
+                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+            )
+            return {
+                "question": data.question,
+                "response": response,
+                "confidence": 1.0,
+                "from_memory": False,
+                "sources": sorted(indexed_sources)[:20],
                 "route": route,
             }
 

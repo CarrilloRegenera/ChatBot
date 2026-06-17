@@ -224,7 +224,7 @@
     "domain": "ops",
     "question": "Que exige AFIF para la comunicacion de interes y la conformidad de Estado miembro",
     "expected_domains": ["ops"],
-    "expected_variants": ["financiacion_afif"],
+    "expected_variants": ["afif_procedimiento_subvencion"],
     "expected_phrase_queries": ["CEF-T-AFIF-2024", "Comunicacion de interes"],
     "difficulty": "media",
     "category": "funding"
@@ -232,9 +232,9 @@
   {
     "id": "ops_02",
     "domain": "ops",
-    "question": "Segun el estudio de viabilidad OPS cual es la demanda energetica y la potencia instalada necesaria",
+    "question": "Segun el estudio de viabilidad OPS de Valencia cual es la demanda energetica y la potencia instalada necesaria",
     "expected_domains": ["ops"],
-    "expected_variants": ["estudio_viabilidad"],
+    "expected_variants": ["estudio_viabilidad_valencia"],
     "expected_phrase_queries": ["demanda energetica", "potencia instalada necesaria"],
     "difficulty": "media",
     "category": "viability"

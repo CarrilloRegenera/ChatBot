@@ -159,55 +159,98 @@ def test_ops_phrase_queries_cover_eopsa_checklists():
 
 def test_ops_document_variants_distinguish_normative_base_and_checklists():
     assert _document_variant_from_source("ops/01_normativa_base/BS ISO IEC IEEE 80005-1_2012.pdf") == "normativa_base"
-    assert _document_variant_from_source("ops/03_checklist_implantacion/EOPSA_Checklist_OPS_ES.pdf") == "checklist_implantacion"
+    assert _document_variant_from_source("ops/03_checklists_operacion/EOPSA_Checklist_OPS_ES.pdf") == "eopsa_checklist"
+    assert _document_variant_from_source("ops/03_checklists_operacion/EOPSA_Guia_OPS_ES_Completa.pdf") == "eopsa_guia_completa"
     assert _expected_document_variants("Que es OPS segun la IEC 80005-1?", ["ops"]) == ["normativa_base"]
     assert _expected_document_variants(
         "Segun la checklist OPS de EOPSA, que se debe revisar antes de conectar?",
         ["ops"],
-    ) == ["checklist_implantacion"]
+    ) == ["eopsa_checklist"]
+    assert _expected_document_variants(
+        "Que es la guia EOPSA para una licitacion OPS completa y exitosa?",
+        ["ops"],
+    ) == ["eopsa_guia_completa"]
 
 
 def test_ops_document_variants_cover_monitoring_summary_and_project_planning():
     assert _document_variant_from_source("ops/01_normativa_base/iecieee80005-2_2016.pdf") == "monitorizacion_control"
     assert _document_variant_from_source(
+        "ops/02_guias_implantacion/EMSA Guidance on SSE_PART1.pdf"
+    ) == "guia_implantacion_part1"
+    assert _document_variant_from_source(
+        "ops/02_guias_implantacion/EMSA Guidance on SSE_PART2_Version 2.pdf"
+    ) == "guia_implantacion_part2"
+    assert _document_variant_from_source(
         "ops/04_resumen_sectorial/On_shore_power_supply_summary-surveys_final.pdf"
     ) == "resumen_sectorial"
     assert _document_variant_from_source(
+        "ops/05_planificacion_proyecto/OPS - Planificacion y Explotacion.pdf"
+    ) == "planificacion_explotacion"
+    assert _document_variant_from_source(
+        "ops/05_planificacion_proyecto/OPS - Redaccion de Proyectos - Presentacion.pdf"
+    ) == "redaccion_proyectos_presentacion"
+    assert _document_variant_from_source(
         "ops/05_planificacion_proyecto/OPS - Redaccion de Proyectos - Recomendaciones.pdf"
-    ) == "planificacion_proyecto"
+    ) == "redaccion_proyectos_recomendaciones"
     variants_80005_2 = _expected_document_variants(
         "Segun la IEC 80005-2, que datos se usan para monitorizacion y control?",
         ["ops"],
     )
     assert "monitorizacion_control" in variants_80005_2
     assert _expected_document_variants(
+        "Que dice la guia EMSA Part 1 sobre calidad de energia o compatibilidad red-buque?",
+        ["ops"],
+    ) == ["guia_implantacion_part1"]
+    assert _expected_document_variants(
+        "Que cubre la guia EMSA Part 2 sobre SSE?",
+        ["ops"],
+    ) == ["guia_implantacion_part2"]
+    assert _expected_document_variants(
         "Que dice el survey de WPCAP sobre conexiones OPS exitosas?",
         ["ops"],
     ) == ["resumen_sectorial"]
     assert _expected_document_variants(
+        "Que trata el documento de planificacion y explotacion de instalaciones OPS?",
+        ["ops"],
+    ) == ["planificacion_explotacion"]
+    assert _expected_document_variants(
+        "Que enfoque da la presentacion sobre la metodologia o la revision de proyectos OPS?",
+        ["ops"],
+    ) == ["redaccion_proyectos_presentacion"]
+    assert _expected_document_variants(
         "Que recomienda OPS para pliegos de condiciones y programa de necesidades?",
         ["ops"],
-    ) == ["planificacion_proyecto"]
+    ) == ["redaccion_proyectos_recomendaciones"]
 
 
 def test_ops_document_variants_cover_afif_viability_and_anteproject():
     assert _document_variant_from_source(
-        "ops/06_financiacion_afif/Procedimiento subvención AFIF.pdf"
-    ) == "financiacion_afif"
+        "ops/06_financiacion_afif/guia_solicitantes_cef-t-afif-2024_segundo_corte_1.0.pdf"
+    ) == "afif_guia_solicitantes"
+    assert _document_variant_from_source(
+        "ops/06_financiacion_afif/Procedimiento subvenci?n AFIF.pdf"
+    ) == "afif_procedimiento_subvencion"
+    assert _document_variant_from_source(
+        "ops/07_estudios_viabilidad/Est. Muelle Transversal y Poniente (Cruceros) - Valencia.pdf"
+    ) == "estudio_viabilidad_valencia"
     assert _document_variant_from_source(
         "ops/07_estudios_viabilidad/Est. Terminal Cruceros - Malaga.pdf"
-    ) == "estudio_viabilidad"
+    ) == "estudio_viabilidad_malaga"
     assert _document_variant_from_source(
         "ops/08_anteproyectos_referencia/ANTEPROYECTO-OPS-PUERTO-BILBAO.pdf"
     ) == "anteproyecto_referencia"
     assert _expected_document_variants(
+        "Que fases o tramites describe la guia de solicitantes AFIF?",
+        ["ops"],
+    ) == ["afif_guia_solicitantes"]
+    assert _expected_document_variants(
         "Que exige AFIF para la comunicacion de interes y la conformidad de Estado miembro?",
         ["ops"],
-    ) == ["financiacion_afif"]
+    ) == ["afif_procedimiento_subvencion"]
     assert _expected_document_variants(
-        "Segun el estudio de viabilidad OPS, como se caracteriza la demanda energetica y la solucion recomendada?",
+        "Segun el estudio de viabilidad OPS de Valencia, como se caracteriza la demanda energetica y la solucion recomendada?",
         ["ops"],
-    ) == ["estudio_viabilidad"]
+    ) == ["estudio_viabilidad_valencia"]
     assert _expected_document_variants(
         "Segun el anteproyecto OPS del puerto de Bilbao, que incluye la memoria de la infraestructura electrica?",
         ["ops"],
@@ -228,6 +271,18 @@ def test_ops_phrase_queries_cover_project_and_monitoring_questions():
     assert "PLIEGOS DE CONDICIONES" in project_phrases
     assert "Programa de necesidades" in project_phrases
     assert "REDACCION DE PROYECTOS OPS" in project_phrases
+
+    emsa_part1_phrases = _domain_phrase_queries(
+        "Que dice la guia EMSA Part 1 sobre calidad de energia o compatibilidad red-buque?"
+    )
+    assert "EMSA Guidance on SSE Part 1" in emsa_part1_phrases
+    assert "power quality" in emsa_part1_phrases
+
+    emsa_part2_phrases = _domain_phrase_queries(
+        "Que cubre la guia EMSA Part 2 sobre SSE?"
+    )
+    assert "EMSA Guidance on SSE Part 2" in emsa_part2_phrases
+    assert "operational and safety aspects" in emsa_part2_phrases
 
 
 def test_ops_phrase_queries_cover_afif_viability_and_anteproject_questions():
@@ -251,6 +306,35 @@ def test_ops_phrase_queries_cover_afif_viability_and_anteproject_questions():
     assert "ANTEPROYECTO" in anteproject_phrases
     assert "infraestructura electrica" in anteproject_phrases
     assert "Memoria" in anteproject_phrases
+
+
+def test_ops_variants_cover_annex_shore_to_ship_and_planning_guides():
+    assert _expected_document_variants(
+        "Que es el Anexo 1 en la documentacion OPS y para que sirve?",
+        ["ops"],
+    ) == ["eopsa_checklist"]
+    assert _expected_document_variants(
+        "Que normativa tecnica aplica a la conexion shore-to-ship en OPS?",
+        ["ops"],
+    ) == ["normativa_base"]
+    assert _expected_document_variants(
+        "Que diferencias practicas hay entre una guia de planificacion de proyecto OPS y la normativa base IEC 80005?",
+        ["ops"],
+    ) == ["normativa_base", "planificacion_explotacion"]
+
+    phrases = _domain_phrase_queries(
+        "Que normativa tecnica aplica a la conexion shore-to-ship y que parte corresponde a guias de explotacion?"
+    )
+    assert "shore-to-ship connection and interface equipment" in phrases
+    assert "PLANIFICACION Y EXPLOTACION DE INSTALACIONES OPS" in phrases
+
+
+def test_alta_tension_variant_detects_lineas_at_and_tensiones_de_paso():
+    assert _document_variant_from_source("alta_tension/A16436-16554.pdf") == "reglamento_lat"
+    assert _expected_document_variants(
+        "Que medidas de proteccion de las personas contempla el reglamento de AT frente a contactos y tensiones de paso?",
+        ["alta_tension"],
+    ) == ["reglamento_lat"]
 
 
 def test_expected_domains_avoids_substring_false_positives():

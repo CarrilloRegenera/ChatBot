@@ -21,6 +21,7 @@ from appregenera_sql_service import (
 )
 from config import APPREGENERA_DEV_BYPASS_KEY
 from ops_domain import OPS_DOCUMENTARY_HINTS, is_ops_standard_reference
+from routing_signals import has_concrete_business_reference, has_explicit_technical_reference, is_mixed_scope_query
 from business_query_schema import (
     BUSINESS_SCHEMA,
     CLOSURE_FIELD_HINTS,
@@ -338,6 +339,8 @@ def _has_strong_business_signal(text: str, reference: str | None) -> bool:
         return True
     if any(hint in text for hint in _STRONG_BUSINESS_ROUTE_HINTS):
         return True
+    if "cliente" in text and any(token in text for token in ("tiene", "tenemos", "es", "del cliente")):
+        return True
     if any(token in text for token in ("cliente", "estado", "en curso", "actualmente")) and any(
         entity in text for entity in ("proyecto", "proyectos", "obra", "obras", "licitacion", "licitaciones", "estudio", "estudios")
     ):
@@ -350,9 +353,14 @@ def detect_business_route(question: str) -> str | None:
     reference = _extract_reference(question, text)
     if is_ops_standard_reference(reference, text):
         reference = None
+    strong_business_signal = _has_strong_business_signal(text, reference)
+    if is_mixed_scope_query(text, has_business_signal=strong_business_signal) and not has_concrete_business_reference(text):
+        return None
+    if has_explicit_technical_reference(text) and not has_concrete_business_reference(text):
+        return None
     if _looks_ops_specialized_documentary_question(text) and not reference:
         return None
-    if _looks_documentary_question(text) and not _has_strong_business_signal(text, reference):
+    if _looks_documentary_question(text) and not strong_business_signal:
         return None
     explicit_scope = _detect_explicit_scope(text)
     if explicit_scope == "estudios":

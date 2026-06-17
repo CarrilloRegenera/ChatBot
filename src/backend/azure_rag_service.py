@@ -406,6 +406,12 @@ def _search_all_indexed_sources(client: SearchClient) -> Dict[str, str]:
     return indexed
 
 
+def list_indexed_sources() -> Dict[str, str]:
+    _require_azure_config()
+    ensure_azure_index()
+    return _search_all_indexed_sources(_search_client())
+
+
 def _odata_escape(value: str) -> str:
     return value.replace("'", "''")
 
@@ -681,13 +687,27 @@ def search_documents_detailed_azure(
         phrase_queries = _query_phrase_queries(clean_question)
 
         def _candidate_sort_key(item: Dict[str, object]) -> Tuple[int, int]:
-            content_norm = _normalize_text(str(item.get("content", "") or ""))
+            content_norm = _normalize_text(
+                f"{item.get('section', '')} {item.get('document_name', '')} {item.get('file_name', '')} {item.get('content', '')}"
+            )
             variant = str(item.get("document_variant", "") or "")
             variant_hit = 1 if expected_document_variants and variant in expected_document_variants else 0
             phrase_hits = sum(1 for phrase in phrase_queries if _normalize_text(phrase) in content_norm)
             return variant_hit, phrase_hits
 
         candidates = sorted(candidates, key=_candidate_sort_key, reverse=True)
+
+    if expected_document_variants and candidates:
+        variant_set = {_normalize_text(v) for v in expected_document_variants}
+        variant_candidates = [
+            item for item in candidates
+            if _normalize_text(str(item.get("document_variant", "") or "")) in variant_set
+        ]
+        if variant_candidates and (
+            candidates[0] not in variant_candidates
+            or len(variant_candidates) >= max(2, min(n_results, max(1, n_results // 2)))
+        ):
+            candidates = variant_candidates
 
     selected = []
     source_counts: Dict[str, int] = {}
@@ -758,7 +778,7 @@ def search_documents_detailed_azure(
             if item.get("regulation")
         }),
         "expected_domains": domains or [],
-        "expected_document_variants": expected_variants or [],
+        "expected_document_variants": expected_document_variants or [],
         "domain_match_ratio": 1.0,
         "broad_query": False,
         "table_selected_chunks": table_selected_chunks,

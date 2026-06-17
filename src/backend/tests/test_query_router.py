@@ -86,6 +86,18 @@ def test_ops_standard_reference_is_not_misrouted_to_business_produccion():
         assert classify_question(question)["route"] == "knowledge", question
 
 
+def test_mixed_business_and_technical_questions_are_flagged_for_split():
+    questions = [
+        "Tengo un proyecto con cliente, presupuesto y licitacion de OPS, que exige el RITE?",
+        "Que cliente tiene EOPSA y que dice la IEC 80005-1 sobre HVSC",
+    ]
+
+    for question in questions:
+        result = classify_question(question)
+        assert result["route"] == "mixed_scope", question
+        assert "mezcla negocio y documentacion tecnica" in result["message"].lower()
+
+
 def test_documentary_manual_questions_are_not_misrouted_to_business_or_out_of_scope():
     questions = [
         "Si me llega el equipo a obra, que deberia comprobar en la recepcion y antes de moverlo?",
@@ -93,7 +105,19 @@ def test_documentary_manual_questions_are_not_misrouted_to_business_or_out_of_sc
         "En epoca fria, si el grupo es automatico, que condicion de temperatura pide el manual y que elementos preve para ayudar al arranque?",
         "Para cerrar, si el grupo pasa mucho tiempo parado, que rutina minima de mantenimiento recomienda el manual y que precaucion previa hay antes de intervenirlo?",
         "Segun la guia EOPSA, que es la shore-side electricity en OPS?",
+        "Que es la guia EOPSA para una licitacion OPS completa y exitosa?",
     ]
 
     for question in questions:
         assert classify_question(question)["route"] == "knowledge", question
+
+
+def test_document_inventory_questions_get_explicit_inventory_route():
+    questions = [
+        "Que documentos tenemos disponibles en reglamento tecnico?",
+        "Cual es la estructura documental del chatbot tecnico?",
+        "Que documentacion hay cargada en el chatbot?",
+    ]
+
+    for question in questions:
+        assert classify_question(question)["route"] == "document_inventory", question
