@@ -251,6 +251,11 @@ def test_ops_document_variants_cover_afif_viability_and_anteproject():
         "Segun el estudio de viabilidad OPS de Valencia, como se caracteriza la demanda energetica y la solucion recomendada?",
         ["ops"],
     ) == ["estudio_viabilidad_valencia"]
+    assert _expected_domains("Que tipo de documento es el de Malaga y a que instalacion se refiere?") == ["ops"]
+    assert _expected_document_variants(
+        "Que tipo de documento es el de Malaga y a que instalacion se refiere?",
+        ["ops"],
+    ) == ["estudio_viabilidad_malaga"]
     assert _expected_document_variants(
         "Segun el anteproyecto OPS del puerto de Bilbao, que incluye la memoria de la infraestructura electrica?",
         ["ops"],

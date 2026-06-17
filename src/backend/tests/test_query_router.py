@@ -117,6 +117,7 @@ def test_document_inventory_questions_get_explicit_inventory_route():
         "Que documentos tenemos disponibles en reglamento tecnico?",
         "Cual es la estructura documental del chatbot tecnico?",
         "Que documentacion hay cargada en el chatbot?",
+        "Que documentacion tecnica hay indexada ahora mismo?",
     ]
 
     for question in questions:

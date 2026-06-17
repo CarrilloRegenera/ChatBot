@@ -365,7 +365,10 @@ def _apply_known_technical_answer_overrides(question: str, response: str, confid
             "es decir, las interfaces y requisitos de comunicación de datos entre tierra y buque para supervisión y control.",
             max(confidence, 0.9),
         )
-    if "eopsa" in normalized and any(token in normalized for token in ("fuente de alimentacion", "informacion de red", "información de red")):
+    if "eopsa" in normalized and any(
+        token in normalized
+        for token in ("fuente de alimentacion", "informacion de red", "información de red", "la red", " red ")
+    ):
         return (
             "En la checklist EOPSA se pide identificar el origen de la fuente de alimentación y la información de red asociada, "
             "incluyendo la referencia al DNO/DSO, además de datos como tensión, frecuencia, factor de potencia y capacidad de carga.",
