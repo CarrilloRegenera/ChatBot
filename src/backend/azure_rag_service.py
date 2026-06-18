@@ -93,6 +93,15 @@ def _compose_search_text(question: str, clean_question: str, domains: List[str])
                 "HVSC",
             ]
         )
+    if "monitorizacion_control" in variants:
+        parts.extend(
+            [
+                "IEC/IEEE 80005-2",
+                "Data communication for monitoring and control",
+                "monitoring and control",
+                "SCADA",
+            ]
+        )
     seen = set()
     merged: List[str] = []
     for part in parts:
@@ -603,10 +612,22 @@ def search_documents_detailed_azure(
     if not expected_document_variants and hint_document_variants:
         expected_document_variants = [v for v in hint_document_variants if v]
         logger.debug("hint_document_variants aplicados como fallback: %s", expected_document_variants)
+    ops_base_priority_query = (
+        domains == ["ops"]
+        and bool(expected_document_variants)
+        and set(expected_document_variants).issubset({"normativa_base", "monitorizacion_control"})
+    )
     domain_filter = (
         "(" + " or ".join(f"domain eq '{_odata_escape(d)}'" for d in domains) + ")"
         if domains else None
     )
+    variant_filter = None
+    if ops_base_priority_query:
+        variant_filter = "(" + " or ".join(
+            f"document_variant eq '{_odata_escape(variant)}'"
+            for variant in expected_document_variants
+        ) + ")"
+    combined_filter = " and ".join(part for part in (domain_filter, variant_filter) if part)
     legacy_select = [
         "chunk_id",
         "source_path",
@@ -641,8 +662,8 @@ def search_documents_detailed_azure(
         search_kwargs = {
             "search_text": search_text,
             "vector_queries": [vector_query],
-            "filter": domain_filter,
-            "top": max(n_results * 2, 12),
+            "filter": combined_filter or None,
+            "top": max(n_results * 4, 24) if ops_base_priority_query else max(n_results * 2, 12),
             "select": select_fields,
         }
         if semantic_ok:
@@ -656,8 +677,8 @@ def search_documents_detailed_azure(
         results = _search_client().search(
             search_text=search_text,
             vector_queries=[vector_query],
-            filter=domain_filter,
-            top=max(n_results * 2, 12),
+            filter=combined_filter or None,
+            top=max(n_results * 4, 24) if ops_base_priority_query else max(n_results * 2, 12),
             select=legacy_select,
         )
 
@@ -715,7 +736,9 @@ def search_documents_detailed_azure(
             item for item in candidates
             if _azure_document_variant(item) in variant_set
         ]
-        if variant_candidates and (
+        if ops_base_priority_query and variant_candidates:
+            candidates = variant_candidates
+        elif variant_candidates and (
             candidates[0] not in variant_candidates
             or len(variant_candidates) >= max(2, min(n_results, max(1, n_results // 2)))
         ):
