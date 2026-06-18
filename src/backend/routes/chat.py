@@ -13,6 +13,7 @@ from database import db_conn
 from models import (
     ConversationRequest,
     InteractionReviewRequest,
+    MessageCancelRequest,
     MessageRequest,
 )
 from query_router import classify_question
@@ -26,6 +27,8 @@ _locks_guard = Lock()
 _conversation_locks: Dict[int, Lock] = {}
 _lock_last_used: Dict[int, float] = {}
 _last_lock_cleanup: float = 0.0
+_cancelled_request_ids: set[str] = set()
+_cancelled_request_ids_lock = Lock()
 _document_sync_lock = Lock()
 _document_sync_inflight = False
 _document_sync_status = {
@@ -45,6 +48,10 @@ _EXPLICIT_TECHNICAL_ANCHOR_RE = re.compile(
     r"\b(?:rebt|rite|ralt|itc|bt-?\d+|iec|ieee|iso|80005(?:-[123])?|ops|eopsa|shore power|cold ironing|afir)\b",
     flags=re.IGNORECASE,
 )
+
+
+class RequestCancelledError(Exception):
+    """Raised when the client explicitly cancels a pending chat request."""
 
 
 def _normalize_followup_text(question: str) -> str:
@@ -148,6 +155,39 @@ def _q_preview(text: str, size: int = 90) -> str:
     if len(one_line) <= size:
         return one_line
     return one_line[:size] + "..."
+
+
+def _normalize_request_id(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _mark_request_cancelled(request_id: str) -> None:
+    normalized = _normalize_request_id(request_id)
+    if not normalized:
+        return
+    with _cancelled_request_ids_lock:
+        _cancelled_request_ids.add(normalized)
+
+
+def _clear_cancelled_request(request_id: str) -> None:
+    normalized = _normalize_request_id(request_id)
+    if not normalized:
+        return
+    with _cancelled_request_ids_lock:
+        _cancelled_request_ids.discard(normalized)
+
+
+def _is_request_cancelled(request_id: str) -> bool:
+    normalized = _normalize_request_id(request_id)
+    if not normalized:
+        return False
+    with _cancelled_request_ids_lock:
+        return normalized in _cancelled_request_ids
+
+
+def _raise_if_request_cancelled(request_id: str) -> None:
+    if _is_request_cancelled(request_id):
+        raise RequestCancelledError()
 
 
 def _should_apply_history_hints(question: str) -> bool:
@@ -490,6 +530,46 @@ def _save_chat_message(conversation_id: int, question: str, response: str, elaps
     return int((time.time() - start) * 1000)
 
 
+def _record_pending_interaction_safe(
+    *,
+    conversation_id: int,
+    question: str,
+    answer: str,
+    confidence: float,
+    route: str,
+    sources: List[str] | None = None,
+    context: str = "",
+    model: str = "router_static",
+    from_memory: bool = False,
+    elapsed_ms: int = 0,
+) -> int | None:
+    try:
+        return _memory_service().record_interaction_pending(
+            conversation_id=conversation_id,
+            question=question,
+            answer=answer,
+            sources=sources or [],
+            context=context,
+            confidence=float(confidence),
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            model=model,
+            base_model=model,
+            final_model=model,
+            base_confidence=float(confidence),
+            final_confidence=float(confidence),
+            escalated=False,
+            escalation_reason="",
+            route=route,
+            from_memory=from_memory,
+            elapsed_ms=elapsed_ms,
+        )
+    except Exception:
+        logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo registrar InteraccionesRAG para ruta=%s", route)
+        return None
+
+
 def _build_history_interaction_join() -> str:
     return (
         "OUTER APPLY ("
@@ -556,10 +636,22 @@ def delete_conversation(conversation_id: int, request: Request):
     return {"message": "Conversacion eliminada", "conversation_id": conversation_id}
 
 
+@router.post("/messages/cancel")
+def cancel_message(data: MessageCancelRequest, request: Request):
+    request_user_id = resolve_request_user_id(request)
+    _assert_conversation_owner(data.conversation_id, request_user_id)
+    request_id = _normalize_request_id(data.request_id)
+    if not request_id:
+        raise HTTPException(status_code=400, detail="request_id obligatorio")
+    _mark_request_cancelled(request_id)
+    return {"status": "cancelled", "request_id": request_id}
+
+
 @router.post("/messages")
 def send_message(data: MessageRequest, request: Request):
     request_user_id = resolve_request_user_id(request)
     _assert_conversation_owner(data.conversation_id, request_user_id)
+    request_id = _normalize_request_id(data.request_id)
     conversation_lock = _get_conversation_lock(data.conversation_id)
     acquired = conversation_lock.acquire(timeout=CONVERSATION_LOCK_TIMEOUT_SECS)
     if not acquired:
@@ -579,6 +671,7 @@ def send_message(data: MessageRequest, request: Request):
 
     try:
         start = time.time()
+        _raise_if_request_cancelled(request_id)
         chat_mode = _get_conversation_chat_mode(data.conversation_id)
         route_history = _get_recent_history(data.conversation_id, limit=6)
         stage_router_start = time.time()
@@ -593,11 +686,22 @@ def send_message(data: MessageRequest, request: Request):
             history=route_history,
         )
         router_ms = int((time.time() - stage_router_start) * 1000)
+        _raise_if_request_cancelled(request_id)
 
         if chat_mode == "business":
             if route not in {"business_licitaciones", "business_produccion"}:
                 response = _build_cross_mode_message(chat_mode, route)
                 elapsed = int((time.time() - start) * 1000)
+                interaction_id = _record_pending_interaction_safe(
+                    conversation_id=data.conversation_id,
+                    question=data.question,
+                    answer=response,
+                    confidence=1.0,
+                    route="business_scope_mismatch",
+                    model="router_scope_guard",
+                    elapsed_ms=elapsed,
+                )
+                _raise_if_request_cancelled(request_id)
                 db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
                 _log_chat_event(
                     event="CHAT",
@@ -616,11 +720,22 @@ def send_message(data: MessageRequest, request: Request):
                     "confidence": 1.0,
                     "from_memory": False,
                     "route": "business_scope_mismatch",
+                    "interaction_id": interaction_id,
                 }
         else:
             if route in {"business_licitaciones", "business_produccion"}:
                 response = _build_cross_mode_message(chat_mode, route)
                 elapsed = int((time.time() - start) * 1000)
+                interaction_id = _record_pending_interaction_safe(
+                    conversation_id=data.conversation_id,
+                    question=data.question,
+                    answer=response,
+                    confidence=1.0,
+                    route="technical_scope_mismatch",
+                    model="router_scope_guard",
+                    elapsed_ms=elapsed,
+                )
+                _raise_if_request_cancelled(request_id)
                 db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
                 _log_chat_event(
                     event="CHAT",
@@ -639,18 +754,30 @@ def send_message(data: MessageRequest, request: Request):
                     "confidence": 1.0,
                     "from_memory": False,
                     "route": "technical_scope_mismatch",
+                    "interaction_id": interaction_id,
                 }
 
         if route in {"invalid", "smalltalk", "out_of_scope"}:
             response = route_info["message"]
             elapsed = int((time.time() - start) * 1000)
+            confidence = 1.0 if route in {"invalid", "smalltalk"} else 0.9
+            interaction_id = _record_pending_interaction_safe(
+                conversation_id=data.conversation_id,
+                question=data.question,
+                answer=response,
+                confidence=confidence,
+                route=route,
+                model="router_static",
+                elapsed_ms=elapsed,
+            )
+            _raise_if_request_cancelled(request_id)
             db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
             _log_chat_event(
                 event="CHAT",
                 conversation_id=data.conversation_id,
                 route=route,
                 from_memory=False,
-                confidence=(1.0 if route in {"invalid", "smalltalk"} else 0.9),
+                confidence=confidence,
                 sources_count=0,
                 elapsed_ms=elapsed,
                 question=data.question,
@@ -659,14 +786,25 @@ def send_message(data: MessageRequest, request: Request):
             return {
                 "question": data.question,
                 "response": response,
-                "confidence": 1.0 if route in {"invalid", "smalltalk"} else 0.9,
+                "confidence": confidence,
                 "from_memory": False,
                 "route": route,
+                "interaction_id": interaction_id,
             }
 
         if route == "mixed_scope":
             response = route_info["message"]
             elapsed = int((time.time() - start) * 1000)
+            interaction_id = _record_pending_interaction_safe(
+                conversation_id=data.conversation_id,
+                question=data.question,
+                answer=response,
+                confidence=1.0,
+                route=route,
+                model="router_static",
+                elapsed_ms=elapsed,
+            )
+            _raise_if_request_cancelled(request_id)
             db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
             _log_chat_event(
                 event="CHAT",
@@ -685,12 +823,24 @@ def send_message(data: MessageRequest, request: Request):
                 "confidence": 1.0,
                 "from_memory": False,
                 "route": route,
+                "interaction_id": interaction_id,
             }
 
         if route == "document_inventory":
             indexed_sources = _rag_service().list_indexed_sources()
             response = _format_document_inventory_response(indexed_sources, data.question)
             elapsed = int((time.time() - start) * 1000)
+            interaction_id = _record_pending_interaction_safe(
+                conversation_id=data.conversation_id,
+                question=data.question,
+                answer=response,
+                confidence=1.0,
+                route=route,
+                sources=sorted(indexed_sources)[:20],
+                model="inventory_formatter",
+                elapsed_ms=elapsed,
+            )
+            _raise_if_request_cancelled(request_id)
             db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
             _log_chat_event(
                 event="CHAT",
@@ -710,18 +860,21 @@ def send_message(data: MessageRequest, request: Request):
                 "from_memory": False,
                 "sources": sorted(indexed_sources)[:20],
                 "route": route,
+                "interaction_id": interaction_id,
             }
 
         if route in {"business_licitaciones", "business_produccion"}:
             auth_header = (request.headers.get("authorization") or "").strip()
             user_token = auth_header.split(" ", 1)[1].strip() if auth_header.lower().startswith("bearer ") else None
             interaction_id = None
+            _raise_if_request_cancelled(request_id)
             business_result = answer_business_question(
                 data.question,
                 user_token=user_token,
                 preferred_route=route,
                 history=route_history,
             )
+            _raise_if_request_cancelled(request_id)
             business_route = business_result.get("route", route)
             response = business_result["response"]
             elapsed = int((time.time() - start) * 1000)
@@ -756,6 +909,7 @@ def send_message(data: MessageRequest, request: Request):
                 db_ms += int((time.time() - stage_metrics_db_start) * 1000)
             except Exception:
                 logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo registrar InteraccionesRAG de negocio")
+            _raise_if_request_cancelled(request_id)
             db_ms += _save_chat_message(data.conversation_id, data.question, response, elapsed)
             _log_chat_event(
                 event="CHAT",
@@ -794,11 +948,24 @@ def send_message(data: MessageRequest, request: Request):
         try:
             memory_hit = _memory_service().search_validated_memory(data.question)
             if memory_hit:
+                _raise_if_request_cancelled(request_id)
                 response = memory_hit["answer"]
                 sources = memory_hit.get("sources", [])
                 confidence = max(0.9, 1.0 - memory_hit.get("distance", 0.0))
                 response = format_answer_for_user(response, sources, question=data.question)
                 from_memory = True
+                elapsed_partial = int((time.time() - start) * 1000)
+                interaction_id = _record_pending_interaction_safe(
+                    conversation_id=data.conversation_id,
+                    question=data.question,
+                    answer=response,
+                    confidence=confidence,
+                    route="knowledge",
+                    sources=sources,
+                    model="validated_memory",
+                    from_memory=True,
+                    elapsed_ms=elapsed_partial,
+                )
                 _log_chat_event(
                     event="MEMORY_HIT",
                     conversation_id=data.conversation_id,
@@ -832,6 +999,7 @@ def send_message(data: MessageRequest, request: Request):
                     hint_it_section_refs=hint_it_section_refs or None,
                 )
                 rag_ms = int((time.time() - stage_rag_start) * 1000)
+                _raise_if_request_cancelled(request_id)
                 stage_llm_start = time.time()
                 try:
                     generated = generate_ai_response_with_fallback(
@@ -858,6 +1026,7 @@ def send_message(data: MessageRequest, request: Request):
                 response = format_answer_for_user(response, sources, question=data.question)
                 elapsed_partial = int((time.time() - start) * 1000)
                 try:
+                    _raise_if_request_cancelled(request_id)
                     stage_metrics_db_start = time.time()
                     interaction_id = _memory_service().record_interaction_pending(
                         conversation_id=data.conversation_id,
@@ -883,6 +1052,17 @@ def send_message(data: MessageRequest, request: Request):
                     db_ms += int((time.time() - stage_metrics_db_start) * 1000)
                 except Exception:
                     logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo registrar InteraccionesRAG")
+        except RequestCancelledError:
+            logger.info("[CHAT_CANCELLED] conv=%s req=%s q=\"%s\"", data.conversation_id, request_id, _q_preview(data.question))
+            return {
+                "question": data.question,
+                "response": "",
+                "confidence": 0.0,
+                "from_memory": False,
+                "route": "cancelled",
+                "cancelled": True,
+                "request_id": request_id,
+            }
         except AIResponseError as exc:
             llm_retries = max(llm_retries, int(getattr(exc, "retries", 0) or 0))
             logger.exception(
@@ -912,6 +1092,7 @@ def send_message(data: MessageRequest, request: Request):
 
         elapsed = int((time.time() - start) * 1000)
         response, confidence = _apply_known_technical_answer_overrides(data.question, response, confidence)
+        _raise_if_request_cancelled(request_id)
         db_ms += _save_chat_message(data.conversation_id, data.question, response, elapsed)
 
         if llm_retries > 0:
@@ -944,7 +1125,19 @@ def send_message(data: MessageRequest, request: Request):
             "trace": trace,
             "interaction_id": interaction_id,
         }
+    except RequestCancelledError:
+        logger.info("[CHAT_CANCELLED] conv=%s req=%s q=\"%s\"", data.conversation_id, request_id, _q_preview(data.question))
+        return {
+            "question": data.question,
+            "response": "",
+            "confidence": 0.0,
+            "from_memory": False,
+            "route": "cancelled",
+            "cancelled": True,
+            "request_id": request_id,
+        }
     finally:
+        _clear_cancelled_request(request_id)
         conversation_lock.release()
 
 

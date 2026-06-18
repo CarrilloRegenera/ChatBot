@@ -18,6 +18,12 @@ class MessageRequest(BaseModel):
     conversation_id: int
     question: str
     chat_mode: str | None = None
+    request_id: str | None = None
+
+
+class MessageCancelRequest(BaseModel):
+    conversation_id: int
+    request_id: str
 
 
 class InteractionReviewRequest(BaseModel):

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>REGENERA</title>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <link rel="stylesheet" href="styles.css?v=19">
+    <link rel="stylesheet" href="styles.css?v=20">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -252,7 +252,7 @@
             <div class="chat-input-area">
                 <div class="chat-input-container">
                     <textarea id="question-input" placeholder="Escribe tu pregunta..." rows="1" onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
-                    <button class="send-btn" onclick="sendMessage()" id="send-btn">
+                    <button class="send-btn" type="button" onclick="sendMessage()" id="send-btn" aria-label="Enviar pregunta" title="Enviar pregunta">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                     </button>
                 </div>
@@ -463,6 +463,6 @@
 
     <script src="msal-browser.min.js?v=20260522h"></script>
     <script src="config.js?v=20260525b"></script>
-    <script src="app.js?v=21"></script>
+    <script src="app.js?v=22"></script>
 </body>
 </html>

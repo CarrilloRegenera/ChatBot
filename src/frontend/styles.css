@@ -1075,6 +1075,15 @@ html, body {
     color: #b42318;
 }
 
+.inline-loading {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 28px;
+}
+
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
@@ -1168,6 +1177,14 @@ html, body {
 .send-btn:hover {
     background: var(--green-dark);
     transform: scale(1.05);
+}
+
+.send-btn.stop-mode {
+    background: #d9534f;
+}
+
+.send-btn.stop-mode:hover {
+    background: #b8423e;
 }
 
 .send-btn:disabled {
