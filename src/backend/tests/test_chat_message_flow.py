@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -130,6 +131,41 @@ class TestChatMessageFlow(unittest.TestCase):
         self.assertTrue(data["cancelled"])
         self.assertEqual(data["route"], "cancelled")
         save_mock.assert_not_called()
+
+    def test_background_sync_status_reports_progress(self):
+        from routes import chat
+
+        original_status = dict(chat._document_sync_status)
+        original_inflight = chat._document_sync_inflight
+        captured = {}
+
+        def fake_sync_documents(progress_callback=None):
+            self.assertIsNotNone(progress_callback)
+            progress_callback({
+                "phase": "indexing",
+                "current_file": "ops/01_normativa_base/demo.pdf",
+                "processed_files": 1,
+                "total_files": 2,
+            })
+            captured["status_during"] = dict(chat._document_sync_status)
+            return {"added": 1, "updated": 0, "removed": 0}
+
+        try:
+            with mock.patch("routes.chat._rag_service", return_value=mock.Mock(sync_documents=fake_sync_documents)):
+                initial = chat._start_document_sync_background()
+                self.assertIn(initial["state"], {"running", "completed"})
+
+                deadline = time.time() + 1
+                while time.time() < deadline and chat._document_sync_status["state"] == "running":
+                    time.sleep(0.01)
+        finally:
+            chat._document_sync_status = original_status
+            chat._document_sync_inflight = original_inflight
+
+        self.assertEqual(captured["status_during"]["phase"], "indexing")
+        self.assertEqual(captured["status_during"]["current_file"], "ops/01_normativa_base/demo.pdf")
+        self.assertEqual(captured["status_during"]["processed_files"], 1)
+        self.assertEqual(captured["status_during"]["total_files"], 2)
 
 
 if __name__ == "__main__":

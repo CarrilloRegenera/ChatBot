@@ -424,6 +424,7 @@ jobs:
           }
 
           $maxAttempts = 270
+          $staleHeartbeatSeconds = 600
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Start-Sleep -Seconds 20
             try {
@@ -435,6 +436,14 @@ jobs:
               }
               if ($status.state -eq "failed") {
                 throw "Sync documental fallido: $($status.error)"
+              }
+              if ($status.state -eq "running" -and $status.heartbeat_at) {
+                $heartbeatAge = [int]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [math]::Floor([double]$status.heartbeat_at))
+                if ($heartbeatAge -gt $staleHeartbeatSeconds) {
+                  $phase = if ($status.phase) { $status.phase } else { "desconocida" }
+                  $file = if ($status.current_file) { $status.current_file } else { "(sin fichero actual)" }
+                  throw "Sync documental sin heartbeat reciente desde hace ${heartbeatAge}s. phase=$phase current_file=$file"
+                }
               }
             } catch {
               if ($attempt -ge $maxAttempts) {

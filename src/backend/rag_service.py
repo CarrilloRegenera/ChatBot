@@ -10,7 +10,7 @@ import unicodedata
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import chromadb
 import fitz
@@ -2237,7 +2237,10 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     return len(documents)
 
 
-def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
+def _sync_documents_chroma(
+    folder_path: str = DOCUMENTS_PATH,
+    progress_callback: Callable[[Dict[str, object]], None] | None = None,
+) -> Dict[str, int]:
     if _embedding_fn is None:
         raise RuntimeError(
             "Embedding model no disponible. Descarga/cacha localmente "
@@ -2252,6 +2255,7 @@ def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
         str(p.relative_to(root_path)).replace("\\", "/"): p
         for p in pdf_paths
     }
+    total_files = len(current_files)
 
     indexed = _get_indexed_sources()
     if indexed and all(v == "" for v in indexed.values()):
@@ -2261,13 +2265,35 @@ def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
 
     added = updated = removed = 0
 
+    if progress_callback:
+        progress_callback({
+            "phase": "scan",
+            "processed_files": 0,
+            "total_files": total_files,
+            "current_file": "",
+        })
+
     for source_name in list(indexed):
         if source_name not in current_files:
             _delete_source_chunks(source_name)
             removed += 1
+            if progress_callback:
+                progress_callback({
+                    "phase": "cleanup",
+                    "current_file": source_name,
+                    "processed_files": 0,
+                    "total_files": total_files,
+                })
             logger.info("Eliminado del índice: %s", source_name)
 
-    for source_name, filepath in current_files.items():
+    for processed_files, (source_name, filepath) in enumerate(current_files.items(), start=1):
+        if progress_callback:
+            progress_callback({
+                "phase": "indexing",
+                "current_file": source_name,
+                "processed_files": processed_files,
+                "total_files": total_files,
+            })
         current_hash = _file_hash(str(filepath))
         if source_name in indexed:
             if indexed[source_name] == current_hash:
@@ -2294,11 +2320,14 @@ def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
     return {"added": added, "updated": updated, "removed": removed}
 
 
-def sync_documents(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
+def sync_documents(
+    folder_path: str = DOCUMENTS_PATH,
+    progress_callback: Callable[[Dict[str, object]], None] | None = None,
+) -> Dict[str, int]:
     if RAG_BACKEND == "azure_search":
         from azure_rag_service import sync_documents_from_blob
-        return sync_documents_from_blob()
-    return _sync_documents_chroma(folder_path)
+        return sync_documents_from_blob(progress_callback=progress_callback)
+    return _sync_documents_chroma(folder_path, progress_callback=progress_callback)
 
 
 def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> int:

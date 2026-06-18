@@ -90,7 +90,17 @@ const ENTRA_SKIP_AUTOLOGIN_ONCE_KEY = "chatbot_entra_skip_autologin_once";
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
     const controller = new AbortController();
+    const externalSignal = options?.signal;
+    let externalAbortHandler = null;
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    if (externalSignal) {
+        if (externalSignal.aborted) {
+            controller.abort();
+        } else {
+            externalAbortHandler = () => controller.abort();
+            externalSignal.addEventListener("abort", externalAbortHandler, { once: true });
+        }
+    }
     try {
         return await fetch(url, {
             ...options,
@@ -102,6 +112,9 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
         }
         throw err;
     } finally {
+        if (externalSignal && externalAbortHandler) {
+            externalSignal.removeEventListener("abort", externalAbortHandler);
+        }
         window.clearTimeout(timeoutId);
     }
 }
@@ -124,6 +137,49 @@ async function readResponseBody(res) {
     } catch {
         return { data: {}, text: rawText };
     }
+}
+
+function isHtmlResponseText(text) {
+    const normalized = String(text || "").trim().toLowerCase();
+    return normalized.startsWith("<!doctype") || normalized.startsWith("<html") || normalized.startsWith("<body");
+}
+
+function buildBackendFailureMessage(res, responseBody, fallbackMessage) {
+    const data = responseBody?.data || {};
+    const plainText = String(responseBody?.text || "").trim();
+    const requestId = (res?.headers?.get("x-request-id") || "").trim();
+    const suffix = requestId ? ` Codigo de seguimiento: ${requestId}.` : "";
+
+    if (typeof data?.detail === "string" && data.detail.trim()) {
+        return `${data.detail.trim()}${suffix}`;
+    }
+
+    if (isBackendWarmupResponse(res, plainText)) {
+        return `El servicio esta temporalmente ocupado o reiniciandose. Intentalo de nuevo en unos segundos.${suffix}`;
+    }
+
+    if (plainText && !isHtmlResponseText(plainText) && plainText.toLowerCase() !== "backend call failure") {
+        return `${plainText}${suffix}`;
+    }
+
+    return `${fallbackMessage}${suffix}`;
+}
+
+function buildTransportErrorMessage(err, fallbackMessage) {
+    const rawMessage = String(err?.message || "").trim();
+    const normalized = rawMessage.toLowerCase();
+    if (!rawMessage) {
+        return fallbackMessage;
+    }
+    if (
+        normalized === "failed to fetch"
+        || normalized.includes("networkerror")
+        || normalized.includes("load failed")
+        || normalized.includes("network request failed")
+    ) {
+        return fallbackMessage;
+    }
+    return rawMessage;
 }
 
 function isBackendWarmupResponse(res, bodyText = "") {
@@ -227,11 +283,7 @@ async function finalizeEntraSession(token) {
 
     const data = responseBody.data || {};
     if (!res.ok) {
-        const plainText = String(responseBody.text || "").trim();
-        const warmupMessage = isBackendWarmupResponse(res, plainText)
-            ? "El servidor sigue arrancando. Espera unos segundos y vuelve a intentarlo."
-            : "No se pudo completar el login con Microsoft";
-        throw new Error(data?.detail || (plainText && plainText !== "Backend call failure" ? plainText : warmupMessage));
+        throw new Error(buildBackendFailureMessage(res, responseBody, "No se pudo completar el login con Microsoft."));
     }
 
     currentUser = {
@@ -1633,12 +1685,12 @@ async function sendMessage() {
 
         showTypingIndicator(requestId);
 
-        const res = await fetch(`${API}/messages`, {
+        const res = await fetchWithTimeout(`${API}/messages`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...getAdminHeaders() },
             body: JSON.stringify({ conversation_id: conversationId, question, chat_mode: activeChatMode, request_id: requestId }),
             signal: abortController.signal,
-        });
+        }, 310000);
         if (isUnauthorizedResponse(res)) {
             removeTypingIndicator();
             await handleUnauthorizedSession();
@@ -1646,9 +1698,18 @@ async function sendMessage() {
             return;
         }
 
-        const data = await res.json();
+        const responseBody = await readResponseBody(res);
+        const data = responseBody.data || {};
         if (!res.ok) {
-            throw new Error(data?.detail || "Error al procesar la consulta.");
+            throw new Error(buildBackendFailureMessage(res, responseBody, "No se ha podido procesar la consulta."));
+        }
+        if (!data || typeof data.response !== "string") {
+            console.warn("Respuesta inesperada de /messages", {
+                status: res.status,
+                requestId: res.headers.get("x-request-id") || "",
+                body: responseBody.text || data,
+            });
+            throw new Error(buildBackendFailureMessage(res, responseBody, "El servidor ha devuelto una respuesta inesperada."));
         }
         if (data?.cancelled || currentStopRequested) {
             clearPendingMessage();
@@ -1705,6 +1766,14 @@ async function sendMessage() {
             return;
         }
         appendConversationMessage("assistant", err?.message || "Error de conexión con el servidor.");
+        const transportErrorMessage = buildTransportErrorMessage(err, "No se ha podido conectar con el servidor. Intentalo de nuevo en unos segundos.");
+        if (transportErrorMessage !== String(err?.message || "").trim()) {
+            const assistantBubbles = document.querySelectorAll(".message-row.assistant .message-bubble");
+            const lastAssistantBubble = assistantBubbles[assistantBubbles.length - 1];
+            if (lastAssistantBubble) {
+                lastAssistantBubble.textContent = transportErrorMessage;
+            }
+        }
         clearPendingMessage();
     } finally {
         currentSendAbortController = null;

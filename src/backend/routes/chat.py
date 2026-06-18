@@ -37,6 +37,11 @@ _document_sync_status = {
     "finished_at": None,
     "result": None,
     "error": "",
+    "heartbeat_at": None,
+    "phase": "",
+    "current_file": "",
+    "processed_files": 0,
+    "total_files": 0,
 }
 _LOCK_TTL = 1800
 _LOCK_CLEANUP_INTERVAL = 300
@@ -65,6 +70,17 @@ def _memory_service():
     return memory_service
 
 
+def _update_document_sync_status(**updates) -> Dict[str, object]:
+    global _document_sync_status
+    with _document_sync_lock:
+        _document_sync_status = {
+            **_document_sync_status,
+            **updates,
+            "heartbeat_at": time.time(),
+        }
+        return dict(_document_sync_status)
+
+
 def _start_document_sync_background() -> Dict[str, object]:
     global _document_sync_inflight, _document_sync_status
     with _document_sync_lock:
@@ -77,29 +93,36 @@ def _start_document_sync_background() -> Dict[str, object]:
             "finished_at": None,
             "result": None,
             "error": "",
+            "heartbeat_at": time.time(),
+            "phase": "starting",
+            "current_file": "",
+            "processed_files": 0,
+            "total_files": 0,
         }
 
     def _worker() -> None:
-        global _document_sync_inflight, _document_sync_status
+        global _document_sync_inflight
         try:
-            result = _rag_service().sync_documents()
-            with _document_sync_lock:
-                _document_sync_status = {
-                    **_document_sync_status,
-                    "state": "completed",
-                    "finished_at": time.time(),
-                    "result": result,
-                    "error": "",
-                }
+            def _progress_callback(payload: Dict[str, object]) -> None:
+                _update_document_sync_status(**payload)
+
+            result = _rag_service().sync_documents(progress_callback=_progress_callback)
+            _update_document_sync_status(
+                state="completed",
+                finished_at=time.time(),
+                result=result,
+                error="",
+                phase="completed",
+                current_file="",
+            )
         except Exception as exc:
             logger.exception("Error durante sync documental en segundo plano")
-            with _document_sync_lock:
-                _document_sync_status = {
-                    **_document_sync_status,
-                    "state": "failed",
-                    "finished_at": time.time(),
-                    "error": str(exc),
-                }
+            _update_document_sync_status(
+                state="failed",
+                finished_at=time.time(),
+                error=str(exc),
+                phase="failed",
+            )
         finally:
             with _document_sync_lock:
                 _document_sync_inflight = False
@@ -386,6 +409,17 @@ def _apply_known_technical_answer_overrides(question: str, response: str, confid
             "Como normativa tecnica base del bloque OPS en este chatbot, las referencias principales son IEC/IEEE 80005-1 para los sistemas "
             "HVSC de conexion de alta tension tierra-buque e IEC/IEEE 80005-2 para la comunicacion de datos de monitorizacion y control.",
             max(confidence, 0.92),
+        )
+    if "ops" in normalized and any(
+        token in normalized
+        for token in ("monitorizacion", "monitorizacion y control", "monitoring", "control general")
+    ):
+        return (
+            "Para monitorizacion y control en OPS, la referencia tecnica base es IEC/IEEE 80005-2, porque es la parte que cubre "
+            "la comunicacion de datos entre tierra y buque para supervision, control e intercambio de estados. "
+            "IEC/IEEE 80005-1 puede aparecer como apoyo de contexto del sistema HVSC, pero la parte especificamente orientada "
+            "a monitorizacion y control es la 80005-2.",
+            max(confidence, 0.9),
         )
     if "tabla 3.1" in normalized and "evaporadores" in normalized and "condensadores" in normalized:
         return (

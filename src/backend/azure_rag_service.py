@@ -3,7 +3,7 @@ import logging
 import unicodedata
 import re
 import threading
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import fitz
 from azure.core.credentials import AzureKeyCredential
@@ -441,7 +441,9 @@ def _delete_source_chunks(client: SearchClient, source_path: str) -> int:
         deleted += len(docs)
 
 
-def sync_documents_from_blob() -> Dict[str, int]:
+def sync_documents_from_blob(
+    progress_callback: Callable[[Dict[str, object]], None] | None = None,
+) -> Dict[str, int]:
     _require_azure_config()
     ensure_azure_index()
     search_client = _search_client()
@@ -472,14 +474,37 @@ def sync_documents_from_blob() -> Dict[str, int]:
     indexed = _search_all_indexed_sources(search_client)
 
     added = updated = removed = chunks_indexed = 0
+    total_files = len(scoped_blobs)
+
+    if progress_callback:
+        progress_callback({
+            "phase": "scan",
+            "processed_files": 0,
+            "total_files": total_files,
+            "current_file": "",
+        })
 
     for source_name in list(indexed):
         if source_name not in current_names:
             removed += 1
             _delete_source_chunks(search_client, source_name)
             logger.info("Eliminado de Azure AI Search: %s", source_name)
+            if progress_callback:
+                progress_callback({
+                    "phase": "cleanup",
+                    "current_file": source_name,
+                    "processed_files": 0,
+                    "total_files": total_files,
+                })
 
-    for blob, category in scoped_blobs:
+    for processed_files, (blob, category) in enumerate(scoped_blobs, start=1):
+        if progress_callback:
+            progress_callback({
+                "phase": "indexing",
+                "current_file": blob.name,
+                "processed_files": processed_files,
+                "total_files": total_files,
+            })
         downloader = container.download_blob(blob.name)
         content = downloader.readall()
         current_hash = _file_hash(content)
