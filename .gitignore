@@ -18,6 +18,7 @@ src/backend/.env
 src/backend/LanzarChatbotDocker.bat
 src/backend/LanzarChatbotNube.bat
 src/frontend/config.js
+.claude/settings.local.json
 
 # RAG local artifacts
 chroma_db/
