@@ -283,33 +283,50 @@ def _group_indexed_sources(indexed_sources: Dict[str, str]) -> Dict[str, List[st
     return grouped
 
 
-def _format_document_inventory_response(indexed_sources: Dict[str, str]) -> str:
+def _inventory_focus_domains(question: str, grouped_sources: Dict[str, List[str]]) -> List[str]:
+    detected = [
+        domain
+        for domain in _rag_service().detect_hint_domains(question or "")
+        if domain in grouped_sources
+    ]
+    return detected
+
+
+def _source_display_name(source: str) -> str:
+    normalized = str(source or "").replace("\\", "/").strip("/")
+    if not normalized:
+        return ""
+    return normalized.rsplit("/", 1)[-1]
+
+
+def _format_document_inventory_response(indexed_sources: Dict[str, str], question: str = "") -> str:
     grouped = _group_indexed_sources(indexed_sources)
     if not grouped:
         return (
             "Ahora mismo no veo documentos tecnicos indexados. "
-            "Cuando termine la sincronizacion documental podre listar la estructura disponible."
+            "Cuando termine la sincronizacion documental podre listar los documentos disponibles."
         )
 
-    lines = [
-        "La documentacion tecnica disponible en el chatbot esta organizada por bloques:",
-    ]
-    total_docs = 0
-    for domain, sources in grouped.items():
-        total_docs += len(sources)
-        label = _DOMAIN_DISPLAY_NAMES.get(domain, domain.replace("_", " ").title())
-        lines.append(f"- {label}: {len(sources)} documento(s)")
-        preview = sources[:4]
-        for source in preview:
-            rel = source.split("/", 1)[1] if "/" in source else source
-            lines.append(f"  {rel}")
-        if len(sources) > len(preview):
-            lines.append(f"  ... y {len(sources) - len(preview)} mas")
+    focus_domains = _inventory_focus_domains(question, grouped)
+    if focus_domains:
+        domains_to_render = focus_domains
+        if len(focus_domains) == 1:
+            title = f"Los documentos que tenemos en {_DOMAIN_DISPLAY_NAMES.get(focus_domains[0], focus_domains[0])} son:"
+        else:
+            title = "Los documentos que tenemos en esos bloques son:"
+    else:
+        domains_to_render = sorted(grouped)
+        title = "Los documentos tecnicos disponibles son:"
 
-    lines.append(
-        "Si quieres, puedo detallarte el contenido de un bloque concreto, por ejemplo OPS, RITE, baja tension o grupos electrogenos."
-    )
-    lines.append(f"Total indexado actualmente: {total_docs} documento(s).")
+    lines = [title]
+    seen_names: set[str] = set()
+    for domain in domains_to_render:
+        for source in grouped.get(domain, []):
+            name = _source_display_name(source)
+            if not name or name in seen_names:
+                continue
+            seen_names.add(name)
+            lines.append(f"- {name}")
     return "\n".join(lines)
 
 
@@ -672,7 +689,7 @@ def send_message(data: MessageRequest, request: Request):
 
         if route == "document_inventory":
             indexed_sources = _rag_service().list_indexed_sources()
-            response = _format_document_inventory_response(indexed_sources)
+            response = _format_document_inventory_response(indexed_sources, data.question)
             elapsed = int((time.time() - start) * 1000)
             db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
             _log_chat_event(
