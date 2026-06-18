@@ -114,6 +114,7 @@ def _ocr_page_text(page) -> str:
 
 MIN_CHUNK_LENGTH = 80
 CORE_TERM_PENALTY = 4
+CHROMA_ADD_BATCH_SIZE = int(os.getenv("CHROMA_ADD_BATCH_SIZE", "1000"))
 
 # ---------------------------------------------------------------------------
 # Scoring por dominio específico (BT-40 / generadoras).
@@ -2028,6 +2029,41 @@ def _delete_source_chunks(source_name: str) -> None:
             col.delete(ids=results["ids"])
 
 
+def _iter_add_batches(
+    documents: List[str],
+    metadatas: List[Dict[str, object]],
+    ids: List[str],
+    batch_size: int = CHROMA_ADD_BATCH_SIZE,
+):
+    if len(documents) != len(metadatas) or len(documents) != len(ids):
+        raise ValueError("documents, metadatas e ids deben tener la misma longitud")
+    safe_batch_size = max(1, int(batch_size or 1))
+    for start in range(0, len(documents), safe_batch_size):
+        end = start + safe_batch_size
+        yield documents[start:end], metadatas[start:end], ids[start:end]
+
+
+def _collection_add_batched(
+    target_collection,
+    *,
+    documents: List[str],
+    metadatas: List[Dict[str, object]],
+    ids: List[str],
+    batch_size: int = CHROMA_ADD_BATCH_SIZE,
+) -> None:
+    for docs_batch, meta_batch, ids_batch in _iter_add_batches(
+        documents,
+        metadatas,
+        ids,
+        batch_size=batch_size,
+    ):
+        target_collection.add(
+            documents=docs_batch,
+            metadatas=meta_batch,
+            ids=ids_batch,
+        )
+
+
 def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     source_name = str(filepath.relative_to(root_path)).replace("\\", "/")
     domain = _source_domain_key(source_name)
@@ -2189,7 +2225,12 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
         pdf.close()
 
     if documents:
-        collection.add(documents=documents, metadatas=metadatas, ids=ids)
+        _collection_add_batched(
+            collection,
+            documents=documents,
+            metadatas=metadatas,
+            ids=ids,
+        )
     return len(documents)
 
 
