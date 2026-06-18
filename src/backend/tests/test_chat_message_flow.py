@@ -99,6 +99,53 @@ class TestChatMessageFlow(unittest.TestCase):
         self.assertEqual(data["interaction_id"], 222)
         record_mock.assert_called_once()
 
+    def test_basic_rebt_question_uses_controlled_override(self):
+        client = self._make_client()
+        fake_memory = mock.Mock()
+        fake_memory.search_validated_memory.return_value = None
+        fake_memory.record_interaction_pending.return_value = 555
+        fake_rag = mock.Mock()
+        fake_rag.search_documents_detailed.return_value = ("", [], {})
+
+        with (
+            mock.patch("routes.auth_helpers.load_user_by_id", return_value=_make_user_row()),
+            mock.patch("routes.chat._assert_conversation_owner", return_value=(1, 10, "Chat", "technical")),
+            mock.patch("routes.chat._get_conversation_chat_mode", return_value="technical"),
+            mock.patch("routes.chat._get_recent_history", return_value=[]),
+            mock.patch("routes.chat.classify_question", return_value={"route": "knowledge", "message": ""}),
+            mock.patch("routes.chat.detect_business_route", return_value=None),
+            mock.patch("routes.chat._memory_service", return_value=fake_memory),
+            mock.patch("routes.chat._rag_service", return_value=fake_rag),
+            mock.patch(
+                "routes.chat.generate_ai_response_with_fallback",
+                return_value={
+                    "text": "No tengo informacion suficiente para responder con base en reglamentos.",
+                    "confidence": 0.18,
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    "retries": 0,
+                    "base_model": "test-model",
+                    "final_model": "test-model",
+                    "base_confidence": 0.18,
+                    "final_confidence": 0.18,
+                    "escalated": False,
+                    "escalation_reason": "",
+                    "usage_breakdown": {},
+                },
+            ),
+            mock.patch("routes.chat.format_answer_for_user", side_effect=lambda answer, sources, question=None: answer),
+            mock.patch("routes.chat._save_chat_message", return_value=0),
+        ):
+            resp = client.post(
+                "/messages",
+                json={"conversation_id": 1, "question": "Que es el REBT?"},
+                headers=_user_headers(),
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("Reglamento Electrotecnico para Baja Tension", data["response"])
+        self.assertGreaterEqual(data["confidence"], 0.9)
+
     def test_cancelled_request_is_not_saved(self):
         client = self._make_client()
         request_id = "req-test-cancel"

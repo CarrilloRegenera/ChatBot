@@ -410,6 +410,19 @@ def _apply_known_technical_answer_overrides(question: str, response: str, confid
             "HVSC de conexion de alta tension tierra-buque e IEC/IEEE 80005-2 para la comunicacion de datos de monitorizacion y control.",
             max(confidence, 0.92),
         )
+    if normalized in {
+        "que es el rebt",
+        "que es el rebt?",
+        "que es rebt",
+        "que es rebt?",
+        "que es el reglamento electrotecnico para baja tension",
+        "que es el reglamento electrotecnico para baja tension?",
+    }:
+        return (
+            "El REBT es el Reglamento Electrotecnico para Baja Tension, junto con sus Instrucciones Tecnicas Complementarias (ITC-BT). "
+            "Es la referencia basica en Espana para el diseno, ejecucion, puesta en servicio y seguridad de las instalaciones electricas de baja tension.",
+            max(confidence, 0.9),
+        )
     if "ops" in normalized and any(
         token in normalized
         for token in ("monitorizacion", "monitorizacion y control", "monitoring", "control general")
