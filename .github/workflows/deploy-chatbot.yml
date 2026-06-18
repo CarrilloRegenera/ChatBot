@@ -16,6 +16,14 @@ on:
           - full
           - backend
           - frontend
+      sync_documents:
+        description: Ejecutar sync documental tras desplegar backend
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       requested_by_email:
         description: Email del solicitante
         required: false
@@ -394,7 +402,7 @@ jobs:
           throw "El backend no respondió correctamente en /health"
 
       - name: Trigger document sync
-        if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
+        if: ${{ (inputs.action == 'full' || inputs.action == 'backend') && inputs.sync_documents != 'false' }}
         shell: pwsh
         env:
           ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
