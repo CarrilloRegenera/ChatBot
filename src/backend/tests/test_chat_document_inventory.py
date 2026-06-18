@@ -18,17 +18,52 @@ def test_format_document_inventory_response_groups_domains_and_counts():
         }
     )
 
-    assert "La documentacion tecnica disponible en el chatbot esta organizada por bloques:" in response
-    assert "- OPS: 2 documento(s)" in response
-    assert "- RITE: 1 documento(s)" in response
-    assert "- Baja tension: 1 documento(s)" in response
-    assert "01_normativa_base/BS ISO IEC IEEE 80005-1_2012.pdf" in response
-    assert "Total indexado actualmente: 4 documento(s)." in response
+    assert "Los documentos tecnicos disponibles son:" in response
+    assert "- BS ISO IEC IEEE 80005-1_2012.pdf" in response
+    assert "- EOPSA_Checklist_OPS_ES.pdf" in response
+    assert "- RITE IT3.pdf" in response
+    assert "- BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf" in response
+    assert "documento(s)" not in response
+    assert "01_normativa_base/" not in response
 
 
 def test_format_document_inventory_response_handles_empty_inventory():
     response = _format_document_inventory_response({})
     assert "no veo documentos tecnicos indexados" in response.lower()
+
+
+def test_format_document_inventory_response_can_focus_on_ops_only():
+    response = _format_document_inventory_response(
+        {
+            "ops/01_normativa_base/BS ISO IEC IEEE 80005-1_2012.pdf": "h1",
+            "ops/03_checklists_operacion/EOPSA_Checklist_OPS_ES.pdf": "h2",
+            "rite/RITE IT3.pdf": "h3",
+        },
+        "Quiero que me digas solo los documentos que tenemos de OPS",
+    )
+
+    assert "Los documentos que tenemos en OPS son:" in response
+    assert "- BS ISO IEC IEEE 80005-1_2012.pdf" in response
+    assert "- EOPSA_Checklist_OPS_ES.pdf" in response
+    assert "RITE IT3.pdf" not in response
+
+
+def test_format_document_inventory_response_can_focus_on_other_areas_too():
+    response = _format_document_inventory_response(
+        {
+            "ops/01_normativa_base/BS ISO IEC IEEE 80005-1_2012.pdf": "h1",
+            "rite/RITE IT3.pdf": "h2",
+            "rite/RITE-2021-BOE-A-2021-4572.pdf": "h3",
+            "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf": "h4",
+        },
+        "Que documentos tenemos de RITE?",
+    )
+
+    assert "Los documentos que tenemos en RITE son:" in response
+    assert "- RITE IT3.pdf" in response
+    assert "- RITE-2021-BOE-A-2021-4572.pdf" in response
+    assert "BS ISO IEC IEEE 80005-1_2012.pdf" not in response
+    assert "BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf" not in response
 
 
 def test_list_indexed_sources_dispatches_to_azure_backend():

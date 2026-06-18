@@ -150,7 +150,15 @@ def _looks_documentary(text: str) -> bool:
 
 
 def _asks_for_document_inventory(text: str) -> bool:
-    return any(hint in text for hint in DOCUMENT_INVENTORY_HINTS)
+    if any(hint in text for hint in DOCUMENT_INVENTORY_HINTS):
+        return True
+    if "bloque de" in text and any(hint in text for hint in TECHNICAL_HINTS):
+        return True
+    if any(term in text for term in ("documentos de", "documentacion de", "solo los documentos")) and any(
+        hint in text for hint in TECHNICAL_HINTS
+    ):
+        return True
+    return False
 
 
 def _has_strong_business_signal(text: str) -> bool:

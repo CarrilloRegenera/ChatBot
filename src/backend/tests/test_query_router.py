@@ -118,6 +118,10 @@ def test_document_inventory_questions_get_explicit_inventory_route():
         "Cual es la estructura documental del chatbot tecnico?",
         "Que documentacion hay cargada en el chatbot?",
         "Que documentacion tecnica hay indexada ahora mismo?",
+        "Quiero el bloque de OPS",
+        "Quiero que me digas solo los documentos que tenemos de OPS",
+        "Que documentos tenemos de RITE?",
+        "Que documentos tenemos de baja tension?",
     ]
 
     for question in questions:
