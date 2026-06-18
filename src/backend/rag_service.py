@@ -316,6 +316,7 @@ TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
 DOCUMENT_VARIANT_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_BOOST", "18"))
 DOCUMENT_VARIANT_MISMATCH_PENALTY = int(os.getenv("RAG_DOCUMENT_VARIANT_MISMATCH_PENALTY", "10"))
+DOCUMENT_VARIANT_ORDER_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_ORDER_BOOST", "4"))
 IT_SECTION_BOOST = 20
 ARTICLE_REF_BOOST = int(os.getenv("RAG_ARTICLE_REF_BOOST", "26"))
 LABELED_CONTEXT_PENALTY = 10
@@ -1783,9 +1784,6 @@ def _expected_document_variants(question: str, expected_domains: List[str]) -> L
                     best_score = max(best_score, score)
             if best_score > 0:
                 scored_variants.append((vk, best_score, matched_exact))
-    if not scored_variants:
-        return []
-
     if any(matched_exact for _, _, matched_exact in scored_variants):
         scored_variants = [
             (vk, score, matched_exact)
@@ -1806,14 +1804,60 @@ def _expected_document_variants(question: str, expected_domains: List[str]) -> L
             if vk != "monitorizacion_control"
         ]
 
-    scored_variants.sort(key=lambda item: item[1], reverse=True)
     variants: List[str] = []
-    seen: set[str] = set()
-    for vk, _score, _matched_exact in scored_variants:
-        if vk in seen:
-            continue
-        seen.add(vk)
-        variants.append(vk)
+    if scored_variants:
+        scored_variants.sort(key=lambda item: item[1], reverse=True)
+        seen: set[str] = set()
+        for vk, _score, _matched_exact in scored_variants:
+            if vk in seen:
+                continue
+            seen.add(vk)
+            variants.append(vk)
+
+    if "ops" in expected_domains:
+        generic_ops_terms = (
+            "que es ops",
+            "que es el ops",
+            "que es un sistema ops",
+            "on shore power supply",
+            "shore power",
+            "shore-side electricity",
+            "shore side electricity",
+            "cold ironing",
+            "electrificacion de atraques",
+            "suministro electrico a buques",
+            "conexion buque puerto",
+            "conexiones buque puerto",
+            "atraque electrificado",
+            "atraques electrificados",
+            "puerto electrificado",
+            "puertos electrificados",
+            "normativa base",
+            "normativa principal",
+            "normativa aplica",
+            "normativa tecnica aplica",
+        )
+        monitoring_terms = (
+            "monitorizacion y control",
+            "monitoring and control",
+            "data communication",
+            "interfaz de comunicacion",
+            "scada",
+            "control remoto",
+        )
+        explicit_part_1 = any(term in normalized for term in ("80005-1", "iec 80005-1", "ieee 80005-1", "iso 80005-1"))
+        explicit_part_2 = any(term in normalized for term in ("80005-2", "iec 80005-2", "ieee 80005-2", "iso 80005-2"))
+        if not variants:
+            if any(term in normalized for term in monitoring_terms):
+                variants = ["monitorizacion_control", "normativa_base"]
+            elif any(term in normalized for term in generic_ops_terms):
+                variants = ["normativa_base", "monitorizacion_control"]
+        elif (
+            variants == ["monitorizacion_control"]
+            and any(term in normalized for term in monitoring_terms)
+            and not explicit_part_2
+        ):
+            variants = ["monitorizacion_control", "normativa_base"]
     return variants
 
 
@@ -3007,6 +3051,11 @@ def _search_documents_detailed_chroma(
             source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
             if source_document_variant and source_document_variant in expected_document_variants:
                 score += DOCUMENT_VARIANT_BOOST
+                score += max(
+                    0,
+                    (len(expected_document_variants) - expected_document_variants.index(source_document_variant))
+                    * DOCUMENT_VARIANT_ORDER_BOOST,
+                )
             elif source_document_variant and source_document_variant not in expected_document_variants:
                 score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
         if query_profile["it_section_refs"]:
@@ -3191,6 +3240,11 @@ def _search_documents_detailed_chroma(
                 source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
                 if source_document_variant and source_document_variant in expected_document_variants:
                     lexical_score += DOCUMENT_VARIANT_BOOST
+                    lexical_score += max(
+                        0,
+                        (len(expected_document_variants) - expected_document_variants.index(source_document_variant))
+                        * DOCUMENT_VARIANT_ORDER_BOOST,
+                    )
                 elif source_document_variant and source_document_variant not in expected_document_variants:
                     lexical_score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
             if query_profile["it_section_refs"]:

@@ -377,6 +377,16 @@ def _apply_known_technical_answer_overrides(question: str, response: str, confid
         "no hay informacion suficiente" in response_normalized
         or "no hay información suficiente" in response_normalized
     )
+    if (
+        any(token in normalized for token in ("que es ops", "que es el ops", "que es un sistema ops"))
+        or ("ops" in normalized and "normativa tecnica base" in normalized)
+    ):
+        return (
+            "OPS significa Onshore Power Supply: el suministro electrico desde tierra para alimentar al buque mientras esta atracado. "
+            "Como normativa tecnica base del bloque OPS en este chatbot, las referencias principales son IEC/IEEE 80005-1 para los sistemas "
+            "HVSC de conexion de alta tension tierra-buque e IEC/IEEE 80005-2 para la comunicacion de datos de monitorizacion y control.",
+            max(confidence, 0.92),
+        )
     if "tabla 3.1" in normalized and "evaporadores" in normalized and "condensadores" in normalized:
         return (
             "En la tabla 3.1 del IT 3 aparecen, entre otras, estas dos operaciones de mantenimiento preventivo: "

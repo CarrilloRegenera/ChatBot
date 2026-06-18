@@ -807,7 +807,7 @@
       "document_variants": [
         {
           "variant_key": "normativa_base",
-          "filename_patterns": ["80005-1", "80005_1", "bs iso iec ieee 80005-1"],
+          "filename_patterns": ["80005-1", "80005_1", "bs iso iec ieee 80005-1", "iec ieee 80005-1", "1329648", "cenelec_iec_pdf"],
           "query_triggers": [
             "80005-1",
             "iec 80005",

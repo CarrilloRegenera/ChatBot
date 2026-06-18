@@ -40,6 +40,17 @@ def test_compose_search_text_enriches_ops_normative_queries():
     assert "Utility connections in port" in text
 
 
+def test_compose_search_text_enriches_ops_monitoring_queries():
+    text = _compose_search_text(
+        "Como funciona la monitorizacion y control general en OPS?",
+        "como funciona la monitorizacion y control general en ops",
+        ["ops"],
+    )
+    assert "IEC/IEEE 80005-2" in text
+    assert "data communication for monitoring and control" in text.lower()
+    assert "SCADA" in text
+
+
 def test_build_semantic_config_uses_supported_title_field_shape():
     config = _build_semantic_config()
     prioritized = config.prioritized_fields
