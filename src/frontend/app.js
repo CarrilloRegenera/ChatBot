@@ -40,6 +40,17 @@ function resolveApiBaseUrl() {
 }
 
 const API = resolveApiBaseUrl();
+const SEND_ICON_SVG = `
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="22" y1="2" x2="11" y2="13"></line>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+    </svg>
+`;
+const STOP_ICON_SVG = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+    </svg>
+`;
 function resolveSpaRedirectUri() {
     const url = new URL(window.location.href);
     url.hash = "";
@@ -79,7 +90,17 @@ const ENTRA_SKIP_AUTOLOGIN_ONCE_KEY = "chatbot_entra_skip_autologin_once";
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
     const controller = new AbortController();
+    const externalSignal = options?.signal;
+    let externalAbortHandler = null;
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    if (externalSignal) {
+        if (externalSignal.aborted) {
+            controller.abort();
+        } else {
+            externalAbortHandler = () => controller.abort();
+            externalSignal.addEventListener("abort", externalAbortHandler, { once: true });
+        }
+    }
     try {
         return await fetch(url, {
             ...options,
@@ -91,6 +112,9 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
         }
         throw err;
     } finally {
+        if (externalSignal && externalAbortHandler) {
+            externalSignal.removeEventListener("abort", externalAbortHandler);
+        }
         window.clearTimeout(timeoutId);
     }
 }
@@ -113,6 +137,49 @@ async function readResponseBody(res) {
     } catch {
         return { data: {}, text: rawText };
     }
+}
+
+function isHtmlResponseText(text) {
+    const normalized = String(text || "").trim().toLowerCase();
+    return normalized.startsWith("<!doctype") || normalized.startsWith("<html") || normalized.startsWith("<body");
+}
+
+function buildBackendFailureMessage(res, responseBody, fallbackMessage) {
+    const data = responseBody?.data || {};
+    const plainText = String(responseBody?.text || "").trim();
+    const requestId = (res?.headers?.get("x-request-id") || "").trim();
+    const suffix = requestId ? ` Codigo de seguimiento: ${requestId}.` : "";
+
+    if (typeof data?.detail === "string" && data.detail.trim()) {
+        return `${data.detail.trim()}${suffix}`;
+    }
+
+    if (isBackendWarmupResponse(res, plainText)) {
+        return `El servicio esta temporalmente ocupado o reiniciandose. Intentalo de nuevo en unos segundos.${suffix}`;
+    }
+
+    if (plainText && !isHtmlResponseText(plainText) && plainText.toLowerCase() !== "backend call failure") {
+        return `${plainText}${suffix}`;
+    }
+
+    return `${fallbackMessage}${suffix}`;
+}
+
+function buildTransportErrorMessage(err, fallbackMessage) {
+    const rawMessage = String(err?.message || "").trim();
+    const normalized = rawMessage.toLowerCase();
+    if (!rawMessage) {
+        return fallbackMessage;
+    }
+    if (
+        normalized === "failed to fetch"
+        || normalized.includes("networkerror")
+        || normalized.includes("load failed")
+        || normalized.includes("network request failed")
+    ) {
+        return fallbackMessage;
+    }
+    return rawMessage;
 }
 
 function isBackendWarmupResponse(res, bodyText = "") {
@@ -216,11 +283,7 @@ async function finalizeEntraSession(token) {
 
     const data = responseBody.data || {};
     if (!res.ok) {
-        const plainText = String(responseBody.text || "").trim();
-        const warmupMessage = isBackendWarmupResponse(res, plainText)
-            ? "El servidor sigue arrancando. Espera unos segundos y vuelve a intentarlo."
-            : "No se pudo completar el login con Microsoft";
-        throw new Error(data?.detail || (plainText && plainText !== "Backend call failure" ? plainText : warmupMessage));
+        throw new Error(buildBackendFailureMessage(res, responseBody, "No se pudo completar el login con Microsoft."));
     }
 
     currentUser = {
@@ -403,6 +466,10 @@ let currentUser = null;
 let currentConversation = null;
 let activeChatMode = null;
 let isSending = false;
+let currentSendAbortController = null;
+let currentSendRequestId = "";
+let currentSendConversationId = null;
+let currentStopRequested = false;
 let activeConversationRequest = 0;
 let conversationsLoadPromise = null;
 let deletingConversationId = null;
@@ -432,6 +499,28 @@ function normalizeMojibakeText(input) {
     } catch {
         return text;
     }
+}
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function renderInlineSpinner(label = "Cargando...") {
+    const text = String(label || "").trim();
+    const labelHtml = text ? `<span>${escapeHtml(text)}</span>` : "";
+    return `<div class="inline-loading" role="status" aria-live="polite"><span class="mini-spinner" aria-hidden="true"></span>${labelHtml}</div>`;
+}
+
+function generateRequestId() {
+    if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID();
+    }
+    return `req-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
 // ===== SESSION PERSISTENCE =====
@@ -1278,7 +1367,8 @@ function appendMessage(role, text) {
 
 function createInlineFeedbackActions(message) {
     if (!message?.interaction_id || !currentUser) return null;
-    if (String(message.interaction_state || "").toLowerCase() !== "pendiente") return null;
+    const state = String(message.interaction_state || "pendiente").toLowerCase();
+    if (state !== "pendiente") return null;
 
     const actions = document.createElement("div");
     actions.className = "inline-feedback-actions";
@@ -1351,6 +1441,9 @@ function appendConversationMessage(role, text, message = null) {
     const messagesDiv = document.getElementById("chat-messages");
     const row = document.createElement("div");
     row.className = `message-row ${role}`;
+    if (message?.request_id) {
+        row.dataset.requestId = message.request_id;
+    }
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
@@ -1409,11 +1502,14 @@ async function reconcilePendingMessage(conversationId) {
     }
 }
 
-function showTypingIndicator() {
+function showTypingIndicator(requestId = "") {
     const messagesDiv = document.getElementById("chat-messages");
     const row = document.createElement("div");
     row.className = "message-row assistant";
     row.id = "typing-row";
+    if (requestId) {
+        row.dataset.requestId = requestId;
+    }
 
     const indicator = document.createElement("div");
     indicator.className = "message-bubble typing-indicator";
@@ -1427,6 +1523,24 @@ function showTypingIndicator() {
 function removeTypingIndicator() {
     const typing = document.getElementById("typing-row");
     if (typing) typing.remove();
+}
+
+function removeRequestRows(requestId) {
+    if (!requestId) return;
+    document.querySelectorAll(`.message-row.assistant[data-request-id="${requestId}"]`).forEach((row) => row.remove());
+}
+
+function updateSendButtonState() {
+    const sendBtn = document.getElementById("send-btn");
+    if (!sendBtn) return;
+    const stopMode = Boolean(isSending);
+    sendBtn.classList.toggle("stop-mode", stopMode);
+    sendBtn.setAttribute("aria-disabled", "false");
+    sendBtn.disabled = false;
+    sendBtn.title = stopMode ? "Detener respuesta" : "Enviar pregunta";
+    sendBtn.setAttribute("aria-label", stopMode ? "Detener respuesta" : "Enviar pregunta");
+    sendBtn.innerHTML = stopMode ? STOP_ICON_SVG : SEND_ICON_SVG;
+    sendBtn.onclick = stopMode ? stopCurrentMessage : sendMessage;
 }
 
 function setSendingState(sending) {
@@ -1444,13 +1558,8 @@ function setSendingState(sending) {
     const deleteButtons = document.querySelectorAll(".conversation-delete-btn");
     const chatView = document.getElementById("chat-view");
 
-    if (sendBtn) {
-        sendBtn.disabled = sending;
-        sendBtn.setAttribute("aria-disabled", sending ? "true" : "false");
-    }
-
     if (input) {
-        input.disabled = sending;
+        input.disabled = false;
         if (sending) {
             input.setAttribute("aria-busy", "true");
         } else {
@@ -1501,6 +1610,37 @@ function setSendingState(sending) {
     if (chatView) {
         chatView.classList.toggle("chat-busy", sending);
     }
+
+    updateSendButtonState();
+}
+
+async function stopCurrentMessage() {
+    if (!isSending || !currentSendRequestId || !currentSendConversationId) return;
+    currentStopRequested = true;
+    removeTypingIndicator();
+    if (currentSendAbortController) {
+        currentSendAbortController.abort();
+    }
+    try {
+        await fetch(`${API}/messages/cancel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...getUserHeaders() },
+            body: JSON.stringify({
+                conversation_id: currentSendConversationId,
+                request_id: currentSendRequestId,
+            }),
+        });
+    } catch (err) {
+        console.warn("No se pudo confirmar la cancelacion en backend:", err);
+    } finally {
+        removeRequestRows(currentSendRequestId);
+        clearPendingMessage();
+        currentStopRequested = false;
+        setSendingState(false);
+        currentSendAbortController = null;
+        currentSendConversationId = null;
+        currentSendRequestId = "";
+    }
 }
 
 async function sendMessage() {
@@ -1511,6 +1651,12 @@ async function sendMessage() {
     if (!question || !currentConversation) return;
     const startTime = performanceNow();
     const conversationId = currentConversation;
+    const requestId = generateRequestId();
+    const abortController = new AbortController();
+    currentSendAbortController = abortController;
+    currentSendRequestId = requestId;
+    currentSendConversationId = conversationId;
+    currentStopRequested = false;
 
     setSendingState(true);
 
@@ -1525,23 +1671,26 @@ async function sendMessage() {
         input.style.height = "auto";
 
         showMessagesState();
-        appendConversationMessage("user", question, { question });
+        appendConversationMessage("user", question, { question, request_id: requestId });
         savePendingMessage({
             conversationId,
             question,
             createdAt: Date.now(),
+            request_id: requestId,
+            status: "pending",
         });
 
         const messagesDiv = document.getElementById("chat-messages");
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
-        showTypingIndicator();
+        showTypingIndicator(requestId);
 
-        const res = await fetch(`${API}/messages`, {
+        const res = await fetchWithTimeout(`${API}/messages`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...getAdminHeaders() },
-            body: JSON.stringify({ conversation_id: conversationId, question, chat_mode: activeChatMode }),
-        });
+            body: JSON.stringify({ conversation_id: conversationId, question, chat_mode: activeChatMode, request_id: requestId }),
+            signal: abortController.signal,
+        }, 310000);
         if (isUnauthorizedResponse(res)) {
             removeTypingIndicator();
             await handleUnauthorizedSession();
@@ -1549,17 +1698,32 @@ async function sendMessage() {
             return;
         }
 
-        const data = await res.json();
+        const responseBody = await readResponseBody(res);
+        const data = responseBody.data || {};
         if (!res.ok) {
-            throw new Error(data?.detail || "Error al procesar la consulta.");
+            throw new Error(buildBackendFailureMessage(res, responseBody, "No se ha podido procesar la consulta."));
+        }
+        if (!data || typeof data.response !== "string") {
+            console.warn("Respuesta inesperada de /messages", {
+                status: res.status,
+                requestId: res.headers.get("x-request-id") || "",
+                body: responseBody.text || data,
+            });
+            throw new Error(buildBackendFailureMessage(res, responseBody, "El servidor ha devuelto una respuesta inesperada."));
+        }
+        if (data?.cancelled || currentStopRequested) {
+            clearPendingMessage();
+            removeRequestRows(requestId);
+            return;
         }
 
         removeTypingIndicator();
         appendConversationMessage("assistant", data.response, {
             question,
             response: data.response,
+            request_id: requestId,
             interaction_id: data.interaction_id,
-            interaction_state: data.interaction_id ? "pendiente" : "",
+            interaction_state: "pendiente",
             confidence: data.confidence,
         });
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -1570,6 +1734,7 @@ async function sendMessage() {
             response: data.response,
             createdAt: Date.now(),
             status: "answered",
+            request_id: requestId,
             interaction_id: data.interaction_id,
             interaction_state: data.interaction_id ? "pendiente" : "",
         });
@@ -1595,9 +1760,26 @@ async function sendMessage() {
         });
     } catch (err) {
         removeTypingIndicator();
+        if (err?.name === "AbortError" || currentStopRequested) {
+            removeRequestRows(requestId);
+            clearPendingMessage();
+            return;
+        }
         appendConversationMessage("assistant", err?.message || "Error de conexión con el servidor.");
+        const transportErrorMessage = buildTransportErrorMessage(err, "No se ha podido conectar con el servidor. Intentalo de nuevo en unos segundos.");
+        if (transportErrorMessage !== String(err?.message || "").trim()) {
+            const assistantBubbles = document.querySelectorAll(".message-row.assistant .message-bubble");
+            const lastAssistantBubble = assistantBubbles[assistantBubbles.length - 1];
+            if (lastAssistantBubble) {
+                lastAssistantBubble.textContent = transportErrorMessage;
+            }
+        }
         clearPendingMessage();
     } finally {
+        currentSendAbortController = null;
+        currentSendConversationId = null;
+        currentSendRequestId = "";
+        currentStopRequested = false;
         setSendingState(false);
         logPerformance(`sendMessage:${activeChatMode || "unknown"}`, startTime);
     }
@@ -1765,7 +1947,7 @@ async function loadDeploymentsPanel(page = deploymentsPage) {
     const container = document.getElementById("deploy-history-list");
     const targetPage = Math.max(1, Number(page || 1));
     if (container && !deploymentsLoading) {
-        container.innerHTML = `<div class="deploy-history-empty">Cargando pagina ${targetPage} del historico...</div>`;
+        container.innerHTML = `<div class="deploy-history-empty">${renderInlineSpinner("")}</div>`;
     }
     deploymentsLoading = true;
     renderDeploymentsPagination({
@@ -2095,7 +2277,7 @@ async function loadAdmin503Metrics() {
     const summary = document.getElementById("admin-503-summary");
     const comparison = document.getElementById("admin-503-comparison");
     if (summary) {
-        summary.innerHTML = `<div class="model-compare-empty">Cargando comparativa de errores 503...</div>`;
+        summary.innerHTML = `<div class="model-compare-empty">${renderInlineSpinner("")}</div>`;
     }
     if (comparison) {
         comparison.innerHTML = "";
@@ -2151,6 +2333,14 @@ function setAdminView(view, button = null) {
 async function loadAdminPanel() {
     if (!currentUser) return;
     loadDeploymentsPanel();
+    const comparison = document.getElementById("admin-model-comparison");
+    const pendingContainer = document.getElementById("admin-pending-list");
+    if (comparison) {
+        comparison.innerHTML = `<div class="model-compare-empty">${renderInlineSpinner("")}</div>`;
+    }
+    if (pendingContainer) {
+        pendingContainer.innerHTML = `<div class="pending-card"><div class="pending-answer">${renderInlineSpinner("")}</div></div>`;
+    }
     try {
         const pendingParams = new URLSearchParams({ limit: "30" });
         if (adminPendingUserId) {
@@ -2290,6 +2480,16 @@ let obsDeployments = [];
 
 async function loadObservabilityPanel() {
     if (!currentUser) return;
+    const summaryGrid = document.getElementById("obs-summary-grid");
+    const byRoute = document.getElementById("obs-by-route");
+    const timeline = document.getElementById("obs-timeline-chart");
+    const legend = document.getElementById("obs-timeline-legend");
+    const compare = document.getElementById("obs-compare-result");
+    if (summaryGrid) summaryGrid.innerHTML = renderInlineSpinner("");
+    if (byRoute) byRoute.innerHTML = renderInlineSpinner("");
+    if (timeline) timeline.innerHTML = renderInlineSpinner("");
+    if (legend) legend.innerHTML = "";
+    if (compare) compare.innerHTML = "";
     try {
         const [statsRes, timelineRes] = await Promise.all([
             fetch(`${API}/admin/retrieval-stats?days=${adminRangeDays}`, { headers: getAdminHeaders() }),
@@ -2469,7 +2669,7 @@ async function compareDeployments() {
         container.innerHTML = "<p>Selecciona dos despliegues diferentes</p>";
         return;
     }
-    container.innerHTML = "<p>Comparando...</p>";
+    container.innerHTML = renderInlineSpinner("");
     try {
         const res = await fetch(`${API}/admin/retrieval-stats/compare?deploy_a=${a}&deploy_b=${b}`, {
             headers: getAdminHeaders(),
@@ -2567,7 +2767,7 @@ async function loadMyPendingInteractions() {
     if (!currentUser) return;
     const container = document.getElementById("my-interactions-list");
     if (!container) return;
-    container.innerHTML = `<div class="pending-card"><div class="pending-answer">Cargando...</div></div>`;
+    container.innerHTML = `<div class="pending-card"><div class="pending-answer">${renderInlineSpinner("")}</div></div>`;
     try {
         const query = new URLSearchParams({ limit: "50" });
         if (activeChatMode) {

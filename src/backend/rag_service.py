@@ -10,7 +10,7 @@ import unicodedata
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import chromadb
 import fitz
@@ -318,6 +318,7 @@ LABELED_MATCH_PRIORITY_BOOST = 12
 DOCUMENT_VARIANT_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_BOOST", "18"))
 DOCUMENT_VARIANT_MISMATCH_PENALTY = int(os.getenv("RAG_DOCUMENT_VARIANT_MISMATCH_PENALTY", "10"))
 SOURCE_MENTION_BOOST = int(os.getenv("RAG_SOURCE_MENTION_BOOST", "14"))
+DOCUMENT_VARIANT_ORDER_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_ORDER_BOOST", "4"))
 IT_SECTION_BOOST = 20
 ARTICLE_REF_BOOST = int(os.getenv("RAG_ARTICLE_REF_BOOST", "26"))
 LABELED_CONTEXT_PENALTY = 10
@@ -1809,9 +1810,6 @@ def _expected_document_variants(question: str, expected_domains: List[str]) -> L
                     best_score = max(best_score, score)
             if best_score > 0:
                 scored_variants.append((vk, best_score, matched_exact))
-    if not scored_variants:
-        return []
-
     if any(matched_exact for _, _, matched_exact in scored_variants):
         scored_variants = [
             (vk, score, matched_exact)
@@ -1832,14 +1830,60 @@ def _expected_document_variants(question: str, expected_domains: List[str]) -> L
             if vk != "monitorizacion_control"
         ]
 
-    scored_variants.sort(key=lambda item: item[1], reverse=True)
     variants: List[str] = []
-    seen: set[str] = set()
-    for vk, _score, _matched_exact in scored_variants:
-        if vk in seen:
-            continue
-        seen.add(vk)
-        variants.append(vk)
+    if scored_variants:
+        scored_variants.sort(key=lambda item: item[1], reverse=True)
+        seen: set[str] = set()
+        for vk, _score, _matched_exact in scored_variants:
+            if vk in seen:
+                continue
+            seen.add(vk)
+            variants.append(vk)
+
+    if "ops" in expected_domains:
+        generic_ops_terms = (
+            "que es ops",
+            "que es el ops",
+            "que es un sistema ops",
+            "on shore power supply",
+            "shore power",
+            "shore-side electricity",
+            "shore side electricity",
+            "cold ironing",
+            "electrificacion de atraques",
+            "suministro electrico a buques",
+            "conexion buque puerto",
+            "conexiones buque puerto",
+            "atraque electrificado",
+            "atraques electrificados",
+            "puerto electrificado",
+            "puertos electrificados",
+            "normativa base",
+            "normativa principal",
+            "normativa aplica",
+            "normativa tecnica aplica",
+        )
+        monitoring_terms = (
+            "monitorizacion y control",
+            "monitoring and control",
+            "data communication",
+            "interfaz de comunicacion",
+            "scada",
+            "control remoto",
+        )
+        explicit_part_1 = any(term in normalized for term in ("80005-1", "iec 80005-1", "ieee 80005-1", "iso 80005-1"))
+        explicit_part_2 = any(term in normalized for term in ("80005-2", "iec 80005-2", "ieee 80005-2", "iso 80005-2"))
+        if not variants:
+            if any(term in normalized for term in monitoring_terms):
+                variants = ["monitorizacion_control", "normativa_base"]
+            elif any(term in normalized for term in generic_ops_terms):
+                variants = ["normativa_base", "monitorizacion_control"]
+        elif (
+            variants == ["monitorizacion_control"]
+            and any(term in normalized for term in monitoring_terms)
+            and not explicit_part_2
+        ):
+            variants = ["monitorizacion_control", "normativa_base"]
     return variants
 
 
@@ -2259,7 +2303,10 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     return len(documents)
 
 
-def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
+def _sync_documents_chroma(
+    folder_path: str = DOCUMENTS_PATH,
+    progress_callback: Callable[[Dict[str, object]], None] | None = None,
+) -> Dict[str, int]:
     if _embedding_fn is None:
         raise RuntimeError(
             "Embedding model no disponible. Descarga/cacha localmente "
@@ -2274,6 +2321,7 @@ def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
         str(p.relative_to(root_path)).replace("\\", "/"): p
         for p in pdf_paths
     }
+    total_files = len(current_files)
 
     indexed = _get_indexed_sources()
     if indexed and all(v == "" for v in indexed.values()):
@@ -2283,13 +2331,35 @@ def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
 
     added = updated = removed = 0
 
+    if progress_callback:
+        progress_callback({
+            "phase": "scan",
+            "processed_files": 0,
+            "total_files": total_files,
+            "current_file": "",
+        })
+
     for source_name in list(indexed):
         if source_name not in current_files:
             _delete_source_chunks(source_name)
             removed += 1
+            if progress_callback:
+                progress_callback({
+                    "phase": "cleanup",
+                    "current_file": source_name,
+                    "processed_files": 0,
+                    "total_files": total_files,
+                })
             logger.info("Eliminado del índice: %s", source_name)
 
-    for source_name, filepath in current_files.items():
+    for processed_files, (source_name, filepath) in enumerate(current_files.items(), start=1):
+        if progress_callback:
+            progress_callback({
+                "phase": "indexing",
+                "current_file": source_name,
+                "processed_files": processed_files,
+                "total_files": total_files,
+            })
         current_hash = _file_hash(str(filepath))
         if source_name in indexed:
             if indexed[source_name] == current_hash:
@@ -2316,11 +2386,14 @@ def _sync_documents_chroma(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
     return {"added": added, "updated": updated, "removed": removed}
 
 
-def sync_documents(folder_path: str = DOCUMENTS_PATH) -> Dict[str, int]:
+def sync_documents(
+    folder_path: str = DOCUMENTS_PATH,
+    progress_callback: Callable[[Dict[str, object]], None] | None = None,
+) -> Dict[str, int]:
     if RAG_BACKEND == "azure_search":
         from azure_rag_service import sync_documents_from_blob
-        return sync_documents_from_blob()
-    return _sync_documents_chroma(folder_path)
+        return sync_documents_from_blob(progress_callback=progress_callback)
+    return _sync_documents_chroma(folder_path, progress_callback=progress_callback)
 
 
 def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> int:
@@ -3073,6 +3146,11 @@ def _search_documents_detailed_chroma(
             source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
             if source_document_variant and source_document_variant in expected_document_variants:
                 score += DOCUMENT_VARIANT_BOOST
+                score += max(
+                    0,
+                    (len(expected_document_variants) - expected_document_variants.index(source_document_variant))
+                    * DOCUMENT_VARIANT_ORDER_BOOST,
+                )
             elif source_document_variant and source_document_variant not in expected_document_variants:
                 score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
         score += _source_mention_score(question_tokens, str(metadata.get("source", "")))
@@ -3258,6 +3336,11 @@ def _search_documents_detailed_chroma(
                 source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
                 if source_document_variant and source_document_variant in expected_document_variants:
                     lexical_score += DOCUMENT_VARIANT_BOOST
+                    lexical_score += max(
+                        0,
+                        (len(expected_document_variants) - expected_document_variants.index(source_document_variant))
+                        * DOCUMENT_VARIANT_ORDER_BOOST,
+                    )
                 elif source_document_variant and source_document_variant not in expected_document_variants:
                     lexical_score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
             lexical_score += _source_mention_score(question_tokens, str(metadata.get("source", "")))

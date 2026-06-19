@@ -158,7 +158,7 @@ def test_ops_phrase_queries_cover_eopsa_checklists():
 
 
 def test_ops_document_variants_distinguish_normative_base_and_checklists():
-    assert _document_variant_from_source("ops/01_normativa_base/BS ISO IEC IEEE 80005-1_2012.pdf") == "normativa_base"
+    assert _document_variant_from_source("ops/01_normativa_base/1329648_CENELEC_IEC_PDF.pdf") == "normativa_base"
     assert _document_variant_from_source("ops/03_checklists_operacion/EOPSA_Checklist_OPS_ES.pdf") == "eopsa_checklist"
     assert _document_variant_from_source("ops/03_checklists_operacion/EOPSA_Guia_OPS_ES_Completa.pdf") == "eopsa_guia_completa"
     assert _expected_document_variants("Que es OPS segun la IEC 80005-1?", ["ops"]) == ["normativa_base"]
@@ -170,6 +170,17 @@ def test_ops_document_variants_distinguish_normative_base_and_checklists():
         "Que es la guia EOPSA para una licitacion OPS completa y exitosa?",
         ["ops"],
     ) == ["eopsa_guia_completa"]
+
+
+def test_ops_generic_questions_prioritize_base_normative_documents():
+    assert _expected_document_variants("Que es OPS y que normativa tecnica base aplica?", ["ops"]) == [
+        "normativa_base",
+        "monitorizacion_control",
+    ]
+    assert _expected_document_variants("Como funciona la monitorizacion y control general en OPS?", ["ops"]) == [
+        "monitorizacion_control",
+        "normativa_base",
+    ]
 
 
 def test_ops_document_variants_cover_monitoring_summary_and_project_planning():

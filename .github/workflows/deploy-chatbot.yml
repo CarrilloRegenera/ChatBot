@@ -16,6 +16,14 @@ on:
           - full
           - backend
           - frontend
+      sync_documents:
+        description: Ejecutar sync documental tras desplegar backend
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       requested_by_email:
         description: Email del solicitante
         required: false
@@ -394,7 +402,7 @@ jobs:
           throw "El backend no respondió correctamente en /health"
 
       - name: Trigger document sync
-        if: ${{ inputs.action == 'full' || inputs.action == 'backend' }}
+        if: ${{ (inputs.action == 'full' || inputs.action == 'backend') && inputs.sync_documents != 'false' }}
         shell: pwsh
         env:
           ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
@@ -416,6 +424,7 @@ jobs:
           }
 
           $maxAttempts = 270
+          $staleHeartbeatSeconds = 600
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Start-Sleep -Seconds 20
             try {
@@ -427,6 +436,14 @@ jobs:
               }
               if ($status.state -eq "failed") {
                 throw "Sync documental fallido: $($status.error)"
+              }
+              if ($status.state -eq "running" -and $status.heartbeat_at) {
+                $heartbeatAge = [int]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [math]::Floor([double]$status.heartbeat_at))
+                if ($heartbeatAge -gt $staleHeartbeatSeconds) {
+                  $phase = if ($status.phase) { $status.phase } else { "desconocida" }
+                  $file = if ($status.current_file) { $status.current_file } else { "(sin fichero actual)" }
+                  throw "Sync documental sin heartbeat reciente desde hace ${heartbeatAge}s. phase=$phase current_file=$file"
+                }
               }
             } catch {
               if ($attempt -ge $maxAttempts) {

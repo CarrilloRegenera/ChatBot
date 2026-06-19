@@ -3,7 +3,7 @@ import logging
 import unicodedata
 import re
 import threading
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import fitz
 from azure.core.credentials import AzureKeyCredential
@@ -92,6 +92,15 @@ def _compose_search_text(question: str, clean_question: str, domains: List[str])
                 "Utility connections in port",
                 "High Voltage Shore Connection",
                 "HVSC",
+            ]
+        )
+    if "monitorizacion_control" in variants:
+        parts.extend(
+            [
+                "IEC/IEEE 80005-2",
+                "Data communication for monitoring and control",
+                "monitoring and control",
+                "SCADA",
             ]
         )
     seen = set()
@@ -433,7 +442,9 @@ def _delete_source_chunks(client: SearchClient, source_path: str) -> int:
         deleted += len(docs)
 
 
-def sync_documents_from_blob() -> Dict[str, int]:
+def sync_documents_from_blob(
+    progress_callback: Callable[[Dict[str, object]], None] | None = None,
+) -> Dict[str, int]:
     _require_azure_config()
     ensure_azure_index()
     search_client = _search_client()
@@ -464,14 +475,37 @@ def sync_documents_from_blob() -> Dict[str, int]:
     indexed = _search_all_indexed_sources(search_client)
 
     added = updated = removed = chunks_indexed = 0
+    total_files = len(scoped_blobs)
+
+    if progress_callback:
+        progress_callback({
+            "phase": "scan",
+            "processed_files": 0,
+            "total_files": total_files,
+            "current_file": "",
+        })
 
     for source_name in list(indexed):
         if source_name not in current_names:
             removed += 1
             _delete_source_chunks(search_client, source_name)
             logger.info("Eliminado de Azure AI Search: %s", source_name)
+            if progress_callback:
+                progress_callback({
+                    "phase": "cleanup",
+                    "current_file": source_name,
+                    "processed_files": 0,
+                    "total_files": total_files,
+                })
 
-    for blob, category in scoped_blobs:
+    for processed_files, (blob, category) in enumerate(scoped_blobs, start=1):
+        if progress_callback:
+            progress_callback({
+                "phase": "indexing",
+                "current_file": blob.name,
+                "processed_files": processed_files,
+                "total_files": total_files,
+            })
         downloader = container.download_blob(blob.name)
         content = downloader.readall()
         current_hash = _file_hash(content)
@@ -605,10 +639,22 @@ def search_documents_detailed_azure(
     if not expected_document_variants and hint_document_variants:
         expected_document_variants = [v for v in hint_document_variants if v]
         logger.debug("hint_document_variants aplicados como fallback: %s", expected_document_variants)
+    ops_base_priority_query = (
+        domains == ["ops"]
+        and bool(expected_document_variants)
+        and set(expected_document_variants).issubset({"normativa_base", "monitorizacion_control"})
+    )
     domain_filter = (
         "(" + " or ".join(f"domain eq '{_odata_escape(d)}'" for d in domains) + ")"
         if domains else None
     )
+    variant_filter = None
+    if ops_base_priority_query:
+        variant_filter = "(" + " or ".join(
+            f"document_variant eq '{_odata_escape(variant)}'"
+            for variant in expected_document_variants
+        ) + ")"
+    combined_filter = " and ".join(part for part in (domain_filter, variant_filter) if part)
     legacy_select = [
         "chunk_id",
         "source_path",
@@ -643,8 +689,8 @@ def search_documents_detailed_azure(
         search_kwargs = {
             "search_text": search_text,
             "vector_queries": [vector_query],
-            "filter": domain_filter,
-            "top": max(n_results * 2, 12),
+            "filter": combined_filter or None,
+            "top": max(n_results * 4, 24) if ops_base_priority_query else max(n_results * 2, 12),
             "select": select_fields,
         }
         if semantic_ok:
@@ -658,8 +704,8 @@ def search_documents_detailed_azure(
         results = _search_client().search(
             search_text=search_text,
             vector_queries=[vector_query],
-            filter=domain_filter,
-            top=max(n_results * 2, 12),
+            filter=combined_filter or None,
+            top=max(n_results * 4, 24) if ops_base_priority_query else max(n_results * 2, 12),
             select=legacy_select,
         )
 
@@ -719,7 +765,9 @@ def search_documents_detailed_azure(
             item for item in candidates
             if _azure_document_variant(item) in variant_set
         ]
-        if variant_candidates and (
+        if ops_base_priority_query and variant_candidates:
+            candidates = variant_candidates
+        elif variant_candidates and (
             candidates[0] not in variant_candidates
             or len(variant_candidates) >= max(2, min(n_results, max(1, n_results // 2)))
         ):
