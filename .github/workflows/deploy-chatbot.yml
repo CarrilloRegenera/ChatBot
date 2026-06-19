@@ -453,6 +453,20 @@ jobs:
             }
           }
 
+          try {
+            $finalStatus = Invoke-RestMethod -Method Get -Uri "$env:BACKEND_URL/admin/sync/status" -Headers $headers -TimeoutSec 30
+            Write-Host "Estado final sync tras agotar la ventana de espera: $($finalStatus | ConvertTo-Json -Compress)"
+            if ($finalStatus.state -eq "running" -and $finalStatus.heartbeat_at) {
+              $heartbeatAge = [int]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [math]::Floor([double]$finalStatus.heartbeat_at))
+              if ($heartbeatAge -le $staleHeartbeatSeconds) {
+                Write-Warning "El sync documental sigue en curso con heartbeat reciente (${heartbeatAge}s). El despliegue continua y el reindexado seguira en segundo plano."
+                exit 0
+              }
+            }
+          } catch {
+            Write-Warning "No se pudo consultar el estado final del sync tras el timeout: $($_.Exception.Message)"
+          }
+
           throw "Timeout esperando a que termine el sync documental"
 
       - name: Generate frontend config.js
