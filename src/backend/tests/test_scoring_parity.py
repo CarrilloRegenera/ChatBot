@@ -106,3 +106,44 @@ def test_azure_document_variant_falls_back_to_source_path():
         "source_path": "ops/07_estudios_viabilidad/Est. Terminal Cruceros - Malaga.pdf",
     }
     assert _azure_document_variant(item) == "estudio_viabilidad_malaga"
+
+
+# ---------------------------------------------------------------------------
+# Source mention boost — _source_mention_score
+# ---------------------------------------------------------------------------
+
+from rag_service import _source_mention_score, _tokenize, STOPWORDS, SOURCE_MENTION_BOOST
+
+
+def _q_tokens(question: str) -> set:
+    return {t for t in _tokenize(question.lower()) if t not in STOPWORDS and len(t) >= 4}
+
+
+def test_source_mention_boost_matches_filename_token():
+    qt = _q_tokens("errores frecuentes al dimensionar cables")
+    assert _source_mention_score(qt, "baja_tension/errores_frecuentes_2023_v2.pdf") == SOURCE_MENTION_BOOST
+
+
+def test_source_mention_no_match_on_unrelated_source():
+    qt = _q_tokens("errores frecuentes al dimensionar cables")
+    assert _source_mention_score(qt, "rite/RITE IT3.pdf") == 0
+
+
+def test_source_mention_ignores_noise_tokens():
+    qt = _q_tokens("manual de baja tension")
+    assert _source_mention_score(qt, "baja_tension/errores_frecuentes_2023_v2.pdf") == 0
+
+
+def test_source_mention_single_short_token_ignored():
+    qt = _q_tokens("que es rite")
+    assert _source_mention_score(qt, "rite/RITE IT3.pdf") == 0
+
+
+def test_source_mention_works_for_future_pdfs():
+    qt = _q_tokens("prysmian guia de instalacion")
+    assert _source_mention_score(qt, "baja_tension/prysmian_guia_instalacion_2025.pdf") == SOURCE_MENTION_BOOST
+
+
+def test_source_mention_electrotecnico():
+    qt = _q_tokens("segun el reglamento electrotecnico que dice la itc-bt-25")
+    assert _source_mention_score(qt, "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf") == SOURCE_MENTION_BOOST

@@ -382,6 +382,42 @@
       "document_type": "reglamento",
       "document_layer": "normativa_oficial",
       "confidentiality": "internal",
+      "document_variants": [
+        {
+          "variant_key": "rebt_consolidado",
+          "filename_patterns": ["boe-326", "electrotecnico"],
+          "query_triggers": [
+            "rebt", "reglamento electrotecnico", "boe-326", "boe326",
+            "itc-bt", "itc bt", "instrucciones tecnicas complementarias"
+          ]
+        },
+        {
+          "variant_key": "errores_frecuentes",
+          "filename_patterns": ["errores", "frecuentes"],
+          "query_triggers": [
+            "errores frecuentes", "prysmian errores", "fallos tipicos",
+            "fallo tipico", "error frecuente", "errores de instalacion",
+            "errores comunes", "prysmian"
+          ]
+        },
+        {
+          "variant_key": "soluciones_particulares",
+          "filename_patterns": ["particulares", "situaciones"],
+          "query_triggers": [
+            "soluciones particulares", "prysmian soluciones", "situaciones particulares",
+            "agrupamiento", "cables agrupados", "canalizacion",
+            "intensidad admisible", "factor de correccion", "prysmian"
+          ]
+        },
+        {
+          "variant_key": "manual_schneider",
+          "filename_patterns": ["manual-electricidad", "manual-electricidad-baja-tension"],
+          "query_triggers": [
+            "schneider", "manual de electricidad", "manual schneider",
+            "manual de baja tension", "caida de tension", "dimensionamiento de linea"
+          ]
+        }
+      ],
       "trigger_terms": [
         "rebt",
         "baja tension",
@@ -393,7 +429,15 @@
         "electrificacion elevada",
         "circuitos minimos",
         "circuito c1",
-        "itc-bt-25"
+        "itc-bt-25",
+        "prysmian",
+        "schneider",
+        "errores frecuentes",
+        "soluciones particulares",
+        "seccion del cable",
+        "intensidad admisible",
+        "factor de correccion",
+        "cables agrupados"
       ],
       "trigger_regex": [],
       "reference_patterns": [
@@ -404,10 +448,16 @@
         "itc-bt",
         "baja_tension",
         "baja-tension",
-        "boe-326"
+        "boe-326",
+        "prysmian",
+        "schneider",
+        "errores_frecuentes",
+        "soluciones_particulares"
       ],
       "source_phrases": [
-        "baja tension"
+        "baja tension",
+        "errores frecuentes",
+        "soluciones particulares"
       ],
       "folder_prefixes": [
         "baja_tension",
@@ -491,6 +541,114 @@
             "ITC-BT-18",
             "RESISTENCIA DE LAS TOMAS DE TIERRA",
             "tensiones de contacto superiores"
+          ]
+        },
+        {
+          "if_contains": [
+            "prysmian",
+            "error"
+          ],
+          "emit": [
+            "errores frecuentes",
+            "seccion del cable",
+            "proteccion",
+            "sobredimensionamiento"
+          ]
+        },
+        {
+          "if_contains": [
+            "prysmian",
+            "solucion"
+          ],
+          "emit": [
+            "soluciones particulares",
+            "agrupamiento",
+            "intensidad admisible",
+            "factor de correccion",
+            "temperatura ambiente"
+          ]
+        },
+        {
+          "if_contains": [
+            "errores frecuentes"
+          ],
+          "emit": [
+            "errores frecuentes",
+            "seccion del cable",
+            "proteccion",
+            "instalacion"
+          ]
+        },
+        {
+          "if_contains": [
+            "agrupamiento",
+            "cable"
+          ],
+          "emit": [
+            "soluciones particulares",
+            "agrupamiento",
+            "intensidad admisible",
+            "factor de correccion",
+            "canalizacion"
+          ]
+        },
+        {
+          "if_contains": [
+            "temperatura",
+            "cable"
+          ],
+          "emit": [
+            "soluciones particulares",
+            "temperatura ambiente",
+            "factor de correccion",
+            "intensidad admisible"
+          ]
+        },
+        {
+          "if_contains": [
+            "schneider"
+          ],
+          "emit": [
+            "manual de electricidad",
+            "caida de tension",
+            "dimensionamiento",
+            "linea"
+          ]
+        },
+        {
+          "if_contains": [
+            "caida de tension"
+          ],
+          "emit": [
+            "caida de tension",
+            "dimensionamiento",
+            "longitud de la linea",
+            "seccion del conductor"
+          ]
+        },
+        {
+          "if_contains": [
+            "seccion",
+            "cable"
+          ],
+          "emit": [
+            "seccion del cable",
+            "intensidad admisible",
+            "factor de correccion",
+            "proteccion"
+          ]
+        },
+        {
+          "if_contains": [
+            "dimensionamiento",
+            "linea"
+          ],
+          "emit": [
+            "dimensionamiento",
+            "caida de tension",
+            "intensidad",
+            "seccion del conductor",
+            "longitud"
           ]
         }
       ],

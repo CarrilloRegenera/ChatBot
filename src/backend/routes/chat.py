@@ -822,6 +822,15 @@ def send_message(data: MessageRequest, request: Request):
                 hint_article_refs = _rag_service().detect_hint_article_refs(recent_text) if recent_text.strip() else []
                 hint_it_section_refs = _rag_service().detect_hint_it_section_refs(recent_text) if recent_text.strip() else []
 
+                # Descartar hints heredados si la pregunta actual apunta a un dominio diferente
+                if hint_domains:
+                    current_domains = _rag_service().detect_hint_domains(data.question)
+                    if current_domains and not set(current_domains) & set(hint_domains):
+                        hint_domains = current_domains
+                        hint_document_variants = _rag_service().detect_hint_document_variants(data.question, current_domains)
+                        hint_article_refs = _rag_service().detect_hint_article_refs(data.question)
+                        hint_it_section_refs = _rag_service().detect_hint_it_section_refs(data.question)
+
                 stage_rag_start = time.time()
                 rag_question = _augment_retrieval_question(data.question)
                 context, sources, retrieval_stats = _rag_service().search_documents_detailed(

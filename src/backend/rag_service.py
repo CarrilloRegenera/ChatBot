@@ -114,6 +114,7 @@ def _ocr_page_text(page) -> str:
 
 MIN_CHUNK_LENGTH = 80
 CORE_TERM_PENALTY = 4
+CHROMA_ADD_BATCH_SIZE = int(os.getenv("CHROMA_ADD_BATCH_SIZE", "1000"))
 
 # ---------------------------------------------------------------------------
 # Scoring por dominio específico (BT-40 / generadoras).
@@ -316,6 +317,7 @@ TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
 DOCUMENT_VARIANT_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_BOOST", "18"))
 DOCUMENT_VARIANT_MISMATCH_PENALTY = int(os.getenv("RAG_DOCUMENT_VARIANT_MISMATCH_PENALTY", "10"))
+SOURCE_MENTION_BOOST = int(os.getenv("RAG_SOURCE_MENTION_BOOST", "14"))
 IT_SECTION_BOOST = 20
 ARTICLE_REF_BOOST = int(os.getenv("RAG_ARTICLE_REF_BOOST", "26"))
 LABELED_CONTEXT_PENALTY = 10
@@ -1530,6 +1532,30 @@ def _filename_tokens(source_name: str) -> set:
     return tokens
 
 
+_SOURCE_MENTION_NOISE = frozenset({
+    "pdf", "baja", "tension", "alta", "manual", "boe", "reglamento",
+    "guia", "para", "los", "las", "del", "con", "por", "que",
+    "de", "en", "la", "el", "un", "una", "e", "y", "o",
+    "v2", "v1", "esp", "1", "2", "3",
+})
+
+
+def _source_mention_score(question_tokens: set, source_name: str) -> int:
+    if not question_tokens or not source_name:
+        return 0
+    file_tokens = _filename_tokens(_source_pdf_path(source_name))
+    meaningful = file_tokens - _SOURCE_MENTION_NOISE
+    if not meaningful:
+        return 0
+    hits = question_tokens & meaningful
+    if not hits:
+        return 0
+    min_token_len = min(len(t) for t in hits)
+    if len(hits) == 1 and min_token_len < 5:
+        return 0
+    return SOURCE_MENTION_BOOST
+
+
 def _source_pdf_path(source_name: str) -> str:
     """Extrae la ruta real del PDF desde un source enriquecido con pagina/snippet."""
     clean = (source_name or "").strip().replace("\\", "/")
@@ -2028,6 +2054,41 @@ def _delete_source_chunks(source_name: str) -> None:
             col.delete(ids=results["ids"])
 
 
+def _iter_add_batches(
+    documents: List[str],
+    metadatas: List[Dict[str, object]],
+    ids: List[str],
+    batch_size: int = CHROMA_ADD_BATCH_SIZE,
+):
+    if len(documents) != len(metadatas) or len(documents) != len(ids):
+        raise ValueError("documents, metadatas e ids deben tener la misma longitud")
+    safe_batch_size = max(1, int(batch_size or 1))
+    for start in range(0, len(documents), safe_batch_size):
+        end = start + safe_batch_size
+        yield documents[start:end], metadatas[start:end], ids[start:end]
+
+
+def _collection_add_batched(
+    target_collection,
+    *,
+    documents: List[str],
+    metadatas: List[Dict[str, object]],
+    ids: List[str],
+    batch_size: int = CHROMA_ADD_BATCH_SIZE,
+) -> None:
+    for docs_batch, meta_batch, ids_batch in _iter_add_batches(
+        documents,
+        metadatas,
+        ids,
+        batch_size=batch_size,
+    ):
+        target_collection.add(
+            documents=docs_batch,
+            metadatas=meta_batch,
+            ids=ids_batch,
+        )
+
+
 def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     source_name = str(filepath.relative_to(root_path)).replace("\\", "/")
     domain = _source_domain_key(source_name)
@@ -2189,7 +2250,12 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
         pdf.close()
 
     if documents:
-        collection.add(documents=documents, metadatas=metadatas, ids=ids)
+        _collection_add_batched(
+            collection,
+            documents=documents,
+            metadatas=metadatas,
+            ids=ids,
+        )
     return len(documents)
 
 
@@ -3009,6 +3075,7 @@ def _search_documents_detailed_chroma(
                 score += DOCUMENT_VARIANT_BOOST
             elif source_document_variant and source_document_variant not in expected_document_variants:
                 score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
+        score += _source_mention_score(question_tokens, str(metadata.get("source", "")))
         if query_profile["it_section_refs"]:
             it_ref_hits = sum(
                 1 for ref in query_profile["it_section_refs"]
@@ -3193,6 +3260,7 @@ def _search_documents_detailed_chroma(
                     lexical_score += DOCUMENT_VARIANT_BOOST
                 elif source_document_variant and source_document_variant not in expected_document_variants:
                     lexical_score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
+            lexical_score += _source_mention_score(question_tokens, str(metadata.get("source", "")))
             if query_profile["it_section_refs"]:
                 it_ref_hits_lex = sum(
                     1 for ref in query_profile["it_section_refs"]

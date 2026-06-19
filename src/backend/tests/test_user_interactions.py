@@ -371,5 +371,49 @@ class TestHistoryHintApplication(unittest.TestCase):
         self.assertGreaterEqual(confidence, 0.8)
 
 
+class TestHintDomainReset(unittest.TestCase):
+    """Verifica que los hints se descartan cuando la pregunta cambia de dominio."""
+
+    def test_different_domain_discards_inherited_hints(self):
+        """Si hints son de RITE y la pregunta es de fotovoltaica, usar dominio de la pregunta."""
+        import rag_service
+
+        hint_domains = ["rite"]
+        current_domains = rag_service.detect_hint_domains(
+            "cual es la periodicidad de limpieza de los paneles solares"
+        )
+        if current_domains and not set(current_domains) & set(hint_domains):
+            result = current_domains
+        else:
+            result = hint_domains
+        self.assertNotIn("rite", result)
+
+    def test_same_domain_keeps_inherited_hints(self):
+        """Si hints son de RITE y la pregunta también, mantener hints."""
+        import rag_service
+
+        hint_domains = ["rite"]
+        current_domains = rag_service.detect_hint_domains(
+            "y la periodicidad de los condensadores segun el RITE"
+        )
+        if current_domains and not set(current_domains) & set(hint_domains):
+            result = current_domains
+        else:
+            result = hint_domains
+        self.assertIn("rite", result)
+
+    def test_ambiguous_question_keeps_inherited_hints(self):
+        """Si la pregunta no detecta dominio, mantener hints heredados."""
+        import rag_service
+
+        hint_domains = ["rite"]
+        current_domains = rag_service.detect_hint_domains("cual es la periodicidad?")
+        if current_domains and not set(current_domains) & set(hint_domains):
+            result = current_domains
+        else:
+            result = hint_domains
+        self.assertIn("rite", result)
+
+
 if __name__ == "__main__":
     unittest.main()
