@@ -401,18 +401,28 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
     return docs
 
 
-def _search_all_indexed_sources(client: SearchClient) -> Dict[str, str]:
+def _search_all_indexed_sources(client: SearchClient, batch_size: int = 1000) -> Dict[str, str]:
     indexed: Dict[str, str] = {}
-    results = client.search(
-        search_text="*",
-        select=["source_path", "file_hash"],
-        top=1000,
-        include_total_count=False,
-    )
-    for item in results:
-        source = item.get("source_path")
-        if source and source not in indexed:
-            indexed[source] = item.get("file_hash", "")
+    skip = 0
+    while True:
+        results = list(
+            client.search(
+                search_text="*",
+                select=["source_path", "file_hash"],
+                top=batch_size,
+                skip=skip,
+                include_total_count=False,
+            )
+        )
+        if not results:
+            break
+        for item in results:
+            source = item.get("source_path")
+            if source and source not in indexed:
+                indexed[source] = item.get("file_hash", "")
+        if len(results) < batch_size:
+            break
+        skip += batch_size
     return indexed
 
 

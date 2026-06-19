@@ -4,7 +4,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from azure_rag_service import _build_index_fields, _build_semantic_config, _compose_search_text
+from azure_rag_service import (
+    _build_index_fields,
+    _build_semantic_config,
+    _compose_search_text,
+    _search_all_indexed_sources,
+)
 from rag_service import _chunk_profile_metadata, _document_profile_metadata
 
 
@@ -58,3 +63,34 @@ def test_build_semantic_config_uses_supported_title_field_shape():
     assert prioritized is not None
     assert getattr(prioritized, "title_field", None) is not None
     assert getattr(prioritized.title_field, "field_name", None) == "section"
+
+
+def test_search_all_indexed_sources_reads_all_pages_without_losing_documents():
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def search(self, **kwargs):
+            self.calls.append(kwargs)
+            skip = kwargs.get("skip", 0)
+            top = kwargs.get("top", 1000)
+            items = [
+                {"source_path": "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf", "file_hash": "h1"},
+                {"source_path": "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf", "file_hash": "h1"},
+                {"source_path": "baja_tension/errores_frecuentes_2023_v2.pdf", "file_hash": "h2"},
+                {"source_path": "baja_tension/manual-electricidad-baja-tension-1.pdf", "file_hash": "h3"},
+                {"source_path": "baja_tension/soluciones_situaciones_particulares_2023.pdf", "file_hash": "h4"},
+            ]
+            return items[skip:skip + top]
+
+    client = FakeClient()
+
+    result = _search_all_indexed_sources(client, batch_size=2)
+
+    assert result == {
+        "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf": "h1",
+        "baja_tension/errores_frecuentes_2023_v2.pdf": "h2",
+        "baja_tension/manual-electricidad-baja-tension-1.pdf": "h3",
+        "baja_tension/soluciones_situaciones_particulares_2023.pdf": "h4",
+    }
+    assert [call["skip"] for call in client.calls] == [0, 2, 4]
