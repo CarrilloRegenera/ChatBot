@@ -317,6 +317,7 @@ TEMPORAL_PRIORITY_BOOST = 7
 LABELED_MATCH_PRIORITY_BOOST = 12
 DOCUMENT_VARIANT_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_BOOST", "18"))
 DOCUMENT_VARIANT_MISMATCH_PENALTY = int(os.getenv("RAG_DOCUMENT_VARIANT_MISMATCH_PENALTY", "10"))
+SOURCE_MENTION_BOOST = int(os.getenv("RAG_SOURCE_MENTION_BOOST", "14"))
 IT_SECTION_BOOST = 20
 ARTICLE_REF_BOOST = int(os.getenv("RAG_ARTICLE_REF_BOOST", "26"))
 LABELED_CONTEXT_PENALTY = 10
@@ -1529,6 +1530,30 @@ def _filename_tokens(source_name: str) -> set:
             for j in range(i + 1, len(sub) + 1):
                 tokens.add("-".join(sub[i:j]))
     return tokens
+
+
+_SOURCE_MENTION_NOISE = frozenset({
+    "pdf", "baja", "tension", "alta", "manual", "boe", "reglamento",
+    "guia", "para", "los", "las", "del", "con", "por", "que",
+    "de", "en", "la", "el", "un", "una", "e", "y", "o",
+    "v2", "v1", "esp", "1", "2", "3",
+})
+
+
+def _source_mention_score(question_tokens: set, source_name: str) -> int:
+    if not question_tokens or not source_name:
+        return 0
+    file_tokens = _filename_tokens(_source_pdf_path(source_name))
+    meaningful = file_tokens - _SOURCE_MENTION_NOISE
+    if not meaningful:
+        return 0
+    hits = question_tokens & meaningful
+    if not hits:
+        return 0
+    min_token_len = min(len(t) for t in hits)
+    if len(hits) == 1 and min_token_len < 5:
+        return 0
+    return SOURCE_MENTION_BOOST
 
 
 def _source_pdf_path(source_name: str) -> str:
@@ -3050,6 +3075,7 @@ def _search_documents_detailed_chroma(
                 score += DOCUMENT_VARIANT_BOOST
             elif source_document_variant and source_document_variant not in expected_document_variants:
                 score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
+        score += _source_mention_score(question_tokens, str(metadata.get("source", "")))
         if query_profile["it_section_refs"]:
             it_ref_hits = sum(
                 1 for ref in query_profile["it_section_refs"]
@@ -3234,6 +3260,7 @@ def _search_documents_detailed_chroma(
                     lexical_score += DOCUMENT_VARIANT_BOOST
                 elif source_document_variant and source_document_variant not in expected_document_variants:
                     lexical_score -= DOCUMENT_VARIANT_MISMATCH_PENALTY
+            lexical_score += _source_mention_score(question_tokens, str(metadata.get("source", "")))
             if query_profile["it_section_refs"]:
                 it_ref_hits_lex = sum(
                     1 for ref in query_profile["it_section_refs"]

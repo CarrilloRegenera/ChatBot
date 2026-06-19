@@ -753,7 +753,7 @@ VARIANT_SOURCE_CASES = [
     ("rite/RITE-2021-BOE-A-2021-4572.pdf", "2021"),
     ("rite/RITE-BOE-A-2007-15820-consolidado.pdf", "consolidado"),
     # Fuentes sin variante configurada
-    ("baja_tension/BOE-326_REBT.pdf", ""),
+    ("baja_tension/BOE-326_REBT.pdf", "rebt_consolidado"),
     ("alta_tension/ITC-LAT-09.pdf", ""),
     ("guias_tecnicas/Guia_BT_40.pdf", ""),
     ("rite/RITE-desconocido.pdf", ""),
@@ -796,7 +796,7 @@ def test_document_variant_in_profile_metadata():
     assert profile2021["document_variant"] == "2021"
 
     profile_bt = _document_profile_metadata("baja_tension/BOE-326_REBT.pdf")
-    assert profile_bt["document_variant"] == ""
+    assert profile_bt["document_variant"] == "rebt_consolidado"
 
 
 def test_document_variant_ignores_page_snippet_suffixes():
@@ -838,7 +838,60 @@ def test_expected_variants_rite_consolidado_from_query():
 def test_expected_variants_empty_when_no_trigger():
     """Sin triggers de variante la lista es vacía."""
     assert _expected_document_variants("cuál es el objeto del RITE", ["rite"]) == []
-    assert _expected_document_variants("cuáles son las ITC del REBT", ["baja_tension"]) == []
+    assert "rebt_consolidado" in _expected_document_variants("cuáles son las ITC del REBT", ["baja_tension"])
+
+
+def test_bt_prysmian_variants_detected():
+    """Preguntas con 'prysmian' activan variantes errores_frecuentes y soluciones_particulares."""
+    variants = _expected_document_variants("prysmian", ["baja_tension"])
+    assert "errores_frecuentes" in variants
+    assert "soluciones_particulares" in variants
+
+
+def test_bt_prysmian_errores_prioritized():
+    """Pregunta específica de errores prioriza errores_frecuentes."""
+    variants = _expected_document_variants("errores frecuentes prysmian", ["baja_tension"])
+    assert variants[0] == "errores_frecuentes"
+
+
+def test_bt_prysmian_soluciones_prioritized():
+    """Pregunta sobre soluciones particulares prioriza esa variante."""
+    variants = _expected_document_variants("soluciones particulares prysmian", ["baja_tension"])
+    assert variants[0] == "soluciones_particulares"
+
+
+def test_bt_schneider_variant_detected():
+    """Pregunta con 'schneider' activa variante manual_schneider."""
+    variants = _expected_document_variants("schneider caida de tension", ["baja_tension"])
+    assert "manual_schneider" in variants
+
+
+def test_bt_rebt_variant_detected():
+    """Pregunta con 'rebt' activa rebt_consolidado."""
+    variants = _expected_document_variants("rebt itc-bt-25", ["baja_tension"])
+    assert "rebt_consolidado" in variants
+
+
+def test_bt_agrupamiento_maps_to_soluciones():
+    """Pregunta sobre agrupamiento de cables sin nombrar Prysmian activa soluciones_particulares."""
+    variants = _expected_document_variants("agrupamiento de cables en canalizacion", ["baja_tension"])
+    assert "soluciones_particulares" in variants
+
+
+def test_bt_variant_from_source_prysmian_errores():
+    assert _document_variant_from_source("baja_tension/errores_frecuentes_2023_v2.pdf") == "errores_frecuentes"
+
+
+def test_bt_variant_from_source_prysmian_soluciones():
+    assert _document_variant_from_source("baja_tension/soluciones_situaciones_particulares_2023.pdf") == "soluciones_particulares"
+
+
+def test_bt_variant_from_source_schneider():
+    assert _document_variant_from_source("baja_tension/manual-electricidad-baja-tension-1.pdf") == "manual_schneider"
+
+
+def test_bt_variant_from_source_rebt():
+    assert _document_variant_from_source("baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf") == "rebt_consolidado"
 
 
 def test_expected_variants_ignores_other_domains():

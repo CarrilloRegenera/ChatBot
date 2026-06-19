@@ -65,6 +65,7 @@ from rag_service import (
     _query_phrase_queries,
     _sanitize_section_label,
     _source_domain_key,
+    _source_mention_score,
     _split_text,
     _st_model,
     _tokenize,
@@ -511,6 +512,7 @@ def sync_documents_from_blob() -> Dict[str, int]:
 _VARIANT_BOOST = 0.15
 _ARTICLE_REF_BOOST = 0.12
 _IT_SECTION_REF_BOOST = 0.10
+_SOURCE_MENTION_BOOST = 0.12
 _DOMAIN_MATCH_BOOST = 12.0
 _DOMAIN_MISMATCH_PENALTY = -30.0
 
@@ -682,7 +684,8 @@ def search_documents_detailed_azure(
             bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
             hint_boost = item.get("_hint_boost", 0.0)
             domain_boost = _domain_boost(item, domain_set)
-            final = (float(sem_scores[i]) * RERANK_WEIGHT) + (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost
+            src_mention = _SOURCE_MENTION_BOOST if _source_mention_score(query_tokens, str(item.get("source_path") or item.get("blob_path") or "")) else 0.0
+            final = (float(sem_scores[i]) * RERANK_WEIGHT) + (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost + src_mention
             scored.append((final, item))
         candidates = [item for _, item in sorted(scored, key=lambda x: x[0], reverse=True)]
     elif candidates:
@@ -691,7 +694,8 @@ def search_documents_detailed_azure(
             bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
             hint_boost = item.get("_hint_boost", 0.0)
             domain_boost = _domain_boost(item, domain_set)
-            final = (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost
+            src_mention = _SOURCE_MENTION_BOOST if _source_mention_score(query_tokens, str(item.get("source_path") or item.get("blob_path") or "")) else 0.0
+            final = (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost + src_mention
             scored.append((final, item))
         candidates = [item for _, item in sorted(scored, key=lambda x: x[0], reverse=True)]
 
