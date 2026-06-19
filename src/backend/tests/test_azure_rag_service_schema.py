@@ -1,13 +1,16 @@
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import azure_rag_service
 from azure_rag_service import (
     _build_index_fields,
     _build_semantic_config,
     _compose_search_text,
+    _iter_pdf_chunks,
     _search_all_indexed_sources,
 )
 from rag_service import _chunk_profile_metadata, _document_profile_metadata
@@ -94,3 +97,67 @@ def test_search_all_indexed_sources_reads_all_pages_without_losing_documents():
         "baja_tension/soluciones_situaciones_particulares_2023.pdf": "h4",
     }
     assert [call["skip"] for call in client.calls] == [0, 2, 4]
+
+
+def test_iter_pdf_chunks_refreshes_progress_while_processing_pages(monkeypatch):
+    class FakePdf:
+        def __init__(self, pages):
+            self._pages = pages
+
+        def __len__(self):
+            return len(self._pages)
+
+        def __iter__(self):
+            return iter(self._pages)
+
+        def close(self):
+            return None
+
+    fake_pages = [SimpleNamespace(number=1), SimpleNamespace(number=2)]
+    progress_updates = []
+
+    monkeypatch.setattr(
+        azure_rag_service.fitz,
+        "open",
+        lambda **kwargs: FakePdf(fake_pages),
+    )
+    monkeypatch.setattr(
+        azure_rag_service,
+        "_extract_page_text",
+        lambda page: f"Texto pagina {page.number}",
+    )
+    monkeypatch.setattr(
+        azure_rag_service,
+        "_decode_chunk_corruption",
+        lambda text, blob_name: text,
+    )
+    monkeypatch.setattr(
+        azure_rag_service,
+        "_extract_text_blocks",
+        lambda text: [{"text": text, "section": f"Seccion {text[-1]}"}],
+    )
+    monkeypatch.setattr(azure_rag_service, "_split_text", lambda text: [text])
+    monkeypatch.setattr(azure_rag_service, "_looks_like_table_block", lambda chunk: False)
+    monkeypatch.setattr(azure_rag_service, "_encode_passage", lambda chunk: [0.1, 0.2])
+    monkeypatch.setattr(azure_rag_service, "_document_profile_metadata", lambda *args: {"domain": "ops"})
+    monkeypatch.setattr(
+        azure_rag_service,
+        "_chunk_profile_metadata",
+        lambda *args: {"section": "Seccion", "article_refs": "", "it_section_refs": ""},
+    )
+
+    docs = _iter_pdf_chunks(
+        "ops/02_guias_implantacion/EMSA Guidance on SSE_PART1.pdf",
+        b"%PDF",
+        "hash123",
+        "ops",
+        progress_callback=progress_updates.append,
+        processed_files=14,
+        total_files=26,
+    )
+
+    assert len(docs) == 2
+    assert [update["current_page"] for update in progress_updates] == [1, 2]
+    assert all(update["processed_files"] == 14 for update in progress_updates)
+    assert all(update["total_files"] == 26 for update in progress_updates)
+    assert all(update["current_file"].endswith("EMSA Guidance on SSE_PART1.pdf") for update in progress_updates)

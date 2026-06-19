@@ -348,7 +348,15 @@ def _extract_page_text(page) -> str:
     return text
 
 
-def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: str) -> List[Dict]:
+def _iter_pdf_chunks(
+    blob_name: str,
+    content: bytes,
+    file_hash: str,
+    category: str,
+    progress_callback: Callable[[Dict[str, object]], None] | None = None,
+    processed_files: int | None = None,
+    total_files: int | None = None,
+) -> List[Dict]:
     docs = []
     document_id = _document_id(blob_name)
     domain = category or _source_domain_key(blob_name)
@@ -356,8 +364,22 @@ def _iter_pdf_chunks(blob_name: str, content: bytes, file_hash: str, category: s
     file_name = blob_name.rsplit("/", 1)[-1]
     pdf = fitz.open(stream=content, filetype="pdf")
     try:
+        total_pages = len(pdf)
         for page_index, page in enumerate(pdf):
             page_number = page_index + 1
+            if (
+                progress_callback is not None
+                and processed_files is not None
+                and total_files is not None
+            ):
+                progress_callback({
+                    "phase": "indexing",
+                    "current_file": blob_name,
+                    "processed_files": processed_files,
+                    "total_files": total_files,
+                    "current_page": page_number,
+                    "total_pages": total_pages,
+                })
             text = _extract_page_text(page)
             text = _decode_chunk_corruption(text, blob_name)
             page_blocks = _extract_text_blocks(text)
@@ -531,7 +553,15 @@ def sync_documents_from_blob(
             added += 1
             logger.info("Indexando en Azure AI Search: %s category=%s", blob.name, category)
 
-        docs = _iter_pdf_chunks(blob.name, content, current_indexed_hash, category)
+        docs = _iter_pdf_chunks(
+            blob.name,
+            content,
+            current_indexed_hash,
+            category,
+            progress_callback=progress_callback,
+            processed_files=processed_files,
+            total_files=total_files,
+        )
         for start in range(0, len(docs), 500):
             batch = docs[start:start + 500]
             if batch:
