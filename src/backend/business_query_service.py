@@ -4,6 +4,14 @@ import unicodedata
 from datetime import date, datetime
 from typing import Any, Dict, List
 
+from business_query_result_builders import (
+    build_estudios_result as _build_estudios_result_impl,
+    build_no_data_message as _build_no_data_message_impl,
+    build_period_text as _build_period_text_impl,
+    build_produccion_result as _build_produccion_result_impl,
+    build_source_info_response as _build_source_info_response_impl,
+    summarize_cierre as _summarize_cierre_impl,
+)
 from appregenera_client import AppRegeneraClientError, get_json, post_json
 from appregenera_sql_service import (
     first_non_null,
@@ -1810,17 +1818,12 @@ def _is_source_info_request(text: str) -> bool:
 
 
 def _build_source_info_response(parsed: Dict[str, Any], *, module: str, route: str) -> Dict[str, Any]:
-    source_name = "Estudios" if module == "estudios" else "Produccion"
-    reference = parsed.get("reference")
-    fields = parsed.get("fields") or []
-    fields_text = ", ".join(_field_label(field) for field in fields[:4]) or "el dato consultado"
-    ref_text = f" para {reference}" if reference else ""
-    return {
-        "response": f"Este dato lo estoy consultando desde {source_name}{ref_text}. La pregunta se ha interpretado sobre {fields_text}.",
-        "route": route,
-        "confidence": 1.0,
-        "sources": [{"source": f"AppRegenera SQL {source_name}", "module": module}],
-    }
+    return _build_source_info_response_impl(
+        parsed,
+        module=module,
+        route=route,
+        field_label=_field_label,
+    )
 
 
 def _is_explicit_client_field_filter(question_text: str) -> bool:
@@ -2213,45 +2216,21 @@ def _match_label(item: Dict[str, Any], *, module: str) -> str:
 
 
 def _build_estudios_result(detail: Dict[str, Any], parsed: Dict[str, Any]) -> Dict[str, Any]:
-    fields = []
-    for key in parsed.get("fields") or []:
-        value = _extract_estudios_value(detail, key, parsed)
-        fields.append({"key": key, "value": value})
-
-    if parsed.get("expected_client"):
-        actual_client = str(detail.get("Cliente") or "").strip()
-        expected = str(parsed["expected_client"]).strip()
-        answer = actual_client.upper() == expected.upper()
-        fields = [{"key": "cliente", "value": f"{'si' if answer else 'no'}; cliente real = {actual_client or 'sin dato'}"}]
-
-    return {
-        "status": "ok",
-        "entity": {
-            "primaryCode": detail.get("NumeroProyecto") or detail.get("NumeroOferta") or parsed.get("reference"),
-            "displayName": detail.get("Obra") or detail.get("Cliente") or parsed.get("reference"),
-        },
-        "fields": fields,
-    }
+    return _build_estudios_result_impl(
+        detail,
+        parsed,
+        extract_estudios_value=_extract_estudios_value,
+    )
 
 
 def _build_produccion_result(detail: Dict[str, Any], parsed: Dict[str, Any]) -> Dict[str, Any]:
-    fields = []
-    for key in parsed.get("fields") or []:
-        value = _extract_produccion_value(detail, key)
-        if key == "periodosMensuales" and parsed.get("per_month"):
-            value = detail.get("PeriodosMensuales") or []
-        elif key in PRODUCTION_MONTH_FIELDS.values() and value is None:
-            value = _extract_periodo_month_value(detail, parsed)
-        fields.append({"key": key, "value": value})
-
-    return {
-        "status": "ok",
-        "entity": {
-            "primaryCode": detail.get("CodigoObra") or detail.get("LicitacionNumeroProyecto") or detail.get("LicitacionNumeroOferta") or parsed.get("reference"),
-            "displayName": detail.get("NombreObra") or parsed.get("reference"),
-        },
-        "fields": fields,
-    }
+    return _build_produccion_result_impl(
+        detail,
+        parsed,
+        extract_produccion_value=_extract_produccion_value,
+        extract_periodo_month_value=_extract_periodo_month_value,
+        production_month_field_values=list(PRODUCTION_MONTH_FIELDS.values()),
+    )
 
 
 def _extract_periodo_month_value(detail: Dict[str, Any], parsed: Dict[str, Any]) -> Any:
@@ -2472,14 +2451,11 @@ def _collect_exact_cierre_values(cierre: Dict[str, Any], exact_fields: List[str]
 
 
 def _summarize_cierre(cierre: Dict[str, Any]) -> str | None:
-    values = _match_cierre_fields(cierre, {"fields": []})
-    if not values:
-        return None
-    titulo = cierre.get("Nombre") or cierre.get("Numero") or "la referencia solicitada"
-    periodo = cierre.get("Periodo")
-    period_copy = f" ({periodo})" if periodo else ""
-    resumen = "; ".join(f"{item['label']} = {_format_value(item['value'])}" for item in values[:5])
-    return f"Cierre de {titulo}{period_copy}: {resumen}."
+    return _summarize_cierre_impl(
+        cierre,
+        match_cierre_fields=_match_cierre_fields,
+        format_value=_format_value,
+    )
 
 
 def _enrich_result_with_match(result: Dict[str, Any], match: Dict[str, Any], *, module: str) -> Dict[str, Any]:
@@ -2567,36 +2543,21 @@ def _format_monthly_breakdown(fields: List[Dict[str, Any]], *, name: str, code: 
 
 
 def _build_no_data_message(match: Dict[str, Any], *, module: str, parsed: Dict[str, Any]) -> str:
-    prefix = "Licitacion" if module == "estudios" else "Obra"
-    name = match.get("displayName") or parsed["reference"]
-    code = match.get("primaryCode") or parsed["reference"]
-    period_text = _build_period_text(parsed)
-
-    if module == "produccion" and parsed.get("per_month"):
-        return f"{prefix} {code} {name}{period_text}: no hay produccion mensual cargada en AppRegenera para ese periodo."
-
-    if parsed.get("month") and module == "produccion":
-        return f"{prefix} {code} {name}{period_text}: no hay dato cargado para ese mes en AppRegenera."
-
-    requested_labels = [_field_label(field) for field in parsed.get("fields") or []]
-    labels_text = ", ".join(requested_labels[:4]) if requested_labels else "el dato solicitado"
-    return f"{prefix} {code} {name}{period_text}: no hay datos disponibles para {labels_text}."
+    return _build_no_data_message_impl(
+        match,
+        module=module,
+        parsed=parsed,
+        build_period_text=_build_period_text,
+        field_label=_field_label,
+    )
 
 
 def _build_period_text(parsed: Dict[str, Any]) -> str:
-    if not _should_include_period_context(parsed):
-        return ""
-    parts: List[str] = []
-    explicit_years = parsed.get("years") or []
-    if explicit_years and len(explicit_years) > 1:
-        parts.extend(str(year) for year in explicit_years)
-    elif parsed.get("year"):
-        parts.append(str(parsed["year"]))
-    if parsed.get("cuatrimestre"):
-        parts.append(f"C{parsed['cuatrimestre']}")
-    if parsed.get("month"):
-        parts.append(MONTH_LABELS.get(parsed["month"], f"mes {parsed['month']}"))
-    return f" ({', '.join(parts)})" if parts else ""
+    return _build_period_text_impl(
+        parsed,
+        month_labels=MONTH_LABELS,
+        should_include_period_context=_should_include_period_context,
+    )
 
 
 def _should_include_period_context(parsed: Dict[str, Any]) -> bool:

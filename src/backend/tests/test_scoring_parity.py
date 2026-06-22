@@ -147,3 +147,28 @@ def test_source_mention_works_for_future_pdfs():
 def test_source_mention_electrotecnico():
     qt = _q_tokens("segun el reglamento electrotecnico que dice la itc-bt-25")
     assert _source_mention_score(qt, "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf") == SOURCE_MENTION_BOOST
+
+
+# --- domain_exclusion_penalty tests ---
+
+from rag_service import _domain_exclusion_penalty
+
+
+def test_domain_exclusion_ops_penalizes_alta_tension_when_anchored():
+    penalty = _domain_exclusion_penalty(["ops"], "alta_tension", "en ops que norma base manda sobre conexion buque tierra")
+    assert penalty < 0
+
+
+def test_domain_exclusion_no_penalty_without_condition_token():
+    penalty = _domain_exclusion_penalty(["ops"], "alta_tension", "que dice la norma sobre lineas aereas")
+    assert penalty == 0
+
+
+def test_domain_exclusion_no_penalty_for_unrelated_pair():
+    penalty = _domain_exclusion_penalty(["baja_tension"], "alta_tension", "que dice el rebt sobre buques")
+    assert penalty == 0
+
+
+def test_domain_exclusion_reverse_direction():
+    penalty = _domain_exclusion_penalty(["alta_tension"], "ops", "segun itc-lat sobre lineas aereas de alta tension")
+    assert penalty < 0

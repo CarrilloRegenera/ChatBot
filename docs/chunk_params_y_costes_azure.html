@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chunk params + Costes Azure — Migración bge-m3</title>
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --surface2: #273450;
+    --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
+    --accent: #38bdf8; --green: #4ade80; --red: #f87171;
+    --orange: #fb923c; --yellow: #fbbf24; --purple: #c084fc;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    line-height: 1.65; padding: 2rem; max-width: 1280px; margin: 0 auto;
+  }
+  h1 { font-size: 1.7rem; color: var(--accent); margin-bottom: 0.2rem; }
+  .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 2rem; }
+  h2 {
+    font-size: 1.2rem; margin: 2rem 0 0.8rem;
+    padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); color: var(--accent);
+  }
+  h3 { font-size: 1rem; margin: 1.1rem 0 0.5rem; }
+  h4 { font-size: 0.9rem; margin: 0.7rem 0 0.3rem; color: var(--yellow); }
+
+  .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+  .b-g { background: rgba(74,222,128,0.15); color: var(--green); }
+  .b-r { background: rgba(248,113,113,0.15); color: var(--red); }
+  .b-o { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .b-y { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .b-b { background: rgba(56,189,248,0.15); color: var(--accent); }
+  .b-p { background: rgba(192,132,252,0.15); color: var(--purple); }
+
+  table { width: 100%; border-collapse: collapse; margin: 0.7rem 0 1.3rem; font-size: 0.86rem; }
+  th, td { padding: 0.5rem 0.7rem; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+  thead th { background: var(--surface2); font-weight: 600; position: sticky; top: 0; }
+  tbody tr:nth-child(even) { background: var(--surface); }
+  tbody tr:hover { background: var(--surface2); }
+  .lbl { color: var(--muted); font-weight: 500; min-width: 150px; }
+
+  code { background: var(--surface2); padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.82rem; font-family: 'Cascadia Code', Consolas, monospace; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.9rem; overflow-x: auto; font-size: 0.8rem; margin: 0.5rem 0; font-family: 'Cascadia Code', Consolas, monospace; color: var(--muted); }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem 1.1rem; margin: 0.6rem 0; }
+  .card p { font-size: 0.86rem; color: var(--muted); margin-top: 0.25rem; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.7rem; margin: 0.7rem 0; }
+
+  .cost-box { background: var(--surface); border: 2px solid var(--border); border-radius: 10px; padding: 1.2rem; text-align: center; }
+  .cost-box .price { font-size: 2rem; font-weight: 700; color: var(--accent); }
+  .cost-box .period { font-size: 0.85rem; color: var(--muted); }
+  .cost-box .name { font-size: 1rem; font-weight: 600; margin-bottom: 0.3rem; }
+  .cost-box.recommended { border-color: var(--green); }
+  .cost-box.recommended .price { color: var(--green); }
+
+  .verdict { background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(74,222,128,0.08)); border: 1px solid var(--accent); border-radius: 8px; padding: 1.1rem 1.4rem; margin: 1.5rem 0; }
+  .verdict h3 { color: var(--accent); margin-bottom: 0.4rem; }
+
+  .bar-chart { margin: 0.5rem 0; }
+  .bar-row { display: flex; align-items: center; margin: 0.3rem 0; }
+  .bar-label { width: 140px; font-size: 0.82rem; color: var(--muted); text-align: right; padding-right: 0.6rem; }
+  .bar { height: 22px; border-radius: 4px; display: flex; align-items: center; padding: 0 8px; font-size: 0.75rem; font-weight: 600; color: #fff; }
+  .bar.teal { background: linear-gradient(90deg, #0d9488, #2dd4bf); }
+  .bar.blue { background: linear-gradient(90deg, #2563eb, #60a5fa); }
+  .bar.amber { background: linear-gradient(90deg, #d97706, #fbbf24); }
+  .bar.rose { background: linear-gradient(90deg, #e11d48, #fb7185); }
+
+  .footnote { font-size: 0.76rem; color: var(--muted); margin-top: 2rem; padding-top: 0.7rem; border-top: 1px solid var(--border); }
+
+  @media (max-width: 768px) { body { padding: 1rem; } .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>Chunk Params &amp; Costes Azure</h1>
+<p class="sub">
+  C&oacute;mo evolucionan CHUNK_SIZE, OVERLAP y TOP_K con bge-m3 &middot;
+  Coste real en Azure para Regenera Energy &middot; Mayo 2026
+</p>
+
+<!-- ====================================================================== -->
+<h2>PARTE 1 — Evoluci&oacute;n de par&aacute;metros con bge-m3</h2>
+
+<!-- ---- CHUNK_SIZE ---- -->
+<h3>1.1 CHUNK_SIZE</h3>
+
+<table>
+<thead>
+  <tr>
+    <th class="lbl">Aspecto</th>
+    <th>MiniLM actual<br><code>CHUNK_SIZE=900</code></th>
+    <th>bge-m3 Fase 1<br><code>CHUNK_SIZE=900</code></th>
+    <th>bge-m3 Fase 3<br><code>CHUNK_SIZE=1400</code></th>
+    <th>bge-m3 agresivo<br><code>CHUNK_SIZE=2000</code></th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="lbl">Tokens por chunk</td>
+    <td>~160-200 tok</td>
+    <td>~160-200 tok</td>
+    <td>~250-320 tok</td>
+    <td>~360-450 tok</td>
+  </tr>
+  <tr>
+    <td class="lbl">Ventana del modelo</td>
+    <td>128 tok <span class="badge b-r">trunca 30-40%</span></td>
+    <td>8192 tok <span class="badge b-g">completo</span></td>
+    <td>8192 tok <span class="badge b-g">completo</span></td>
+    <td>8192 tok <span class="badge b-g">completo</span></td>
+  </tr>
+  <tr>
+    <td class="lbl">N&ordm; chunks (4 PDFs)</td>
+    <td>~3.848</td>
+    <td>~3.848</td>
+    <td>~2.500</td>
+    <td>~1.800</td>
+  </tr>
+  <tr>
+    <td class="lbl">N&ordm; chunks (50 PDFs)</td>
+    <td>~20.000</td>
+    <td>~20.000</td>
+    <td>~13.000</td>
+    <td>~9.000</td>
+  </tr>
+  <tr>
+    <td class="lbl">Precisi&oacute;n por chunk</td>
+    <td>
+      <span class="badge b-y">Media</span><br>
+      El modelo solo ve 128 tok → baja calidad
+    </td>
+    <td>
+      <span class="badge b-g">Alta</span><br>
+      Todo el chunk visible → mejor embedding
+    </td>
+    <td>
+      <span class="badge b-g">Alta</span><br>
+      M&aacute;s contexto por chunk → menos ambig&uuml;edad
+    </td>
+    <td>
+      <span class="badge b-y">Media-Alta</span><br>
+      Riesgo: mezclar temas en un solo chunk
+    </td>
+  </tr>
+  <tr>
+    <td class="lbl">Ruido en retrieval</td>
+    <td><span class="badge b-r">Alto</span> (muchos chunks)</td>
+    <td><span class="badge b-o">Medio</span></td>
+    <td><span class="badge b-g">Bajo</span></td>
+    <td><span class="badge b-g">Bajo</span> pero pierde granularidad</td>
+  </tr>
+  <tr>
+    <td class="lbl">Tokens enviados al LLM</td>
+    <td>TOP_K &times; ~900 = ~5.400 chars</td>
+    <td>TOP_K &times; ~900 = ~5.400 chars</td>
+    <td>TOP_K &times; ~1.400 = ~8.400 chars</td>
+    <td>TOP_K &times; ~2.000 = ~12.000 chars <span class="badge b-o">+coste LLM</span></td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>Recomendaci&oacute;n CHUNK_SIZE</h4>
+  <p>
+    <strong>Fase 1:</strong> Mantener <code>900</code> para comparar manzanas con manzanas.<br>
+    <strong>Fase 3:</strong> Subir a <code>1400</code>. Reduce chunks un 35%, mejora se&ntilde;al por chunk,
+    y bge-m3 lo procesa completo. No llegar a 2000 porque diluye la especificidad
+    y aumenta tokens al LLM (= m&aacute;s coste OpenAI).
+  </p>
+</div>
+
+<!-- ---- CHUNK_OVERLAP ---- -->
+<h3>1.2 CHUNK_OVERLAP</h3>
+
+<table>
+<thead>
+  <tr>
+    <th class="lbl">Par&aacute;metro</th>
+    <th>Actual<br><code>180</code></th>
+    <th>Con CHUNK_SIZE=1400<br><code>250</code></th>
+    <th>Ratio ideal</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="lbl">% del chunk</td>
+    <td>20% de 900</td>
+    <td>18% de 1400</td>
+    <td>15-20% es el rango &oacute;ptimo</td>
+  </tr>
+  <tr>
+    <td class="lbl">Continuidad entre chunks</td>
+    <td><span class="badge b-g">Buena</span></td>
+    <td><span class="badge b-g">Buena</span></td>
+    <td>&mdash;</td>
+  </tr>
+  <tr>
+    <td class="lbl">Duplicaci&oacute;n de contenido</td>
+    <td>~20% texto repetido</td>
+    <td>~18% texto repetido</td>
+    <td>Menor es mejor para almacenamiento</td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>Recomendaci&oacute;n OVERLAP</h4>
+  <p>
+    El overlap debe ser proporcional al chunk_size. Con <code>CHUNK_SIZE=1400</code>,
+    un overlap de <code>250</code> (18%) mantiene la continuidad sin duplicar demasiado.
+    No hay necesidad de cambiarlo en Fase 1.
+  </p>
+</div>
+
+<!-- ---- TOP_K ---- -->
+<h3>1.3 TOP_K_RESULTS</h3>
+
+<table>
+<thead>
+  <tr>
+    <th class="lbl">Escenario</th>
+    <th>TOP_K=4</th>
+    <th>TOP_K=6 <span class="badge b-b">ACTUAL</span></th>
+    <th>TOP_K=8</th>
+    <th>TOP_K=10</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="lbl">Contexto al LLM<br>(CHUNK_SIZE=900)</td>
+    <td>~3.600 chars<br>~800 tok</td>
+    <td>~5.400 chars<br>~1.200 tok</td>
+    <td>~7.200 chars<br>~1.600 tok</td>
+    <td>~9.000 chars<br>~2.000 tok</td>
+  </tr>
+  <tr>
+    <td class="lbl">Contexto al LLM<br>(CHUNK_SIZE=1400)</td>
+    <td>~5.600 chars<br>~1.250 tok</td>
+    <td>~8.400 chars<br>~1.900 tok</td>
+    <td>~11.200 chars<br>~2.500 tok</td>
+    <td>~14.000 chars<br>~3.100 tok <span class="badge b-o">caro</span></td>
+  </tr>
+  <tr>
+    <td class="lbl">Cobertura de respuesta</td>
+    <td><span class="badge b-r">Baja</span><br>Falla si la respuesta est&aacute; repartida</td>
+    <td><span class="badge b-g">Buena</span><br>Equilibrio actual</td>
+    <td><span class="badge b-g">Alta</span><br>&Uacute;til para queries de comparaci&oacute;n</td>
+    <td><span class="badge b-y">M&aacute;xima</span><br>Riesgo de diluir con ruido</td>
+  </tr>
+  <tr>
+    <td class="lbl">Coste extra LLM input<br>(gpt-5.4-nano, $0.10/M tok)</td>
+    <td>~$0.00008</td>
+    <td>~$0.00012</td>
+    <td>~$0.00016</td>
+    <td>~$0.00020</td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>Recomendaci&oacute;n TOP_K</h4>
+  <p>
+    <strong>Con bge-m3 y CHUNK_SIZE=900:</strong> Mantener <code>TOP_K=6</code>.
+    La mejor calidad vectorial hace que los 6 resultados sean m&aacute;s relevantes → no necesitas m&aacute;s.<br>
+    <strong>Con CHUNK_SIZE=1400:</strong> Podr&iacute;a bajarse a <code>TOP_K=5</code> porque cada chunk tiene m&aacute;s contexto.
+    Esto compensa el aumento de chars/chunk y mantiene un presupuesto de tokens similar al LLM.<br>
+    <strong>Solo subir a 8</strong> para queries de comparaci&oacute;n/resumen donde necesitas diversidad de fuentes.
+    Ya hay l&oacute;gica de <code>diversity_target</code> en el scoring que gestiona esto.
+  </p>
+</div>
+
+<!-- ---- Matriz combinada ---- -->
+<h3>1.4 Combinaciones recomendadas</h3>
+
+<table>
+<thead>
+  <tr>
+    <th>Fase</th>
+    <th>EMBEDDING_MODEL</th>
+    <th>CHUNK_SIZE</th>
+    <th>OVERLAP</th>
+    <th>TOP_K</th>
+    <th>Prop&oacute;sito</th>
+  </tr>
+</thead>
+<tbody>
+  <tr style="background: rgba(56,189,248,0.06);">
+    <td><strong>Actual</strong></td>
+    <td>MiniLM-L12</td>
+    <td>900</td>
+    <td>180</td>
+    <td>6</td>
+    <td>Baseline de referencia</td>
+  </tr>
+  <tr style="background: rgba(74,222,128,0.06);">
+    <td><strong>Fase 1</strong></td>
+    <td>bge-m3</td>
+    <td>900</td>
+    <td>180</td>
+    <td>6</td>
+    <td>Comparar solo efecto del modelo</td>
+  </tr>
+  <tr style="background: rgba(74,222,128,0.1);">
+    <td><strong>Fase 3</strong> <span class="badge b-g">Recomendada</span></td>
+    <td>bge-m3</td>
+    <td>1400</td>
+    <td>250</td>
+    <td>5</td>
+    <td>Equilibrio &oacute;ptimo calidad/coste</td>
+  </tr>
+  <tr>
+    <td><strong>Alternativa</strong></td>
+    <td>bge-m3</td>
+    <td>1400</td>
+    <td>250</td>
+    <td>8</td>
+    <td>Para queries complejas de comparaci&oacute;n</td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ====================================================================== -->
+<h2>PARTE 2 — Costes Azure</h2>
+
+<h3>2.1 Infraestructura actual</h3>
+
+<table>
+<thead>
+  <tr><th>Recurso Azure</th><th>Servicio</th><th>Detalles</th></tr>
+</thead>
+<tbody>
+  <tr>
+    <td><strong>Backend API</strong></td>
+    <td>Azure App Service (Container)</td>
+    <td><code>api-chatbot01</code> &middot; Docker desde ACR <code>acrchatbotrg.azurecr.io</code></td>
+  </tr>
+  <tr>
+    <td><strong>Frontend</strong></td>
+    <td>Azure Static Web Apps</td>
+    <td><code>chatbot.appregenera.com</code></td>
+  </tr>
+  <tr>
+    <td><strong>Base de datos</strong></td>
+    <td>Azure SQL Database</td>
+    <td><code>sql-regenera-chatbot.database.windows.net</code></td>
+  </tr>
+  <tr>
+    <td><strong>B&uacute;squeda vectorial</strong></td>
+    <td>Azure AI Search</td>
+    <td><code>cb-regenera01-we.search.windows.net</code> &middot; &Iacute;ndice <code>idx-chatbot-rag</code></td>
+  </tr>
+  <tr>
+    <td><strong>Almacenamiento PDFs</strong></td>
+    <td>Azure Blob Storage</td>
+    <td><code>stchatbot011.blob.core.windows.net</code> &middot; Container <code>documentos-rag</code></td>
+  </tr>
+  <tr>
+    <td><strong>Container Registry</strong></td>
+    <td>Azure ACR</td>
+    <td><code>acrchatbotrg</code></td>
+  </tr>
+  <tr>
+    <td><strong>LLM</strong></td>
+    <td>OpenAI API (externo)</td>
+    <td>gpt-5.4-nano (primario) + gpt-4.1-mini (fallback)</td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>Nota importante: RAG_BACKEND=azure_search en producci&oacute;n</h4>
+  <p>
+    En Azure el backend usa <strong>Azure AI Search</strong>, no ChromaDB.
+    El campo vectorial <code>content_vector</code> necesitar&aacute; redimensionarse de 384 a 1024 dims
+    al cambiar a bge-m3. Esto requiere <strong>recrear el &iacute;ndice</strong> de Azure AI Search
+    (cambiar dimensiones en el schema y reindexar desde Blob Storage).
+  </p>
+</div>
+
+<!-- ---- Costes por servicio ---- -->
+<h3>2.2 Coste por servicio — MiniLM vs bge-m3</h3>
+
+<h4>Azure App Service (Backend container)</h4>
+
+<table>
+<thead>
+  <tr>
+    <th class="lbl">Plan</th>
+    <th>RAM</th>
+    <th>CPU</th>
+    <th>MiniLM</th>
+    <th>bge-m3</th>
+    <th>Precio/mes<br><small>(West Europe)</small></th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="lbl">B1 (Basic)</td>
+    <td>1.75 GB</td>
+    <td>1 core</td>
+    <td><span class="badge b-g">OK</span> ~0.6 GB</td>
+    <td><span class="badge b-r">NO</span> necesita ~2.5 GB</td>
+    <td>~$13/mes</td>
+  </tr>
+  <tr>
+    <td class="lbl">B2 (Basic)</td>
+    <td>3.5 GB</td>
+    <td>2 cores</td>
+    <td><span class="badge b-g">OK</span></td>
+    <td><span class="badge b-y">Justo</span> ~2.5 GB + OS</td>
+    <td>~$26/mes</td>
+  </tr>
+  <tr style="background: rgba(74,222,128,0.06);">
+    <td class="lbl"><strong>B3 (Basic)</strong></td>
+    <td><strong>7 GB</strong></td>
+    <td><strong>4 cores</strong></td>
+    <td><span class="badge b-g">OK</span></td>
+    <td><span class="badge b-g">C&oacute;modo</span> ~2.5 GB + margen</td>
+    <td><strong>~$52/mes</strong></td>
+  </tr>
+  <tr>
+    <td class="lbl">P1v3 (Premium)</td>
+    <td>8 GB</td>
+    <td>2 cores</td>
+    <td><span class="badge b-g">OK</span></td>
+    <td><span class="badge b-g">C&oacute;modo</span></td>
+    <td>~$100/mes</td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>Alternativa: FP16 (media precisi&oacute;n)</h4>
+  <p>
+    Si se carga el modelo con <code>model.half()</code> (FP16), la RAM baja a ~1.3 GB,
+    lo que permite usar <strong>B2 ($26/mes)</strong>. La p&eacute;rdida de calidad es despreciable
+    (&lt;0.5% en benchmarks). Requiere a&ntilde;adir 1 l&iacute;nea al cargar el modelo:
+    <code>_st_model = _st_model.half()</code>
+  </p>
+</div>
+
+<h4>Azure AI Search</h4>
+
+<table>
+<thead>
+  <tr>
+    <th class="lbl">Tier</th>
+    <th>Almac.</th>
+    <th>Vector dims m&aacute;x</th>
+    <th>MiniLM (384d)</th>
+    <th>bge-m3 (1024d)</th>
+    <th>Precio/mes</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="lbl">Free</td>
+    <td>50 MB</td>
+    <td>1536</td>
+    <td><span class="badge b-g">OK</span> ~6 MB</td>
+    <td><span class="badge b-g">OK</span> ~16 MB</td>
+    <td>$0</td>
+  </tr>
+  <tr style="background: rgba(74,222,128,0.06);">
+    <td class="lbl"><strong>Basic</strong></td>
+    <td><strong>2 GB</strong></td>
+    <td><strong>3072</strong></td>
+    <td><span class="badge b-g">OK</span></td>
+    <td><span class="badge b-g">OK</span> hasta ~120K chunks</td>
+    <td><strong>~$75/mes</strong></td>
+  </tr>
+  <tr>
+    <td class="lbl">S1 (Standard)</td>
+    <td>25 GB</td>
+    <td>3072</td>
+    <td><span class="badge b-g">OK</span></td>
+    <td><span class="badge b-g">OK</span> millones de chunks</td>
+    <td>~$250/mes</td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>Cambio necesario en el &iacute;ndice Azure AI Search</h4>
+  <p>
+    El campo <code>content_vector</code> est&aacute; definido como <code>dimensions: 384</code> en el schema del &iacute;ndice.
+    Al migrar a bge-m3 hay que cambiarlo a <code>dimensions: 1024</code>.
+    Esto requiere <strong>borrar y recrear el &iacute;ndice</strong> (Azure AI Search no permite cambiar dimensiones
+    en caliente). El script <code>LanzarChatbotNube.bat</code> ya tiene la l&oacute;gica de creaci&oacute;n del &iacute;ndice —
+    solo hay que actualizar la dimensi&oacute;n en el JSON de definici&oacute;n.
+  </p>
+</div>
+
+<h4>Otros servicios (sin cambio de coste)</h4>
+
+<table>
+<thead>
+  <tr><th>Servicio</th><th>Coste actual</th><th>Impacto bge-m3</th></tr>
+</thead>
+<tbody>
+  <tr>
+    <td>Azure SQL Database (Basic/S0)</td>
+    <td>~$5-15/mes</td>
+    <td><span class="badge b-g">Ninguno</span> — SQL no almacena embeddings</td>
+  </tr>
+  <tr>
+    <td>Azure Blob Storage</td>
+    <td>~$1-2/mes</td>
+    <td><span class="badge b-g">Ninguno</span> — mismos PDFs</td>
+  </tr>
+  <tr>
+    <td>Azure ACR (Basic)</td>
+    <td>~$5/mes</td>
+    <td><span class="badge b-o">Leve</span> — imagen Docker ~2 GB m&aacute;s grande</td>
+  </tr>
+  <tr>
+    <td>Static Web Apps (Free)</td>
+    <td>$0</td>
+    <td><span class="badge b-g">Ninguno</span></td>
+  </tr>
+  <tr>
+    <td>OpenAI API</td>
+    <td>Variable (~$5-20/mes)</td>
+    <td><span class="badge b-g">~Igual</span> — si TOP_K se mantiene o baja</td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ---- Resumen de costes ---- -->
+<h3>2.3 Coste mensual total estimado</h3>
+
+<div class="grid2" style="grid-template-columns: repeat(3, 1fr);">
+  <div class="cost-box">
+    <div class="name">Con MiniLM (actual)</div>
+    <div class="price">~$100</div>
+    <div class="period">/mes estimado</div>
+    <p style="font-size:0.8rem; color:var(--muted); margin-top:0.5rem; text-align:left;">
+      App Service B1: $13<br>
+      AI Search Basic: $75<br>
+      SQL Basic: $5<br>
+      Blob + ACR: $6<br>
+      OpenAI: ~$10
+    </p>
+  </div>
+  <div class="cost-box recommended">
+    <div class="name">Con bge-m3 (FP16)</div>
+    <div class="badge b-g" style="margin-bottom:0.3rem;">RECOMENDADO</div>
+    <div class="price">~$122</div>
+    <div class="period">/mes estimado</div>
+    <p style="font-size:0.8rem; color:var(--muted); margin-top:0.5rem; text-align:left;">
+      App Service B2: $26 <span style="color:var(--orange);">(+$13)</span><br>
+      AI Search Basic: $75<br>
+      SQL Basic: $5<br>
+      Blob + ACR: $7<br>
+      OpenAI: ~$9 <span style="color:var(--green);">(-$1 mejor retrieval)</span>
+    </p>
+  </div>
+  <div class="cost-box">
+    <div class="name">Con bge-m3 (FP32)</div>
+    <div class="price">~$148</div>
+    <div class="period">/mes estimado</div>
+    <p style="font-size:0.8rem; color:var(--muted); margin-top:0.5rem; text-align:left;">
+      App Service B3: $52 <span style="color:var(--orange);">(+$39)</span><br>
+      AI Search Basic: $75<br>
+      SQL Basic: $5<br>
+      Blob + ACR: $7<br>
+      OpenAI: ~$9
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <h4>Diferencia real: +$22/mes con FP16</h4>
+  <p>
+    El incremento es <strong>$22/mes</strong> ($264/a&ntilde;o) con la opci&oacute;n FP16 recomendada.
+    Esto incluye el upgrade de App Service de B1 a B2 y el ligero aumento de imagen Docker.
+    El retorno: mejor calidad de respuesta, menos fallbacks al modelo caro (gpt-4.1-mini),
+    y preparaci&oacute;n para escalar sin reescribir scoring.
+  </p>
+</div>
+
+<!-- ---- Cambios en Dockerfile y deploy ---- -->
+<h3>2.4 Cambios en Dockerfile y despliegue</h3>
+
+<pre>
+<span style="color:var(--yellow); font-weight:600;"># Dockerfile — Cambios para bge-m3</span>
+
+<span style="color:var(--red); text-decoration:line-through;">ARG RERANK_MODEL=paraphrase-multilingual-MiniLM-L12-v2</span>
+<span style="color:var(--green);">ARG EMBEDDING_MODEL=BAAI/bge-m3</span>
+<span style="color:var(--green);">ARG RERANK_MODEL=${EMBEDDING_MODEL}</span>
+
+ENV ...
+    <span style="color:var(--green);">EMBEDDING_MODEL=${EMBEDDING_MODEL} \</span>
+    RERANK_MODEL=${RERANK_MODEL} \
+    ...
+
+<span style="color:#6b7280;"># La l&iacute;nea de pre-descarga del modelo se mantiene igual</span>
+<span style="color:#6b7280;"># (SentenceTransformer descarga bge-m3 en build time)</span>
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer(os.environ['EMBEDDING_MODEL'])"
+</pre>
+
+<pre>
+<span style="color:var(--yellow); font-weight:600;"># LanzarChatbotNube.bat — Cambios en vector field dims</span>
+
+<span style="color:#6b7280;"># En la definici&oacute;n del &iacute;ndice Azure AI Search (l&iacute;nea ~274):</span>
+fields = @(
+    ...
+    @{
+        name = "content_vector"
+        type = "Collection(Edm.Single)"
+        searchable = $true
+        <span style="color:var(--red); text-decoration:line-through;">dimensions = 384</span>
+        <span style="color:var(--green);">dimensions = 1024</span>
+        vectorSearchProfile = "default"
+    }
+    ...
+)
+
+<span style="color:#6b7280;"># En settings del App Service (l&iacute;nea ~450):</span>
+<span style="color:var(--green);">"EMBEDDING_MODEL=BAAI/bge-m3",</span>
+</pre>
+
+<!-- ---- Proyecci&oacute;n escalado ---- -->
+<h3>2.5 Proyecci&oacute;n de costes con escalado</h3>
+
+<table>
+<thead>
+  <tr>
+    <th class="lbl">Escenario</th>
+    <th>PDFs</th>
+    <th>Chunks</th>
+    <th>App Service</th>
+    <th>AI Search</th>
+    <th>Total/mes</th>
+  </tr>
+</thead>
+<tbody>
+  <tr style="background: rgba(56,189,248,0.06);">
+    <td class="lbl"><strong>Actual</strong> (REBT, RITE, LAT, Gu&iacute;a)</td>
+    <td>4</td>
+    <td>~4K</td>
+    <td>B2 $26</td>
+    <td>Basic $75</td>
+    <td><strong>$122</strong></td>
+  </tr>
+  <tr>
+    <td class="lbl">+ PRL (prevenci&oacute;n riesgos)</td>
+    <td>~15</td>
+    <td>~10K</td>
+    <td>B2 $26</td>
+    <td>Basic $75</td>
+    <td><strong>$122</strong></td>
+  </tr>
+  <tr>
+    <td class="lbl">+ RRHH + Calidad</td>
+    <td>~40</td>
+    <td>~25K</td>
+    <td>B2 $26</td>
+    <td>Basic $75</td>
+    <td><strong>$122</strong></td>
+  </tr>
+  <tr>
+    <td class="lbl">Toda la empresa</td>
+    <td>~100</td>
+    <td>~60K</td>
+    <td>B3 $52</td>
+    <td>Basic $75</td>
+    <td><strong>$148</strong></td>
+  </tr>
+  <tr>
+    <td class="lbl">M&aacute;ximo sin upgrade AI Search</td>
+    <td>~200</td>
+    <td>~120K</td>
+    <td>B3 $52</td>
+    <td>Basic $75 <span class="badge b-o">l&iacute;mite</span></td>
+    <td><strong>$148</strong></td>
+  </tr>
+  <tr>
+    <td class="lbl">Crecimiento extremo</td>
+    <td>500+</td>
+    <td>300K+</td>
+    <td>P1v3 $100</td>
+    <td>S1 $250</td>
+    <td><strong>~$380</strong></td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>Conclusi&oacute;n de escalado</h4>
+  <p>
+    Con bge-m3 (FP16) + Azure AI Search Basic, el coste se mantiene en <strong>~$122/mes hasta ~40 PDFs</strong>
+    (PRL + RRHH + Calidad + normativa el&eacute;ctrica). El plan Basic de AI Search soporta hasta 2 GB de &iacute;ndice,
+    que con 1024 dims da para ~120K chunks. Solo si se supera ese umbral hay que subir a S1 ($250/mes).
+    <br><br>
+    El ahorro indirecto tambi&eacute;n importa: mejor retrieval → menos fallbacks al modelo caro gpt-4.1-mini → menos coste OpenAI.
+  </p>
+</div>
+
+<!-- ====================================================================== -->
+<div class="verdict">
+  <h3>Resumen final</h3>
+  <p>
+    <strong>Par&aacute;metros recomendados:</strong>
+  </p>
+  <table style="margin:0.5rem 0; font-size:0.9rem;">
+    <tr><td class="lbl">EMBEDDING_MODEL</td><td><code>BAAI/bge-m3</code></td></tr>
+    <tr><td class="lbl">CHUNK_SIZE</td><td><code>900</code> (Fase 1) → <code>1400</code> (Fase 3)</td></tr>
+    <tr><td class="lbl">CHUNK_OVERLAP</td><td><code>180</code> (Fase 1) → <code>250</code> (Fase 3)</td></tr>
+    <tr><td class="lbl">TOP_K_RESULTS</td><td><code>6</code> (Fase 1) → <code>5</code> (Fase 3, compensar chunks mayores)</td></tr>
+    <tr><td class="lbl">Modelo FP16</td><td>S&iacute; → permite B2 ($26/mes) en vez de B3 ($52/mes)</td></tr>
+  </table>
+  <p style="margin-top:0.5rem;">
+    <strong>Coste Azure:</strong> +$22/mes respecto al actual ($122 vs ~$100).
+    Escala hasta ~120K chunks (~200 PDFs) sin cambiar tier.
+  </p>
+  <p style="color:var(--yellow); margin-top:0.4rem;">
+    <strong>Acci&oacute;n inmediata:</strong> Probar Fase 1 en local (mismos chunk params, solo cambiar modelo).
+    Si mejora → desplegar en Azure con B2 + FP16. Fase 3 (chunk_size=1400) solo tras validar Fase 1.
+  </p>
+</div>
+
+<div class="footnote">
+  Precios Azure de mayo 2026, regi&oacute;n West Europe. Los precios reales pueden variar seg&uacute;n reservas, descuentos
+  de empresa o cambios de Microsoft. Precios OpenAI basados en tarifas publicadas de gpt-5.4-nano y gpt-4.1-mini.
+  Estimaciones de RAM con mediciones reales de MiniLM y proyecciones de bge-m3 basadas en la documentaci&oacute;n de BAAI.
+</div>
+
+</body>
+</html>

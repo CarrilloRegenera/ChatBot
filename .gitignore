@@ -23,7 +23,6 @@ src/frontend/config.js
 # RAG local artifacts
 chroma_db/
 data/documentos/
-docs/
 *.bin
 *.pkl
 tmp-chatbot-*.log

@@ -1,0 +1,124 @@
+{
+  "name": "idx-chatbot-rag",
+  "fields": [
+    {
+      "name": "chunk_id",
+      "type": "Edm.String",
+      "key": true,
+      "filterable": true
+    },
+    {
+      "name": "document_id",
+      "type": "Edm.String",
+      "filterable": true
+    },
+    {
+      "name": "document_name",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": true
+    },
+    {
+      "name": "file_name",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": true
+    },
+    {
+      "name": "source_path",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": true
+    },
+    {
+      "name": "blob_path",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": true
+    },
+    {
+      "name": "content",
+      "type": "Edm.String",
+      "searchable": true
+    },
+    {
+      "name": "content_vector",
+      "type": "Collection(Edm.Single)",
+      "searchable": true,
+      "vectorSearchDimensions": 384,
+      "vectorSearchProfileName": "chatbot-vector-profile"
+    },
+    {
+      "name": "page_number",
+      "type": "Edm.Int32",
+      "filterable": true,
+      "sortable": true
+    },
+    {
+      "name": "page",
+      "type": "Edm.Int32",
+      "filterable": true,
+      "sortable": true
+    },
+    {
+      "name": "chunk_number",
+      "type": "Edm.Int32",
+      "filterable": true,
+      "sortable": true
+    },
+    {
+      "name": "domain",
+      "type": "Edm.String",
+      "filterable": true,
+      "facetable": true
+    },
+    {
+      "name": "category",
+      "type": "Edm.String",
+      "filterable": true,
+      "facetable": true
+    },
+    {
+      "name": "section",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": true
+    },
+    {
+      "name": "topics",
+      "type": "Edm.String",
+      "searchable": true
+    },
+    {
+      "name": "chunk_kind",
+      "type": "Edm.String",
+      "filterable": true,
+      "facetable": true
+    },
+    {
+      "name": "table_signal_count",
+      "type": "Edm.Int32",
+      "filterable": true,
+      "sortable": true
+    },
+    {
+      "name": "file_hash",
+      "type": "Edm.String",
+      "filterable": true
+    }
+  ],
+  "vectorSearch": {
+    "algorithms": [
+      {
+        "name": "chatbot-hnsw",
+        "kind": "hnsw"
+      }
+    ],
+    "profiles": [
+      {
+        "name": "chatbot-vector-profile",
+        "algorithm": "chatbot-hnsw"
+      }
+    ]
+  }
+}

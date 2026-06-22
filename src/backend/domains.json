@@ -1678,5 +1678,19 @@
       "scoring": {}
     }
   },
-  "filename_overrides": {}
+  "filename_overrides": {},
+  "domain_exclusions": [
+    {
+      "primary": "ops",
+      "excluded": "alta_tension",
+      "extra_penalty": -20,
+      "condition_tokens": ["buque", "puerto", "shore", "hvsc", "80005", "eopsa", "atraque", "muelle"]
+    },
+    {
+      "primary": "alta_tension",
+      "excluded": "ops",
+      "extra_penalty": -20,
+      "condition_tokens": ["itc-lat", "lat-", "a16436", "linea aerea", "apoyo", "tendido"]
+    }
+  ]
 }

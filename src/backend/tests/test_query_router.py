@@ -126,3 +126,26 @@ def test_document_inventory_questions_get_explicit_inventory_route():
 
     for question in questions:
         assert classify_question(question)["route"] == "document_inventory", question
+
+
+def test_document_inventory_token_matching_catches_rephrased_questions():
+    questions = [
+        "Que documentos tecnicos tenemos ahora mismo cargados y en que bloques principales se reparten?",
+        "Que reglamentos hay indexados?",
+        "Que documentacion tenemos cargada?",
+        "Que normativa hay disponibles en el sistema?",
+        "Como esta organizada la documentacion en bloques?",
+        "Que documentos existen?",
+    ]
+    for question in questions:
+        assert classify_question(question)["route"] == "document_inventory", question
+
+
+def test_document_inventory_does_not_false_positive_on_normal_technical():
+    questions = [
+        "Que dice el documento sobre caida de tension?",
+        "Donde hay informacion sobre la seccion del cable?",
+        "Que tabla del reglamento aplica a secciones de cable?",
+    ]
+    for question in questions:
+        assert classify_question(question)["route"] != "document_inventory", question
