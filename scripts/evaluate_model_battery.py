@@ -23,6 +23,13 @@ PYTHON_EXE = Path(
 )
 
 
+def read_required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    raise RuntimeError(f"Define la variable de entorno requerida: {name}")
+
+
 MODEL_PRICING_USD_PER_MILLION = {
     "gpt-5.4-nano": {"input": 0.10, "output": 0.40, "source": "proyecto"},
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60, "source": "proyecto"},
@@ -555,14 +562,9 @@ def build_backend_env(config: Dict[str, Any], port: int) -> Dict[str, str]:
             "CHROMA_DB_PATH": str(ROOT / "tmp-logs" / "chroma_ops15"),
             "SYNC_DOCUMENTS_ON_STARTUP": "false",
             "RAG_BACKEND": "chroma",
-            "APPREGENERA_SQL_CONNECTION_STRING": (
-                "Server=tcp:sql-appregenera-pro.database.windows.net,1433;"
-                "Initial Catalog=AppRegenera;Persist Security Info=False;"
-                "User ID=itadminregenera;Password=Regenera_app_database_xyz_$%&;"
-                "MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
-            ),
+            "APPREGENERA_SQL_CONNECTION_STRING": read_required_env("APPREGENERA_SQL_CONNECTION_STRING"),
             "APPREGENERA_ALLOWED_MODULES": "estudios,produccion",
-            "APPREGENERA_DEV_BYPASS_KEY": "regenera-chatbot-business-2026-05-25",
+            "APPREGENERA_DEV_BYPASS_KEY": read_required_env("APPREGENERA_DEV_BYPASS_KEY"),
             "LOG_LEVEL": "INFO",
             "WEBSITE_PORT": str(port),
         }
