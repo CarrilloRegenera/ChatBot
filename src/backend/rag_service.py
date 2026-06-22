@@ -39,6 +39,19 @@ from config import (
     TABLE_COLLECTION_NAME,
     TOP_K_RESULTS,
 )
+from rag_query_helpers import (
+    build_query_profile as _build_query_profile_impl,
+    extract_article_refs as _extract_article_refs_impl,
+    extract_core_terms as _extract_core_terms_impl,
+    extract_disambiguation_terms as _extract_disambiguation_terms_impl,
+    extract_exact_refs as _extract_exact_refs_impl,
+    extract_it_section_refs as _extract_it_section_refs_impl,
+    extract_labeled_terms as _extract_labeled_terms_impl,
+    extract_location_target as _extract_location_target_impl,
+    extract_page_refs as _extract_page_refs_impl,
+    extract_reference_terms as _extract_reference_terms_impl,
+    extract_topic_terms as _extract_topic_terms_impl,
+)
 from rag_pdf_utils import decode_chunk_corruption, is_noise_chunk, normalize_rite_table31_text, ocr_page_text
 
 
@@ -1215,74 +1228,40 @@ def _auto_technical_terms(clean_question: str) -> List[str]:
 
 
 def _extract_reference_terms(text: str) -> List[str]:
-    return [match.group(0).strip().lower() for match in REFERENCE_PATTERN.finditer(text or "")]
+    return _extract_reference_terms_impl(text, reference_pattern=REFERENCE_PATTERN)
 
 
 def _extract_it_section_refs(text: str) -> List[str]:
-    """Extrae referencias a instrucciones técnicas RITE: 'IT 3', 'IT 3.3', etc."""
-    seen: set = set()
-    result = []
-    for m in IT_SECTION_REFERENCE_PATTERN.finditer(text or ""):
-        ref = f"it {m.group(1)}"
-        if ref not in seen:
-            seen.add(ref)
-            result.append(ref)
-    return result
+    return _extract_it_section_refs_impl(text, it_section_reference_pattern=IT_SECTION_REFERENCE_PATTERN)
 
 
 def _extract_article_refs(text: str) -> List[str]:
-    """Extrae referencias a articulos: 'articulo 12', 'art. 37', etc."""
-    seen: set = set()
-    result = []
-    normalized = _normalize_text(text or "")
-    for value in ARTICLE_REFERENCE_PATTERN.findall(normalized):
-        ref = f"articulo {int(value)}"
-        if ref not in seen:
-            seen.add(ref)
-            result.append(ref)
-    return result
+    return _extract_article_refs_impl(
+        text,
+        normalize_text=_normalize_text,
+        article_reference_pattern=ARTICLE_REFERENCE_PATTERN,
+    )
 
 
 def _extract_exact_refs(text: str) -> List[str]:
-    refs = set()
-    raw = text or ""
-    for prefix, value in ITC_REFERENCE_PATTERN.findall(raw):
-        number = str(value).zfill(2)
-        normalized_prefix = (prefix or "bt").lower()
-        refs.add(f"itc-{normalized_prefix}-{number}")
-        refs.add(f"itc {normalized_prefix} {number}")
-        refs.add(f"{normalized_prefix}-{number}")
-    for value in TABLE_REFERENCE_PATTERN.findall(raw):
-        refs.add(f"tabla {int(value)}")
-    return sorted(refs)
+    return _extract_exact_refs_impl(
+        text,
+        itc_reference_pattern=ITC_REFERENCE_PATTERN,
+        table_reference_pattern=TABLE_REFERENCE_PATTERN,
+    )
 
 
 def _extract_page_refs(text: str) -> List[int]:
-    pages = []
-    seen = set()
-    for value in PAGE_REFERENCE_PATTERN.findall(text or ""):
-        try:
-            page = int(value)
-        except ValueError:
-            continue
-        if page > 0 and page not in seen:
-            seen.add(page)
-            pages.append(page)
-    return pages[:5]
+    return _extract_page_refs_impl(text, page_reference_pattern=PAGE_REFERENCE_PATTERN)
 
 
 def _extract_location_target(text: str) -> str:
-    normalized = _normalize_text(text)
-    match = re.search(
-        r"(?:pagina|pag|page|donde\s+(?:aparece|esta|se\s+encuentra)|ubicacion|apartado\s+de)\s+(?:de\s+|del\s+|la\s+|el\s+)?(.+)",
-        normalized,
+    return _extract_location_target_impl(
+        text,
+        normalize_text=_normalize_text,
+        tokenize=_tokenize,
+        stopwords=STOPWORDS,
     )
-    if not match:
-        return ""
-    target = match.group(1)
-    target = re.split(r"\b(?:en|del|de)\s+(?:el\s+|la\s+)?(?:pdf|documento|guia|itc|boe|rebt|rite)\b", target, maxsplit=1)[0]
-    tokens = [token for token in _tokenize(target) if token not in STOPWORDS]
-    return " ".join(tokens[:8])
 
 
 def _query_intent(clean_question: str) -> str:
@@ -1308,114 +1287,75 @@ def _query_intent(clean_question: str) -> str:
 
 
 def _extract_labeled_terms(text: str) -> Dict[str, set[str]]:
-    extracted: Dict[str, set[str]] = {}
-    for family, pattern in LABELED_QUERY_PATTERNS.items():
-        matches = {
-            re.sub(r"\s+", "", match.group(1).lower())
-            for match in pattern.finditer(text or "")
-            if match.group(1)
-        }
-        if matches:
-            extracted[family] = matches
-    return extracted
+    return _extract_labeled_terms_impl(text, labeled_query_patterns=LABELED_QUERY_PATTERNS)
 
 
 def _extract_disambiguation_terms(text: str, *, exclude_labeled: bool = True, limit: int = 6) -> List[str]:
-    stopwords = STOPWORDS.union({
-        "clase", "tipo", "categoria", "categoría", "grado", "esquema",
-        "cual", "cuales", "que", "qué", "como", "cómo", "caracteriza",
-        "caracteristicas", "características", "define", "definicion", "definición",
-        "materiales",
-    })
-    labeled_values = set()
-    if exclude_labeled:
-        for values in _extract_labeled_terms(text).values():
-            labeled_values.update(values)
-
-    terms = []
-    seen = set()
-    for token in _tokenize(text):
-        normalized = _normalize_text(token)
-        normalized = re.sub(r"\s+", "", normalized)
-        if (
-            not normalized
-            or normalized in stopwords
-            or normalized in labeled_values
-            or len(normalized) < 5
-            or normalized in seen
-        ):
-            continue
-        seen.add(normalized)
-        terms.append(normalized)
-        if len(terms) >= limit:
-            break
-    return terms
+    return _extract_disambiguation_terms_impl(
+        text,
+        tokenize=_tokenize,
+        normalize_text=_normalize_text,
+        stopwords=STOPWORDS,
+        extract_labeled_terms_fn=_extract_labeled_terms,
+        exclude_labeled=exclude_labeled,
+        limit=limit,
+    )
 
 
 def _extract_topic_terms(text: str, limit: int = MAX_TOPIC_TOKENS) -> List[str]:
-    tokens = []
-    seen = set()
-    for token in _tokenize(text):
-        normalized = _normalize_text(token)
-        if normalized in STOPWORDS or len(normalized) < 5 or normalized in seen:
-            continue
-        seen.add(normalized)
-        tokens.append(normalized)
-        if len(tokens) >= limit:
-            break
-    return tokens
+    return _extract_topic_terms_impl(
+        text,
+        tokenize=_tokenize,
+        normalize_text=_normalize_text,
+        stopwords=STOPWORDS,
+        limit=limit,
+    )
 
 
 def _build_query_profile(clean_question: str, question_keywords: set[str]) -> Dict[str, object]:
-    normalized = _normalize_text(clean_question)
-    return {
-        "normalized_question": normalized,
-        "numeric_terms": _extract_numeric_terms(clean_question),
-        "numeric_variants": _numeric_query_variants(clean_question),
-        "numeric_value_groups": _numeric_value_groups(clean_question),
-        "standalone_numbers": _standalone_numbers(clean_question),
-        "reference_terms": _extract_reference_terms(clean_question),
-        "exact_refs": _extract_exact_refs(clean_question),
-        "page_refs": _extract_page_refs(clean_question),
-        "location_target": _extract_location_target(clean_question),
-        "phrase_queries": _query_phrase_queries(clean_question),
-        "technical_equivalent_phrases": _technical_equivalent_phrases(clean_question),
-        "normative_intent_query": _is_normative_intent_query(clean_question),
-        "intent": _query_intent(clean_question),
-        "labeled_terms": _extract_labeled_terms(clean_question),
-        "disambiguation_terms": _extract_disambiguation_terms(clean_question),
-        "comparison": any(term in normalized for term in ("compara", "diferencia", "frente", "versus")),
-        "expects_numeric": bool(re.search(r"\b(cuanto|cuantos|cuantas|valor|limite|potencia|resistencia|ohm|kw|mm2|m2|volt|amper|porcentaje)\b", normalized)),
-        "definition_query": bool(DEFINITION_QUERY_PATTERN.search(normalized)),
-        "list_query": bool(LIST_QUERY_PATTERN.search(normalized)),
-        "summary_query": bool(SUMMARY_QUERY_PATTERN.search(normalized)),
-        "table_query": bool(TABLE_QUERY_PATTERN.search(normalized) or TABLE_REFERENCE_PATTERN.search(clean_question)),
-        "comparison_query": bool(COMPARISON_QUERY_PATTERN.search(normalized)),
-        "procedure_query": bool(PROCEDURE_QUERY_PATTERN.search(normalized)),
-        "generalization_query": bool(GENERALIZATION_QUERY_PATTERN.search(normalized)),
-        "scope_query": bool(SCOPE_QUERY_PATTERN.search(normalized)),
-        "motivation_query": bool(MOTIVATION_QUERY_PATTERN.search(normalized)),
-        "temporal_query": bool(TEMPORAL_QUERY_PATTERN.search(normalized)),
-        "question_keywords": question_keywords,
-        "section_terms": _extract_topic_terms(clean_question, limit=MAX_TOPIC_TOKENS),
-        "article_refs": _extract_article_refs(clean_question),
-        "it_section_refs": _extract_it_section_refs(clean_question),
-    }
+    return _build_query_profile_impl(
+        clean_question,
+        question_keywords,
+        normalize_text=_normalize_text,
+        extract_numeric_terms=_extract_numeric_terms,
+        numeric_query_variants=_numeric_query_variants,
+        numeric_value_groups=_numeric_value_groups,
+        standalone_numbers=_standalone_numbers,
+        extract_reference_terms_fn=_extract_reference_terms,
+        extract_exact_refs_fn=_extract_exact_refs,
+        extract_page_refs_fn=_extract_page_refs,
+        extract_location_target_fn=_extract_location_target,
+        query_phrase_queries=_query_phrase_queries,
+        technical_equivalent_phrases=_technical_equivalent_phrases,
+        is_normative_intent_query=_is_normative_intent_query,
+        query_intent=_query_intent,
+        extract_labeled_terms_fn=_extract_labeled_terms,
+        extract_disambiguation_terms_fn=_extract_disambiguation_terms,
+        definition_query_pattern=DEFINITION_QUERY_PATTERN,
+        list_query_pattern=LIST_QUERY_PATTERN,
+        summary_query_pattern=SUMMARY_QUERY_PATTERN,
+        table_query_pattern=TABLE_QUERY_PATTERN,
+        table_reference_pattern=TABLE_REFERENCE_PATTERN,
+        comparison_query_pattern=COMPARISON_QUERY_PATTERN,
+        procedure_query_pattern=PROCEDURE_QUERY_PATTERN,
+        generalization_query_pattern=GENERALIZATION_QUERY_PATTERN,
+        scope_query_pattern=SCOPE_QUERY_PATTERN,
+        motivation_query_pattern=MOTIVATION_QUERY_PATTERN,
+        temporal_query_pattern=TEMPORAL_QUERY_PATTERN,
+        extract_topic_terms_fn=_extract_topic_terms,
+        max_topic_tokens=MAX_TOPIC_TOKENS,
+        extract_article_refs_fn=_extract_article_refs,
+        extract_it_section_refs_fn=_extract_it_section_refs,
+    )
 
 
 def _extract_core_terms(question_keywords: set[str], clean_question: str = "") -> List[str]:
-    ranked = sorted(question_keywords, key=lambda term: (len(term), term), reverse=True)
-    terms = ranked[:4]
-    # Añadir bi-gramas relevantes del texto original si existen como concepto compuesto
-    if clean_question:
-        words = _normalize_text(clean_question).split()
-        for i in range(len(words) - 1):
-            bigram = f"{words[i]} {words[i+1]}"
-            if len(bigram) >= 10 and bigram not in terms and words[i] not in STOPWORDS and words[i+1] not in STOPWORDS:
-                terms.append(bigram)
-                if len(terms) >= 6:
-                    break
-    return terms
+    return _extract_core_terms_impl(
+        question_keywords,
+        clean_question=clean_question,
+        normalize_text=_normalize_text,
+        stopwords=STOPWORDS,
+    )
 
 
 def _split_metadata_refs(value: object) -> set[str]:
