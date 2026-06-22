@@ -940,6 +940,15 @@ def send_message(data: MessageRequest, request: Request):
                 hint_article_refs = _rag_service().detect_hint_article_refs(recent_text) if recent_text.strip() else []
                 hint_it_section_refs = _rag_service().detect_hint_it_section_refs(recent_text) if recent_text.strip() else []
 
+                # Hints dispersos: si >=3 dominios, reducir al turno mas reciente
+                if len(hint_domains) >= 3 and history_for_hints:
+                    last_turn = history_for_hints[-1]
+                    last_text = f"{last_turn.get('question', '')} {last_turn.get('response', '')}".strip()
+                    narrowed = _rag_service().detect_hint_domains(last_text) if last_text else []
+                    if narrowed and len(narrowed) < len(hint_domains):
+                        hint_domains = narrowed
+                        hint_document_variants = _rag_service().detect_hint_document_variants(last_text, narrowed)
+
                 # Descartar hints heredados si la pregunta actual apunta a un dominio diferente
                 if hint_domains:
                     current_domains = _rag_service().detect_hint_domains(data.question)

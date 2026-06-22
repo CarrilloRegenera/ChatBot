@@ -72,6 +72,8 @@ def _load_domain_config() -> dict:
 
 _DOMAIN_CFG = _load_domain_config()
 
+_DOMAIN_EXCLUSIONS = _DOMAIN_CFG.get("domain_exclusions", [])
+
 # Tokens de fuente de dominios que usan encoding shift+31 (fuentes PDF mal embebidas).
 # Se deriva de domains.json en tiempo de carga; no requiere cambios en código para nuevos dominios.
 _SHIFT31_SOURCE_TOKENS: frozenset[str] = frozenset(
@@ -332,6 +334,17 @@ DOCUMENT_VARIANT_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_BOOST", "18"))
 DOCUMENT_VARIANT_MISMATCH_PENALTY = int(os.getenv("RAG_DOCUMENT_VARIANT_MISMATCH_PENALTY", "10"))
 SOURCE_MENTION_BOOST = int(os.getenv("RAG_SOURCE_MENTION_BOOST", "14"))
 DOCUMENT_VARIANT_ORDER_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_ORDER_BOOST", "4"))
+
+
+def _domain_exclusion_penalty(expected_domains: list, source_domain: str, question_lower: str) -> int:
+    """Extra penalty when source_domain is excluded by a strongly-anchored primary domain."""
+    if not expected_domains or not _DOMAIN_EXCLUSIONS:
+        return 0
+    for rule in _DOMAIN_EXCLUSIONS:
+        if rule["primary"] in expected_domains and rule["excluded"] == source_domain:
+            if any(tok in question_lower for tok in rule.get("condition_tokens", [])):
+                return rule.get("extra_penalty", -20)
+    return 0
 IT_SECTION_BOOST = 20
 ARTICLE_REF_BOOST = int(os.getenv("RAG_ARTICLE_REF_BOOST", "26"))
 LABELED_CONTEXT_PENALTY = 10
@@ -3075,6 +3088,7 @@ def _search_documents_detailed_chroma(
                 score += 12
             else:
                 score -= 60 if query_profile["article_refs"] else 30
+                score += _domain_exclusion_penalty(expected_domains, source_domain, clean_question)
         chunk_layer = str(metadata.get("document_layer", "") or "")
         if chunk_layer == "normativa_oficial":
             score += 8
@@ -3168,6 +3182,7 @@ def _search_documents_detailed_chroma(
                     lexical_score += 12
                 else:
                     lexical_score -= 60 if query_profile["article_refs"] else 30
+                    lexical_score += _domain_exclusion_penalty(expected_domains, lex_source_domain, clean_question)
             lex_chunk_layer = str(metadata.get("document_layer", "") or "")
             if lex_chunk_layer == "normativa_oficial":
                 lexical_score += 8

@@ -114,6 +114,10 @@ DOCUMENT_INVENTORY_HINTS = {
     "que reglamentos tenemos cargados",
 }
 
+_INVENTORY_NOUNS = {"documentos", "documentacion", "reglamentos", "normativa", "bloques"}
+_INVENTORY_VERBS = {"hay", "tenemos", "disponibles", "cargados", "cargadas", "indexados", "indexadas", "existen"}
+_INVENTORY_STRUCTURE = {"estructura", "organizada", "organizado", "reparten", "divididos", "clasificados", "bloques"}
+
 def _normalize(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
     normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
@@ -157,6 +161,11 @@ def _asks_for_document_inventory(text: str) -> bool:
     if any(term in text for term in ("documentos de", "documentacion de", "solo los documentos")) and any(
         hint in text for hint in TECHNICAL_HINTS
     ):
+        return True
+    tokens = set(text.split())
+    if tokens & _INVENTORY_NOUNS and tokens & _INVENTORY_VERBS:
+        return True
+    if tokens & _INVENTORY_NOUNS and tokens & _INVENTORY_STRUCTURE:
         return True
     return False
 
