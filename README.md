@@ -6,7 +6,7 @@ Repositorio del chatbot tecnico y de negocio con backend FastAPI y frontend esta
 
 - Codigo: `src/backend/`
 - Tests: `pytest src/backend/tests -q`
-- Health local: `GET /health`
+- Health local: `GET /health` o `GET /api/health`
 
 ## Frontend
 

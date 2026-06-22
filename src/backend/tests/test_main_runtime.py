@@ -48,6 +48,22 @@ class MainRuntimeTests(unittest.TestCase):
         self.assertFalse(app.state.chat_router_ready)
         self.assertEqual(response.json()["items"], [])
 
+    def test_chat_admin_route_forces_lazy_chat_router_load(self):
+        app, client = self._make_client()
+
+        fake_memory = mock.Mock()
+        fake_memory.list_pending_interactions.return_value = []
+
+        with (
+            mock.patch("routes.chat_admin.chat_routes._memory_service", return_value=fake_memory),
+            mock.patch("main.warm_entra_jwks", return_value=None),
+        ):
+            response = client.get("/knowledge/pending?limit=5")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(app.state.chat_router_ready)
+        self.assertEqual(response.json()["pending"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plan actualizado Chatbot Tecnico Regenera</title>
+  <style>
+    :root {
+      --green: #86b63b;
+      --green-dark: #4e741d;
+      --ink: #17202a;
+      --muted: #5d6978;
+      --line: #dfe5ec;
+      --bg: #f6f8fa;
+      --card: #ffffff;
+      --warn: #b7791f;
+      --bad: #c53030;
+      --good: #2f855a;
+      --info: #2b6cb0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.45;
+    }
+    header {
+      background: #12310f;
+      color: #fff;
+      padding: 36px 48px;
+      border-bottom: 6px solid var(--green);
+    }
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      letter-spacing: 0;
+    }
+    header p {
+      margin: 0;
+      color: #dcebd0;
+      max-width: 980px;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 24px 60px;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      margin: 18px 0;
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 23px;
+    }
+    h3 {
+      margin: 24px 0 10px;
+      font-size: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfd;
+    }
+    .metric strong {
+      display: block;
+      font-size: 26px;
+      color: var(--green-dark);
+    }
+    .metric span { color: var(--muted); font-size: 13px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 8px;
+      vertical-align: top;
+    }
+    th {
+      background: #f0f4f7;
+      font-weight: 700;
+    }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      background: #eef2f5;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    .tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .tag.good { background: #e6f4ea; color: var(--good); }
+    .tag.warn { background: #fff4df; color: var(--warn); }
+    .tag.bad { background: #fde8e8; color: var(--bad); }
+    .tag.info { background: #e8f1fb; color: var(--info); }
+    .callout {
+      border-left: 5px solid var(--green);
+      background: #f4f9ed;
+      padding: 14px 16px;
+      margin: 16px 0;
+      border-radius: 6px;
+    }
+    .warning {
+      border-left-color: var(--warn);
+      background: #fffaf0;
+    }
+    .danger {
+      border-left-color: var(--bad);
+      background: #fff5f5;
+    }
+    ul { padding-left: 22px; }
+    li { margin: 6px 0; }
+    .phase {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      margin: 12px 0;
+      background: #fbfcfd;
+    }
+    .phase h3 { margin-top: 0; }
+    .small { color: var(--muted); font-size: 13px; }
+    @media (max-width: 900px) {
+      header { padding: 28px 22px; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      table { font-size: 13px; }
+    }
+    @media (max-width: 600px) {
+      .grid { grid-template-columns: 1fr; }
+      main { padding: 18px 12px 40px; }
+      section { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Plan actualizado del Chatbot Tecnico Regenera</h1>
+    <p>Actualizacion basada en el comportamiento real del RAG, el plan HTML original, la validacion en produccion con Azure AI Search y la comparacion de los documentos disponibles en DOC CHATBOT.</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>Estado Actual</h2>
+      <div class="grid">
+        <div class="metric"><strong>0e2f09a</strong><span>Ultimo commit desplegado del router tecnico</span></div>
+        <div class="metric"><strong>70-0e2f09a</strong><span>Imagen activa en produccion validada por /health</span></div>
+        <div class="metric"><strong>98/98</strong><span>Tests backend pasando tras el cambio del router</span></div>
+        <div class="metric"><strong>18/18</strong><span>Preguntas de prueba ya pasan por route=knowledge</span></div>
+      </div>
+      <div class="callout">
+        El ultimo cambio del router ya esta funcionando: las preguntas tecnicas cortas o ambiguas ya no se bloquean antes de llegar a Azure Search. Los fallos restantes son principalmente de recuperacion de documentos o de sintesis, no del primer filtro.
+      </div>
+    </section>
+
+    <section>
+      <h2>Diagnostico RAG Tras Las Pruebas</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Bloque</th>
+            <th>Resultado</th>
+            <th>Lectura</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Router tecnico</td>
+            <td><span class="tag good">Corregido</span></td>
+            <td>Preguntas como distancia 3 cm, acometidas, cercas, lineas AT, ISO 8528 y tabla 3.1 entran por <code>knowledge</code>.</td>
+          </tr>
+          <tr>
+            <td>RITE tabla 3.1</td>
+            <td><span class="tag bad">Falla en corpus actual</span></td>
+            <td>El PDF activo <code>rite/A35931-35984.pdf</code> no recupera bien tabla 3.1. Azure Search trae paginas generales del RITE.</td>
+          </tr>
+          <tr>
+            <td>REBT oficial</td>
+            <td><span class="tag good">Mantener</span></td>
+            <td>El BOE REBT actual funciona como fuente normativa principal. No conviene sustituirlo.</td>
+          </tr>
+          <tr>
+            <td>Alta tension</td>
+            <td><span class="tag warn">Incompleto</span></td>
+            <td>El documento actual parece ser correccion de errores y no cubre suficientemente inspecciones, OCA, distancias y reglamento completo.</td>
+          </tr>
+          <tr>
+            <td>Grupos electrogenos</td>
+            <td><span class="tag warn">Mejorable</span></td>
+            <td>ISO 8528-5 responde algunas preguntas, pero el manual HIMOINSA es mas operativo, en espanol y con indice.</td>
+          </tr>
+          <tr>
+            <td>Fotovoltaica</td>
+            <td><span class="tag warn">Provisional</span></td>
+            <td>El manual O&amp;M actual funciona para mantenimiento basico, pero el dominio FV esta muy poco cubierto para negocio real de Regenera.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Comparacion De Documentos</h2>
+      <h3>Documentos Activos Que Deben Continuar</h3>
+      <table>
+        <thead>
+          <tr><th>Documento</th><th>Decision</th><th>Motivo</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf</code></td>
+            <td><span class="tag good">Mantener</span></td>
+            <td>Base normativa principal del REBT. Sigue siendo la referencia prioritaria frente a manuales comerciales.</td>
+          </tr>
+          <tr>
+            <td><code>guias_tecnicas/Guia_bt_40_sep13R1 (1).pdf</code></td>
+            <td><span class="tag good">Mantener</span></td>
+            <td>Funciona bien para instalaciones generadoras aisladas, asistidas e interconectadas.</td>
+          </tr>
+          <tr>
+            <td><code>fotovoltaica_om/Manual-de-Manteminiento.pdf</code></td>
+            <td><span class="tag warn">Mantener provisionalmente</span></td>
+            <td>Util hasta que se incorpore documentacion FV mas completa: RD 244/2019, guia IDAE y manual practico FV.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Documentos Activos A Sustituir</h3>
+      <table>
+        <thead>
+          <tr><th>Documento actual</th><th>Problema</th><th>Sustituto recomendado</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>rite/A35931-35984.pdf</code></td>
+            <td>No recupera tabla 3.1 ni periodicidades de mantenimiento.</td>
+            <td><code>RITE IT3.pdf</code> + <code>BOE-A-2007-15820-consolidado RITE.pdf</code> + <code>RITE-2021-BOE-A-2021-4572.pdf</code></td>
+          </tr>
+          <tr>
+            <td><code>alta_tension/A16436-16554.pdf</code></td>
+            <td>Cobertura insuficiente para alta tension. El plan lo identifica como correccion de errores.</td>
+            <td>Descargar <code>RD 337/2014 LAT completo</code> + guias tecnicas LAT de MINCOTUR antes de retirarlo.</td>
+          </tr>
+          <tr>
+            <td><code>grupos_electrogenos/ISO-8528-5-2018.pdf</code></td>
+            <td>Documento corto, en ingles y menos practico para consultas de campo.</td>
+            <td><code>Manual Grupos Electrogenos Diesel_ESP.pdf</code> de HIMOINSA.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Documentos Nuevos Revisados</h2>
+      <h3>Alta Prioridad</h3>
+      <table>
+        <thead>
+          <tr><th>Documento</th><th>Estado</th><th>Por que entra</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>4 - Climatizacion y refrigeracion/RITE IT3.pdf</code></td>
+            <td><span class="tag good">Incorporar Fase 1</span></td>
+            <td>Contiene directamente tabla 3.1 y las filas de limpieza de evaporadores, limpieza de condensadores y revision general de calderas de gas.</td>
+          </tr>
+          <tr>
+            <td><code>4 - Climatizacion y refrigeracion/BOE-A-2007-15820-consolidado RITE.pdf</code></td>
+            <td><span class="tag good">Incorporar Fase 1</span></td>
+            <td>RITE consolidado completo, texto limpio, mejor fuente normativa que el RITE actual.</td>
+          </tr>
+          <tr>
+            <td><code>4 - Climatizacion y refrigeracion/RITE-2021-BOE-A-2021-4572.pdf</code></td>
+            <td><span class="tag good">Incorporar Fase 1</span></td>
+            <td>Modificacion vigente 2021. Necesario para no responder con normativa desactualizada.</td>
+          </tr>
+          <tr>
+            <td><code>3 - Grupos electrogenos (GE)/HIMOINSA/Manual Grupos Electrogenos Diesel_ESP.pdf</code></td>
+            <td><span class="tag good">Incorporar Fase 1</span></td>
+            <td>Manual operativo, en espanol, con indice y mejor orientado a mantenimiento/uso real.</td>
+          </tr>
+          <tr>
+            <td><code>2 - Proteccion contra incendios (PCI)/DBSI.pdf</code> y <code>v4 guia ripci.pdf</code></td>
+            <td><span class="tag info">Nuevo dominio</span></td>
+            <td>Son buenos documentos, pero requieren crear dominio/scopes PCI para no mezclarlos con REBT/RITE.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Condicionados</h3>
+      <table>
+        <thead>
+          <tr><th>Documento</th><th>Decision</th><th>Condicion</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>Schneider manual-electricidad-baja-tension-1.pdf</code></td>
+            <td><span class="tag warn">Fase 2</span></td>
+            <td>Muy util para calculo y ejemplos, pero pesado. Entrar despues de estabilizar Fase 1.</td>
+          </tr>
+          <tr>
+            <td><code>Schneider vols. 2, 3, 4, v51, v52</code></td>
+            <td><span class="tag warn">Progresivo</span></td>
+            <td>No meter todos de golpe. Pueden aumentar ruido y coste de indexacion.</td>
+          </tr>
+          <tr>
+            <td><code>Prysmian errores_frecuentes_2023_v2.pdf</code></td>
+            <td><span class="tag good">Fase 2</span></td>
+            <td>Formato problema-solucion, muy bueno para preguntas humanas y de obra.</td>
+          </tr>
+          <tr>
+            <td><code>Prysmian soluciones_situaciones_particulares_2023.pdf</code></td>
+            <td><span class="tag good">Fase 2</span></td>
+            <td>Complementa REBT con casuistica practica.</td>
+          </tr>
+          <tr>
+            <td><code>IDAE 10540_mantenimiento_instalaciones_termicas...</code></td>
+            <td><span class="tag warn">Fase 2 / Validar</span></td>
+            <td>El plan decia que no tenia texto, pero la prueba local detecto texto extraible. Aun asi, <code>RITE IT3.pdf</code> es mejor para el primer arreglo.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>No Incorporar De Momento</h3>
+      <ul>
+        <li><code>guia_20_9_2021.pdf</code>: subvenciones antiguas, riesgo de respuestas desactualizadas.</li>
+        <li><code>mif.pdf</code>: demasiado amplio y fuera del foco principal actual.</li>
+        <li><code>rendimiento-medio-estacional...</code>: teorico, pesado y bajo valor operacional.</li>
+        <li><code>Guia_Gestion_Mantenimiento_Instalaciones_Hospitalarias.pdf</code>: solo si Regenera necesita contratos hospitalarios.</li>
+        <li><code>documentos_guia_007</code> y <code>008</code>: nicho o datos tabulares poco adecuados para RAG general.</li>
+        <li><code>Draka_Guia_Tecnica_Cables_Datos_ES.pdf</code>: telecomunicaciones/datos, fuera del dominio electrico principal.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Camino Recomendado</h2>
+      <div class="phase">
+        <h3>Fase 0 - Estado ya conseguido</h3>
+        <ul>
+          <li>Router tecnico ampliado con terminos generales: acometidas, tubos, cercas, alimentador, lineas AT, ISO 8528, tabla 3.1, etc.</li>
+          <li>Produccion validada con imagen <code>70-0e2f09a</code>.</li>
+          <li>18 preguntas tecnicas problemáticas pasan a <code>route=knowledge</code>.</li>
+          <li>Tests backend: <code>98 passed</code>.</li>
+        </ul>
+      </div>
+
+      <div class="phase">
+        <h3>Fase 1 - Reparar RITE, GE y preparar AT</h3>
+        <ul>
+          <li>Copiar a la ruta activa/local los nuevos RITE: consolidado 2007, modificacion 2021 y <code>RITE IT3.pdf</code>.</li>
+          <li>Incorporar manual HIMOINSA para grupos electrogenos.</li>
+          <li>Descargar antes de retirar AT: <code>RD 337/2014 LAT completo</code> y guias tecnicas LAT.</li>
+          <li>Reindexar local y produccion con version nueva de indice.</li>
+          <li>Repetir bateria fallida: RITE tabla 3.1, AT inspecciones, GE respuesta transitoria, secciones REBT, vehiculo electrico.</li>
+        </ul>
+        <p class="small">Objetivo: que RITE deje de fallar en periodicidades y que GE tenga respuestas operativas en espanol.</p>
+      </div>
+
+      <div class="phase">
+        <h3>Fase 2 - Enriquecer REBT sin perder precision</h3>
+        <ul>
+          <li>Añadir solo guias de alta utilidad: Prysmian errores frecuentes y soluciones particulares.</li>
+          <li>Probar Schneider vol. 1 en local antes de produccion por tamaño y posible ruido.</li>
+          <li>Marcar estos documentos como guias/complementarios, no como normativa oficial prioritaria.</li>
+          <li>Validar preguntas de examen y preguntas de obra: acometidas, tubos, derivaciones, conductor de proteccion, secciones, vehiculo electrico.</li>
+        </ul>
+      </div>
+
+      <div class="phase">
+        <h3>Fase 3 - Fotovoltaica y nuevos dominios</h3>
+        <ul>
+          <li>Descargar RD 244/2019 y guia IDAE de tramitacion de autoconsumo.</li>
+          <li>Comprar o incorporar manual FV practico si procede.</li>
+          <li>Abrir dominio PCI solo cuando se añadan DBSI y RIPCI con scopes propios.</li>
+          <li>Para cada nuevo departamento, crear dominio, triggers, metadata y bateria minima antes de mezclarlo con el corpus general.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <h2>Flujo De Ejecucion Para Cambiar Corpus</h2>
+      <ol>
+        <li>Seleccionar documentos de una sola fase. No mezclar Fase 1, Fase 2 y PCI a la vez.</li>
+        <li>Copiar los PDFs a la ruta activa local con nombres y carpetas de dominio claros: <code>rite/</code>, <code>grupos_electrogenos/</code>, <code>alta_tension/</code>, etc.</li>
+        <li>Actualizar si hace falta <code>domains.json</code> o scopes para nuevos dominios. Para RITE/GE no deberia hacer falta dominio nuevo.</li>
+        <li>Reindexar en local y lanzar bateria de validacion contra Chroma.</li>
+        <li>Subir documentos a Blob/SharePoint segun el flujo actual de produccion.</li>
+        <li>Incrementar <code>RAG_INDEX_VERSION</code> si queremos forzar reindexado completo.</li>
+        <li>Ejecutar sync de produccion y esperar finalizacion.</li>
+        <li>Validar en produccion con una sola conversacion tecnica y revisar <code>route</code>, confianza, fuentes y respuesta.</li>
+        <li>Solo despues, retirar documentos sustituidos si el nuevo corpus responde mejor.</li>
+      </ol>
+      <div class="callout warning">
+        Regla importante: no retirar <code>alta_tension/A16436-16554.pdf</code> hasta tener el LAT completo y las guias LAT indexadas. Para RITE, en cambio, el reemplazo esta claro porque los nuevos documentos contienen la tabla 3.1 que ahora falla.
+      </div>
+    </section>
+
+    <section>
+      <h2>Bateria De Validacion Recomendada</h2>
+      <table>
+        <thead>
+          <tr><th>Dominio</th><th>Preguntas clave</th><th>Exito esperado</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>RITE</td>
+            <td>Periodicidad limpieza condensadores, evaporadores y revision general de caldera de gas segun tabla 3.1.</td>
+            <td>Debe recuperar <code>RITE IT3.pdf</code> o RITE consolidado en la pagina de tabla 3.1.</td>
+          </tr>
+          <tr>
+            <td>REBT</td>
+            <td>ITC-BT-25 circuitos, electrificacion basica/elevada, conductor de proteccion, acometidas/tubos.</td>
+            <td>Debe priorizar BOE REBT y usar guias solo como complemento.</td>
+          </tr>
+          <tr>
+            <td>Vehiculo electrico</td>
+            <td>Sistemas de puesta a tierra validos para carga de vehiculo electrico.</td>
+            <td>Debe recuperar ITC-BT-52 y mencionar TT en red publica y TN-S cuando proceda.</td>
+          </tr>
+          <tr>
+            <td>Alta tension</td>
+            <td>Inspecciones periodicas, responsables, OCA, distancias y puesta a tierra.</td>
+            <td>Debe usar RD 337/2014 o guias LAT completas, no solo correccion de errores.</td>
+          </tr>
+          <tr>
+            <td>Grupos GE</td>
+            <td>Mantenimiento, arranque, alarmas, combustible, respuesta transitoria.</td>
+            <td>Debe recuperar HIMOINSA para operacion/mantenimiento e ISO solo si se pregunta por norma.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Decision Final</h2>
+      <div class="callout">
+        El camino mas seguro es aplicar Fase 1 pequeña: nuevos RITE + HIMOINSA, preparar LAT completo, reindexar, validar, y solo entonces avanzar a REBT practico y fotovoltaica. Esto mejora precision donde ya sabemos que falla sin inundar Azure Search con miles de paginas nuevas.
+      </div>
+      <p class="small">Documento generado el 11/06/2026 a partir de la conversacion tecnica, el plan HTML original y las pruebas realizadas sobre produccion/local.</p>
+    </section>
+  </main>
+</body>
+</html>

@@ -86,9 +86,12 @@ def _include_chat_router() -> None:
         logger = logging.getLogger(__name__)
         logger.info("Cargando rutas de chat")
         from routes.chat import router as chat_router
+        from routes.chat_admin import router as chat_admin_router
 
         app.include_router(chat_router)
         app.include_router(chat_router, prefix="/api")
+        app.include_router(chat_admin_router)
+        app.include_router(chat_admin_router, prefix="/api")
         app.state.chat_router_ready = True
         logger.info("Rutas de chat cargadas")
 

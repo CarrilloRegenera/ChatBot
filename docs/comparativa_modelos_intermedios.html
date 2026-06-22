@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comparativa Modelos Intermedios — ChatBot RAG Regenera Energy</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #273450;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --accent: #38bdf8;
+    --green: #4ade80;
+    --red: #f87171;
+    --orange: #fb923c;
+    --yellow: #fbbf24;
+    --purple: #c084fc;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1300px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.8rem; margin-bottom: 0.25rem; color: var(--accent); }
+  .subtitle { color: var(--text-muted); font-size: 0.95rem; margin-bottom: 2rem; }
+  h2 {
+    font-size: 1.3rem; margin: 2rem 0 1rem;
+    padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);
+    color: var(--accent);
+  }
+  h3 { font-size: 1.05rem; margin: 1.2rem 0 0.6rem; color: var(--text); }
+
+  .compare-table {
+    width: 100%; border-collapse: collapse;
+    margin: 1rem 0 2rem; font-size: 0.88rem;
+  }
+  .compare-table th, .compare-table td {
+    padding: 0.65rem 0.9rem;
+    border: 1px solid var(--border);
+    text-align: left; vertical-align: top;
+  }
+  .compare-table thead th {
+    background: var(--surface2); font-weight: 600;
+    position: sticky; top: 0;
+  }
+  .compare-table tbody tr:nth-child(even) { background: var(--surface); }
+  .compare-table tbody tr:hover { background: var(--surface2); }
+  .compare-table .label { color: var(--text-muted); font-weight: 500; min-width: 180px; }
+
+  /* Columnas por modelo */
+  .col-minilm  { background: rgba(148,163,184,0.05); }
+  .col-e5s     { background: rgba(56,189,248,0.06); }
+  .col-mpnet   { background: rgba(192,132,252,0.06); }
+  .col-e5b     { background: rgba(251,191,36,0.06); }
+  .col-bge     { background: rgba(74,222,128,0.06); }
+
+  .badge {
+    display: inline-block; padding: 0.15rem 0.5rem;
+    border-radius: 4px; font-size: 0.78rem; font-weight: 600;
+  }
+  .badge-green  { background: rgba(74,222,128,0.15);  color: var(--green); }
+  .badge-red    { background: rgba(248,113,113,0.15); color: var(--red); }
+  .badge-orange { background: rgba(251,146,60,0.15);  color: var(--orange); }
+  .badge-yellow { background: rgba(251,191,36,0.15);  color: var(--yellow); }
+  .badge-blue   { background: rgba(56,189,248,0.15);  color: var(--accent); }
+  .badge-purple { background: rgba(192,132,252,0.15); color: var(--purple); }
+  .badge-gray   { background: rgba(148,163,184,0.15); color: var(--text-muted); }
+
+  .score-bar {
+    height: 20px; border-radius: 4px;
+    display: flex; align-items: center; padding: 0 8px;
+    font-size: 0.76rem; font-weight: 600; color: #fff; min-width: 40px;
+  }
+  .score-bar.high { background: linear-gradient(90deg, #059669, #4ade80); }
+  .score-bar.med  { background: linear-gradient(90deg, #d97706, #fbbf24); }
+  .score-bar.low  { background: linear-gradient(90deg, #dc2626, #f87171); }
+
+  .case-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem 1.2rem; margin: 0.8rem 0;
+  }
+  .case-card .query { font-style: italic; color: var(--yellow); margin-bottom: 0.5rem; }
+  .case-card .result { font-size: 0.88rem; color: var(--text-muted); }
+  .case-card .result strong { color: var(--text); }
+
+  .impact-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem; margin: 1rem 0;
+  }
+  .impact-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem 1.2rem;
+  }
+  .impact-card h4 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+  .impact-card p { font-size: 0.83rem; color: var(--text-muted); }
+
+  code {
+    background: var(--surface2); padding: 0.15rem 0.4rem;
+    border-radius: 3px; font-size: 0.85rem;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+  }
+  pre {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 1rem; overflow-x: auto;
+    font-size: 0.82rem; margin: 0.8rem 0;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    color: var(--text-muted);
+  }
+
+  .verdict {
+    background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(74,222,128,0.08));
+    border: 1px solid var(--accent); border-radius: 8px;
+    padding: 1.2rem 1.5rem; margin: 1.5rem 0;
+  }
+  .verdict h3 { color: var(--accent); margin-bottom: 0.6rem; }
+
+  .ranking {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 0.6rem; margin: 1rem 0;
+  }
+  .rank-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.8rem; text-align: center;
+  }
+  .rank-card .rank-num {
+    font-size: 1.6rem; font-weight: 700; margin-bottom: 0.2rem;
+  }
+  .rank-card .rank-name { font-size: 0.78rem; color: var(--text-muted); }
+  .rank-card .rank-label { font-size: 0.7rem; margin-top: 0.3rem; }
+  .rank-1 { border-color: var(--green); }
+  .rank-1 .rank-num { color: var(--green); }
+  .rank-2 { border-color: var(--accent); }
+  .rank-2 .rank-num { color: var(--accent); }
+  .rank-3 { border-color: var(--purple); }
+  .rank-3 .rank-num { color: var(--purple); }
+  .rank-4 { border-color: var(--yellow); }
+  .rank-4 .rank-num { color: var(--yellow); }
+  .rank-5 { border-color: var(--text-muted); }
+  .rank-5 .rank-num { color: var(--text-muted); }
+
+  .warning-box {
+    background: rgba(251,191,36,0.08); border: 1px solid var(--yellow);
+    border-radius: 8px; padding: 0.9rem 1.2rem; margin: 1rem 0;
+    font-size: 0.88rem;
+  }
+
+  .footnote {
+    font-size: 0.8rem; color: var(--text-muted);
+    margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border);
+  }
+
+  @media (max-width: 900px) {
+    body { padding: 1rem; }
+    .ranking { grid-template-columns: repeat(2, 1fr); }
+    .compare-table { font-size: 0.78rem; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Comparativa de Modelos Intermedios</h1>
+<p class="subtitle">
+  ChatBot RAG &mdash; Regenera Energy &mdash; Mayo 2026<br>
+  MiniLM (actual) vs alternativas CPU &middot; Referencia bge-m3 (GPU/Azure)
+</p>
+
+<!-- ============================================================ -->
+<h2>1. Contexto — Por qu&eacute; buscar alternativas a bge-m3</h2>
+
+<div class="case-card">
+  <div class="result">
+    <strong>El problema:</strong> bge-m3 es el mejor modelo disponible para este pipeline,
+    pero en CPU Windows su inferencia es pr&aacute;cticamente inviable para indexar:
+    cada batch de 64 chunks tarda 2-5 minutos, y un reindex completo puede superar 1 hora.<br><br>
+    <strong>La causa:</strong> PyTorch CPU no tiene soporte nativo FP16 para operaciones transformer
+    en Windows. FP32 funciona pero el modelo (568M par&aacute;metros, 24 capas) es demasiado pesado
+    para ser &uacute;til en desarrollo local.<br><br>
+    <strong>El objetivo:</strong> encontrar modelos que mejoren a MiniLM (especialmente en ventana
+    de contexto &gt; 128 tokens) manteniendo una velocidad razonable en CPU.
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. Ficha t&eacute;cnica completa</h2>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th class="label">Par&aacute;metro</th>
+    <th class="col-minilm">MiniLM-L12-v2 <span class="badge badge-gray">ACTUAL</span></th>
+    <th class="col-e5s">multilingual-e5-small <span class="badge badge-blue">RECOMENDADO</span></th>
+    <th class="col-mpnet">mpnet-base-v2 <span class="badge badge-purple">ALTERNATIVA</span></th>
+    <th class="col-e5b">multilingual-e5-base <span class="badge badge-yellow">PREMIUM CPU</span></th>
+    <th class="col-bge">bge-m3 <span class="badge badge-green">REFERENCIA</span></th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">Nombre completo</td>
+    <td class="col-minilm"><code style="font-size:0.72rem">paraphrase-multilingual-MiniLM-L12-v2</code></td>
+    <td class="col-e5s"><code style="font-size:0.72rem">intfloat/multilingual-e5-small</code></td>
+    <td class="col-mpnet"><code style="font-size:0.72rem">paraphrase-multilingual-mpnet-base-v2</code></td>
+    <td class="col-e5b"><code style="font-size:0.72rem">intfloat/multilingual-e5-base</code></td>
+    <td class="col-bge"><code style="font-size:0.72rem">BAAI/bge-m3</code></td>
+  </tr>
+  <tr>
+    <td class="label">Arquitectura base</td>
+    <td class="col-minilm">MiniLM (distilled BERT)</td>
+    <td class="col-e5s">MiniLM (retrained E5)</td>
+    <td class="col-mpnet">MPNet</td>
+    <td class="col-e5b">BERT-base (retrained E5)</td>
+    <td class="col-bge">XLM-RoBERTa-large</td>
+  </tr>
+  <tr>
+    <td class="label">Par&aacute;metros</td>
+    <td class="col-minilm">~118 M</td>
+    <td class="col-e5s">~118 M</td>
+    <td class="col-mpnet">~278 M <span class="badge badge-orange">&times;2.4</span></td>
+    <td class="col-e5b">~278 M <span class="badge badge-orange">&times;2.4</span></td>
+    <td class="col-bge">~568 M <span class="badge badge-red">&times;4.8</span></td>
+  </tr>
+  <tr>
+    <td class="label">Capas transformer</td>
+    <td class="col-minilm">12</td>
+    <td class="col-e5s">12</td>
+    <td class="col-mpnet">12</td>
+    <td class="col-e5b">12</td>
+    <td class="col-bge">24</td>
+  </tr>
+  <tr>
+    <td class="label">Dimensiones embedding</td>
+    <td class="col-minilm">384</td>
+    <td class="col-e5s">384 <span class="badge badge-green">= actual</span></td>
+    <td class="col-mpnet">768 <span class="badge badge-orange">&times;2</span></td>
+    <td class="col-e5b">768 <span class="badge badge-orange">&times;2</span></td>
+    <td class="col-bge">1024 <span class="badge badge-orange">&times;2.7</span></td>
+  </tr>
+  <tr>
+    <td class="label"><strong>Max tokens</strong></td>
+    <td class="col-minilm"><strong>128</strong> <span class="badge badge-red">TRUNCA 30-40%</span></td>
+    <td class="col-e5s"><strong>512</strong> <span class="badge badge-green">&times;4</span></td>
+    <td class="col-mpnet"><strong>514</strong> <span class="badge badge-green">&times;4</span></td>
+    <td class="col-e5b"><strong>512</strong> <span class="badge badge-green">&times;4</span></td>
+    <td class="col-bge"><strong>8192</strong> <span class="badge badge-green">&times;64</span></td>
+  </tr>
+  <tr>
+    <td class="label">Idiomas</td>
+    <td class="col-minilm">50+</td>
+    <td class="col-e5s">100+</td>
+    <td class="col-mpnet">50+</td>
+    <td class="col-e5b">100+</td>
+    <td class="col-bge">100+</td>
+  </tr>
+  <tr>
+    <td class="label">Tama&ntilde;o en disco</td>
+    <td class="col-minilm">~470 MB</td>
+    <td class="col-e5s">~480 MB</td>
+    <td class="col-mpnet">~1.1 GB</td>
+    <td class="col-e5b">~1.1 GB</td>
+    <td class="col-bge">~2.2 GB</td>
+  </tr>
+  <tr>
+    <td class="label">RAM en inferencia (CPU)</td>
+    <td class="col-minilm">~0.6 GB</td>
+    <td class="col-e5s">~0.7 GB <span class="badge badge-green">casi igual</span></td>
+    <td class="col-mpnet">~1.0 GB</td>
+    <td class="col-e5b">~1.1 GB</td>
+    <td class="col-bge">~2.5 GB</td>
+  </tr>
+  <tr>
+    <td class="label">MTEB Retrieval (avg)</td>
+    <td class="col-minilm">~43</td>
+    <td class="col-e5s">~46 <span class="badge badge-green">+7%</span></td>
+    <td class="col-mpnet">~53 <span class="badge badge-green">+23%</span></td>
+    <td class="col-e5b">~54 <span class="badge badge-green">+26%</span></td>
+    <td class="col-bge">~58 <span class="badge badge-green">+35%</span></td>
+  </tr>
+  <tr>
+    <td class="label">MTEB Retrieval (es)</td>
+    <td class="col-minilm">~38</td>
+    <td class="col-e5s">~46 <span class="badge badge-green">+21%</span></td>
+    <td class="col-mpnet">~49 <span class="badge badge-green">+29%</span></td>
+    <td class="col-e5b">~52 <span class="badge badge-green">+37%</span></td>
+    <td class="col-bge">~54 <span class="badge badge-green">+42%</span></td>
+  </tr>
+  <tr>
+    <td class="label">Licencia</td>
+    <td class="col-minilm">Apache 2.0</td>
+    <td class="col-e5s">MIT</td>
+    <td class="col-mpnet">Apache 2.0</td>
+    <td class="col-e5b">MIT</td>
+    <td class="col-bge">MIT</td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>3. Rendimiento en CPU — Lo que importa en desarrollo local</h2>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th class="label">M&eacute;trica</th>
+    <th class="col-minilm">MiniLM</th>
+    <th class="col-e5s">e5-small</th>
+    <th class="col-mpnet">mpnet-base</th>
+    <th class="col-e5b">e5-base</th>
+    <th class="col-bge">bge-m3</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">Indexaci&oacute;n ~3800 chunks (CPU)</td>
+    <td class="col-minilm">~2 min</td>
+    <td class="col-e5s">~2-3 min <span class="badge badge-green">OK</span></td>
+    <td class="col-mpnet">~5-8 min <span class="badge badge-orange">aceptable</span></td>
+    <td class="col-e5b">~5-8 min <span class="badge badge-orange">aceptable</span></td>
+    <td class="col-bge">~45-90 min <span class="badge badge-red">inviable local</span></td>
+  </tr>
+  <tr>
+    <td class="label">Query embedding (1 pregunta, CPU)</td>
+    <td class="col-minilm">~15-25 ms</td>
+    <td class="col-e5s">~15-25 ms <span class="badge badge-green">igual</span></td>
+    <td class="col-mpnet">~40-70 ms</td>
+    <td class="col-e5b">~40-70 ms</td>
+    <td class="col-bge">~80-150 ms</td>
+  </tr>
+  <tr>
+    <td class="label">Latencia total RAG (CPU)</td>
+    <td class="col-minilm">~1.9 s</td>
+    <td class="col-e5s">~2.0 s</td>
+    <td class="col-mpnet">~2.1 s</td>
+    <td class="col-e5b">~2.1 s</td>
+    <td class="col-bge">~2.3 s</td>
+  </tr>
+  <tr>
+    <td class="label">Impacto en respuesta total (~12s)</td>
+    <td class="col-minilm" colspan="5" style="text-align:center; color:var(--text-muted)">
+      El LLM domina (~10s). Diferencias de embedding son invisibles al usuario en todos los modelos.
+    </td>
+  </tr>
+  <tr>
+    <td class="label">FP16 en CPU Windows</td>
+    <td class="col-minilm"><span class="badge badge-green">OK</span></td>
+    <td class="col-e5s"><span class="badge badge-green">OK</span></td>
+    <td class="col-mpnet"><span class="badge badge-green">OK</span></td>
+    <td class="col-e5b"><span class="badge badge-green">OK</span></td>
+    <td class="col-bge"><span class="badge badge-red">Bloqueante</span></td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>4. El problema de la ventana de 128 tokens (MiniLM) — solucionado en todos los candidatos</h2>
+
+<div class="case-card">
+  <div class="query">&laquo;En una electrificaci&oacute;n b&aacute;sica, ind&iacute;came la secci&oacute;n del cableado de alumbrado&raquo;</div>
+  <div class="result">
+    Un chunk de 900 chars en espa&ntilde;ol genera ~180 tokens. MiniLM solo ve los primeros 128:
+    trunca silenciosamente el 30-40% del texto de cada chunk.<br><br>
+    Con <strong>e5-small, mpnet-base o e5-base</strong> (512 tokens): el chunk de 900 chars (~180 tokens)
+    entra completo. El prefijo <code>[ITC-BT-25] INSTALACIONES INTERIORES...</code> y el dato
+    <code>C1 Iluminaci&oacute;n &mdash; 1,5 mm&sup2;</code> son visibles en su totalidad para el modelo.
+  </div>
+</div>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th class="label">Escenario</th>
+    <th class="col-minilm">MiniLM (128 tok)</th>
+    <th class="col-e5s">e5-small (512 tok)</th>
+    <th class="col-mpnet">mpnet-base (514 tok)</th>
+    <th class="col-e5b">e5-base (512 tok)</th>
+    <th class="col-bge">bge-m3 (8192 tok)</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">Chunk 900 chars (~180 tok)</td>
+    <td class="col-minilm"><span class="badge badge-red">Truncado 30%</span></td>
+    <td class="col-e5s"><span class="badge badge-green">Completo</span></td>
+    <td class="col-mpnet"><span class="badge badge-green">Completo</span></td>
+    <td class="col-e5b"><span class="badge badge-green">Completo</span></td>
+    <td class="col-bge"><span class="badge badge-green">Completo</span></td>
+  </tr>
+  <tr>
+    <td class="label">FILA_TABLA enriquecida (~100 tok)</td>
+    <td class="col-minilm"><span class="badge badge-yellow">Ajustado</span></td>
+    <td class="col-e5s"><span class="badge badge-green">Completo</span></td>
+    <td class="col-mpnet"><span class="badge badge-green">Completo</span></td>
+    <td class="col-e5b"><span class="badge badge-green">Completo</span></td>
+    <td class="col-bge"><span class="badge badge-green">Completo</span></td>
+  </tr>
+  <tr>
+    <td class="label">Tabla completa (~400 tok)</td>
+    <td class="col-minilm"><span class="badge badge-red">Solo ve 1/3</span></td>
+    <td class="col-e5s"><span class="badge badge-green">Completo</span></td>
+    <td class="col-mpnet"><span class="badge badge-green">Completo</span></td>
+    <td class="col-e5b"><span class="badge badge-green">Completo</span></td>
+    <td class="col-bge"><span class="badge badge-green">Completo</span></td>
+  </tr>
+  <tr>
+    <td class="label">Chunk CHUNK_SIZE=1400 (~300 tok)</td>
+    <td class="col-minilm"><span class="badge badge-red">Solo ve 40%</span></td>
+    <td class="col-e5s"><span class="badge badge-green">Completo</span></td>
+    <td class="col-mpnet"><span class="badge badge-green">Completo</span></td>
+    <td class="col-e5b"><span class="badge badge-green">Completo</span></td>
+    <td class="col-bge"><span class="badge badge-green">Completo</span></td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>5. Impacto en calidad de retrieval por tipo de query</h2>
+
+<div class="impact-grid">
+  <div class="impact-card">
+    <h4>Queries simples (1 concepto)</h4>
+    <p><strong>MiniLM:</strong> Funciona</p>
+    <p><strong>e5-small:</strong> <span class="badge badge-green">+10-15%</span> mejor sem&aacute;ntica en espa&ntilde;ol</p>
+    <p><strong>mpnet/e5-base:</strong> <span class="badge badge-green">+15-20%</span></p>
+    <p><strong>bge-m3:</strong> <span class="badge badge-green">+20-25%</span></p>
+  </div>
+  <div class="impact-card">
+    <h4>Queries multi-concepto</h4>
+    <p>&laquo;electrificaci&oacute;n b&aacute;sica + alumbrado + secci&oacute;n&raquo;</p>
+    <p><strong>e5-small:</strong> <span class="badge badge-green">+20-30%</span> ventana completa</p>
+    <p><strong>mpnet/e5-base:</strong> <span class="badge badge-green">+30-40%</span> + 768d</p>
+    <p><strong>bge-m3:</strong> <span class="badge badge-green">+35-45%</span></p>
+  </div>
+  <div class="impact-card">
+    <h4>Queries con n&uacute;meros</h4>
+    <p>&laquo;distancia m&iacute;nima 0,2 m&raquo;</p>
+    <p><strong>e5-small:</strong> <span class="badge badge-yellow">mejora moderada</span> (384d)</p>
+    <p><strong>mpnet/e5-base:</strong> <span class="badge badge-green">mejor</span> (768d captura mejor)</p>
+    <p><strong>bge-m3:</strong> <span class="badge badge-green">+25-35%</span> (1024d + sparse)</p>
+  </div>
+  <div class="impact-card">
+    <h4>Queries sobre tablas (FILA_TABLA)</h4>
+    <p>Crucial para ITC-BT-25 + C1</p>
+    <p><strong>e5-small:</strong> <span class="badge badge-green">gran mejora</span> prefijo ITC completo</p>
+    <p><strong>mpnet/e5-base:</strong> <span class="badge badge-green">mayor mejora</span></p>
+    <p><strong>bge-m3:</strong> <span class="badge badge-green">m&aacute;xima mejora</span></p>
+  </div>
+  <div class="impact-card">
+    <h4>Queries cross-ITC (BT-40)</h4>
+    <p><strong>e5-small:</strong> <span class="badge badge-yellow">similar a MiniLM</span> en 384d</p>
+    <p><strong>mpnet/e5-base:</strong> <span class="badge badge-green">mejor separaci&oacute;n</span> dominios en 768d</p>
+    <p><strong>bge-m3:</strong> <span class="badge badge-green">mejor</span> (1024d)</p>
+  </div>
+  <div class="impact-card">
+    <h4>Escalabilidad multi-dpto.</h4>
+    <p>Al a&ntilde;adir PRL, RRHH, RITE...</p>
+    <p><strong>e5-small:</strong> <span class="badge badge-orange">384d se satura</span> como MiniLM</p>
+    <p><strong>mpnet/e5-base:</strong> <span class="badge badge-green">768d escala mejor</span></p>
+    <p><strong>bge-m3:</strong> <span class="badge badge-green">1024d escala &oacute;ptimo</span></p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. Implicaciones en Azure AI Search (cambio de dimensiones)</h2>
+
+<div class="warning-box">
+  ⚠ <strong>Importante:</strong> cambiar de 384d (MiniLM / e5-small) a 768d (mpnet-base / e5-base)
+  requiere <strong>borrar y recrear el &iacute;ndice de Azure AI Search</strong>.
+  Azure no permite modificar dimensiones en caliente. Tambi&eacute;n hay que actualizar
+  <code>azure_rag_service.py</code> y <code>LanzarChatbotNube.bat</code>.
+  Con e5-small no hay que tocar nada en Azure (mismo 384d que MiniLM).
+</div>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th class="label">Aspecto Azure</th>
+    <th class="col-minilm">MiniLM → e5-small</th>
+    <th class="col-mpnet">MiniLM → mpnet-base</th>
+    <th class="col-e5b">MiniLM → e5-base</th>
+    <th class="col-bge">MiniLM → bge-m3</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">Cambio dimensiones &iacute;ndice</td>
+    <td class="col-minilm"><span class="badge badge-green">NO</span> sigue 384d</td>
+    <td class="col-mpnet"><span class="badge badge-red">S&Iacute;</span> 384→768d</td>
+    <td class="col-e5b"><span class="badge badge-red">S&Iacute;</span> 384→768d</td>
+    <td class="col-bge"><span class="badge badge-red">S&Iacute;</span> 384→1024d</td>
+  </tr>
+  <tr>
+    <td class="label">Recrear &iacute;ndice AI Search</td>
+    <td class="col-minilm"><span class="badge badge-green">NO</span></td>
+    <td class="col-mpnet"><span class="badge badge-red">S&Iacute;</span></td>
+    <td class="col-e5b"><span class="badge badge-red">S&Iacute;</span></td>
+    <td class="col-bge"><span class="badge badge-red">S&Iacute;</span></td>
+  </tr>
+  <tr>
+    <td class="label">Cambios en c&oacute;digo Azure</td>
+    <td class="col-minilm">0 archivos</td>
+    <td class="col-mpnet">2 archivos</td>
+    <td class="col-e5b">2 archivos</td>
+    <td class="col-bge">2 archivos</td>
+  </tr>
+  <tr>
+    <td class="label">Almacenamiento ChromaDB local</td>
+    <td class="col-minilm">~6 MB</td>
+    <td class="col-mpnet">~11 MB</td>
+    <td class="col-e5b">~11 MB</td>
+    <td class="col-bge">~16 MB</td>
+  </tr>
+  <tr>
+    <td class="label">Coste Azure AI Search</td>
+    <td class="col-minilm">Sin cambio</td>
+    <td class="col-mpnet">Sin cambio (Basic aguanta)</td>
+    <td class="col-e5b">Sin cambio (Basic aguanta)</td>
+    <td class="col-bge">Sin cambio (Basic aguanta)</td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>7. Cambios necesarios en el c&oacute;digo</h2>
+
+<h3>Para e5-small (m&iacute;nimo — solo .env)</h3>
+<pre>
+# .env — cambiar 2 l&iacute;neas:
+EMBEDDING_MODEL=intfloat/multilingual-e5-small
+RERANK_MODEL=intfloat/multilingual-e5-small
+
+# El resto del c&oacute;digo funciona sin cambios.
+# _EF_VERSION cambia autom&aacute;ticamente → reindex autom&aacute;tico.
+# Azure AI Search: sin cambios (384d = igual).
+</pre>
+
+<h3>Para mpnet-base o e5-base (requiere actualizar dimensiones)</h3>
+<pre>
+# .env:
+EMBEDDING_MODEL=intfloat/multilingual-e5-base         # o paraphrase-multilingual-mpnet-base-v2
+RERANK_MODEL=intfloat/multilingual-e5-base
+
+# azure_rag_service.py — l&iacute;nea ~169: sin cambios de c&oacute;digo
+# (encode() genera el vector del tama&ntilde;o que corresponde al modelo)
+
+# LanzarChatbotNube.bat — actualizar dimensiones en schema del &iacute;ndice:
+dimensions = 768    # era 384
+</pre>
+
+<!-- ============================================================ -->
+<h2>8. Ranking final</h2>
+
+<div class="ranking">
+  <div class="rank-card rank-5">
+    <div class="rank-num">5&ordm;</div>
+    <div class="rank-name">MiniLM-L12</div>
+    <div class="rank-label"><span class="badge badge-gray">ACTUAL</span></div>
+    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.4rem">
+      128 tok &mdash; trunca chunks<br>MTEB-es: ~38
+    </div>
+  </div>
+  <div class="rank-card rank-4">
+    <div class="rank-num">4&ordm;</div>
+    <div class="rank-name">e5-small</div>
+    <div class="rank-label"><span class="badge badge-blue">RECOMENDADO</span></div>
+    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.4rem">
+      512 tok &mdash; drop-in<br>MTEB-es: ~46 &mdash; vel. igual
+    </div>
+  </div>
+  <div class="rank-card rank-3">
+    <div class="rank-num">3&ordm;</div>
+    <div class="rank-name">mpnet-base</div>
+    <div class="rank-label"><span class="badge badge-purple">ALTERNATIVA</span></div>
+    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.4rem">
+      514 tok &mdash; 768d<br>MTEB-es: ~49 &mdash; 2-3x m&aacute;s lento
+    </div>
+  </div>
+  <div class="rank-card rank-2">
+    <div class="rank-num">2&ordm;</div>
+    <div class="rank-name">e5-base</div>
+    <div class="rank-label"><span class="badge badge-yellow">PREMIUM CPU</span></div>
+    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.4rem">
+      512 tok &mdash; 768d<br>MTEB-es: ~52 &mdash; 2-3x m&aacute;s lento
+    </div>
+  </div>
+  <div class="rank-card rank-1">
+    <div class="rank-num">1&ordm;</div>
+    <div class="rank-name">bge-m3</div>
+    <div class="rank-label"><span class="badge badge-green">GPU/AZURE</span></div>
+    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.4rem">
+      8192 tok &mdash; 1024d<br>MTEB-es: ~54 &mdash; inviable CPU local
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="verdict">
+  <h3>Veredicto</h3>
+  <p>
+    <strong>Para desarrollo local (Windows CPU):</strong> <code>intfloat/multilingual-e5-small</code>
+    es el cambio &oacute;ptimo. Mismos par&aacute;metros que MiniLM (118M), misma velocidad, mismas dimensiones
+    (384d &rarr; sin tocar Azure), pero con <strong>512 tokens de ventana</strong> en vez de 128.
+    Eso resuelve el truncamiento que causa el fallo en queries multi-concepto
+    sin ning&uacute;n coste adicional. Cambio en 2 l&iacute;neas del <code>.env</code>.
+  </p>
+  <p style="margin-top:0.6rem">
+    <strong>Para producci&oacute;n Azure:</strong> <code>BAAI/bge-m3</code> sigue siendo la elecci&oacute;n
+    correcta. El build Docker descarga el modelo una vez, la indexaci&oacute;n inicial en Linux es viable,
+    y la calidad de retrieval es m&aacute;xima.
+  </p>
+  <p style="margin-top:0.6rem; color:var(--yellow)">
+    <strong>Estrategia recomendada:</strong> e5-small en local para desarrollo &rarr; bge-m3 en Azure
+    para producci&oacute;n. El c&oacute;digo ya soporta cambiar el modelo por variable de entorno sin tocar nada m&aacute;s.
+  </p>
+</div>
+
+<div class="footnote">
+  <p>
+    Documento generado el 26/05/2026. Datos de benchmark de MTEB Leaderboard (huggingface.co/spaces/mteb/leaderboard).
+    Estimaciones de latencia basadas en hardware CPU AMD/Intel sin GPU, con PyTorch CPU.
+    Los porcentajes de mejora son estimaciones basadas en benchmarks p&uacute;blicos; la mejora real depende del corpus espec&iacute;fico.
+  </p>
+</div>
+
+</body>
+</html>

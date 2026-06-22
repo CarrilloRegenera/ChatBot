@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resumen Corpus RAG - Ultimas Conversaciones</title>
+  <style>
+    :root {
+      --green: #86b63b;
+      --dark: #14210f;
+      --ink: #18212b;
+      --muted: #5f6b7a;
+      --line: #dde4ec;
+      --bg: #f6f8fa;
+      --card: #ffffff;
+      --good: #2f855a;
+      --warn: #b7791f;
+      --bad: #c53030;
+      --info: #2b6cb0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.45;
+    }
+    header {
+      background: var(--dark);
+      color: #fff;
+      padding: 34px 44px;
+      border-bottom: 6px solid var(--green);
+    }
+    header h1 { margin: 0 0 8px; font-size: 30px; }
+    header p { margin: 0; max-width: 980px; color: #dcebd0; }
+    main {
+      max-width: 1160px;
+      margin: 0 auto;
+      padding: 28px 22px 60px;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      margin: 18px 0;
+    }
+    h2 { margin: 0 0 14px; font-size: 23px; }
+    h3 { margin: 22px 0 10px; font-size: 18px; }
+    p { margin: 10px 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    th { background: #f0f4f7; }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      background: #eef2f5;
+      border-radius: 4px;
+      padding: 2px 5px;
+    }
+    ul, ol { padding-left: 22px; }
+    li { margin: 6px 0; }
+    .tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .good { background: #e6f4ea; color: var(--good); }
+    .warn { background: #fff4df; color: var(--warn); }
+    .bad { background: #fde8e8; color: var(--bad); }
+    .info { background: #e8f1fb; color: var(--info); }
+    .callout {
+      border-left: 5px solid var(--green);
+      background: #f4f9ed;
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin: 16px 0;
+    }
+    .question {
+      border: 1px solid var(--line);
+      background: #fbfcfd;
+      border-radius: 8px;
+      padding: 14px;
+      margin: 12px 0;
+    }
+    .question strong {
+      display: block;
+      color: var(--green);
+      margin-bottom: 6px;
+    }
+    .score {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--green);
+    }
+    .small { color: var(--muted); font-size: 13px; }
+    @media (max-width: 760px) {
+      header { padding: 28px 20px; }
+      main { padding: 18px 12px 40px; }
+      section { padding: 18px; }
+      table { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Resumen de las dos ultimas conversaciones sobre Corpus RAG</h1>
+    <p>Documento resumen con el plan de camino actualizado y la evaluacion profunda de los documentos activos del chatbot tecnico de Regenera.</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>Preguntas Tratadas</h2>
+      <div class="question">
+        <strong>1. Plan y camino actualizado</strong>
+        "Con todo el contexto de mi chatbot y todas las conversaciones mandame el HTML con lo actualizado, y el camino que seguiriamos."
+      </div>
+      <div class="question">
+        <strong>2. Evaluacion profunda de los documentos activos</strong>
+        "Quiero que consultes el contenido de cada uno, las preguntas en BD asociadas a ellos, y en general como se suele trabajar con otros chatbots de este estilo, haz la respuesta de una manera mas profunda."
+      </div>
+    </section>
+
+    <section>
+      <h2>1. Plan Actualizado Y Camino Recomendado</h2>
+      <p>Se reviso el HTML original <code>Plan_Chatbot_Regenera.html</code>, la carpeta nueva <code>DOC CHATBOT</code>, el corpus activo y el comportamiento real del RAG en produccion.</p>
+
+      <div class="callout">
+        El camino recomendado es aplicar una Fase 1 pequena y controlada: arreglar RITE, mejorar grupos electrogenos y preparar alta tension completa antes de meter muchos documentos nuevos.
+      </div>
+
+      <h3>Estado Actual Validado</h3>
+      <ul>
+        <li>Produccion estaba sirviendo la imagen <code>70-0e2f09a</code>, correspondiente al cambio del router tecnico.</li>
+        <li>El router ya no bloquea preguntas tecnicas ambiguas: las pruebas entraron por <code>route=knowledge</code>.</li>
+        <li>Los fallos restantes son principalmente de recuperacion documental y sintesis, no del primer filtro.</li>
+        <li>La suite backend quedo en <code>98 passed</code>.</li>
+      </ul>
+
+      <h3>Documentos Que Deben Continuar</h3>
+      <table>
+        <thead>
+          <tr><th>Documento</th><th>Decision</th><th>Motivo</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf</code></td>
+            <td><span class="tag good">Mantener</span></td>
+            <td>Es la fuente principal del REBT y concentra la mayoria de preguntas reales.</td>
+          </tr>
+          <tr>
+            <td><code>guias_tecnicas/Guia_bt_40_sep13R1 (1).pdf</code></td>
+            <td><span class="tag good">Mantener</span></td>
+            <td>Funciona bien para instalaciones generadoras aisladas, asistidas e interconectadas.</td>
+          </tr>
+          <tr>
+            <td><code>fotovoltaica_om/Manual-de-Manteminiento.pdf</code></td>
+            <td><span class="tag warn">Mantener provisionalmente</span></td>
+            <td>Sirve para O&amp;M basico FV, pero debe ampliarse con normativa y documentacion practica fotovoltaica.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Documentos A Sustituir O Complementar</h3>
+      <table>
+        <thead>
+          <tr><th>Documento actual</th><th>Problema</th><th>Sustituto recomendado</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>rite/A35931-35984.pdf</code></td>
+            <td>Falla en tabla 3.1, limpieza de condensadores, evaporadores y calderas de gas.</td>
+            <td><code>RITE IT3.pdf</code>, <code>BOE-A-2007-15820-consolidado RITE.pdf</code>, <code>RITE-2021-BOE-A-2021-4572.pdf</code>.</td>
+          </tr>
+          <tr>
+            <td><code>alta_tension/A16436-16554.pdf</code></td>
+            <td>Cobertura insuficiente para LAT. El plan lo considera una correccion/fragmento.</td>
+            <td>Descargar <code>RD 337/2014 LAT completo</code> y guias tecnicas LAT antes de retirarlo.</td>
+          </tr>
+          <tr>
+            <td><code>grupos_electrogenos/ISO-8528-5-2018.pdf</code></td>
+            <td>Documento corto, normativo, en ingles y poco operativo.</td>
+            <td><code>Manual Grupos Electrogenos Diesel_ESP.pdf</code> de HIMOINSA.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Fases Propuestas</h3>
+      <ol>
+        <li><strong>Fase 1:</strong> incorporar nuevos RITE + HIMOINSA, descargar LAT completo, reindexar y validar preguntas fallidas.</li>
+        <li><strong>Fase 2:</strong> enriquecer REBT con Prysmian errores frecuentes, soluciones particulares y Schneider vol. 1 probado primero en local.</li>
+        <li><strong>Fase 3:</strong> reforzar fotovoltaica con RD 244/2019, guia IDAE de autoconsumo y manuales de inversores reales.</li>
+        <li><strong>Fase 4:</strong> abrir nuevos dominios como PCI, mantenimiento, administracion o RRHH con scopes y baterias independientes.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>2. Evaluacion Profunda De Los Documentos Activos</h2>
+      <p>Se consulto el contenido de los 6 PDFs activos, el mapa de dominios del RAG y el historico de produccion: <strong>435 preguntas tecnicas</strong>, reducidas a <strong>295 preguntas unicas</strong>.</p>
+
+      <h3>Distribucion Aproximada De Preguntas Reales</h3>
+      <table>
+        <thead>
+          <tr><th>Area</th><th>Preguntas asociadas aprox.</th><th>Lectura</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Baja tension / REBT</td><td>~200</td><td>Dominio principal del chatbot tecnico actual.</td></tr>
+          <tr><td>RITE</td><td>~18-20</td><td>Menos volumen, pero fallos importantes en mantenimiento.</td></tr>
+          <tr><td>Alta tension</td><td>~6-11</td><td>Pocas preguntas, pero confianza baja y documento incompleto.</td></tr>
+          <tr><td>Guia BT-40</td><td>~5-11</td><td>Pocas, pero bien alineadas con el documento.</td></tr>
+          <tr><td>Fotovoltaica</td><td>Muy bajo en historico leido</td><td>El negocio necesita mas corpus FV del que existe.</td></tr>
+          <tr><td>Grupos electrogenos</td><td>Muy bajo en historico leido</td><td>Documento actual no es ideal para preguntas operativas.</td></tr>
+          <tr><td>Negocio mezclado en tecnico</td><td>~20-28</td><td>Ruido de modo, no problema documental tecnico.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Notas Por Documento</h3>
+      <table>
+        <thead>
+          <tr><th>Documento</th><th>Nota</th><th>Evaluacion</th><th>Decision</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>BOE-326 REBT + ITCs</code></td>
+            <td><span class="score">8/10</span></td>
+            <td>294 paginas, texto extraible bueno, indice interno y alta relacion con preguntas reales.</td>
+            <td><span class="tag good">Mantener como fuente prioritaria</span></td>
+          </tr>
+          <tr>
+            <td><code>Guia BT-40</code></td>
+            <td><span class="score">8/10</span></td>
+            <td>54 paginas, buen indice, muy util para instalaciones generadoras BT.</td>
+            <td><span class="tag good">Mantener</span></td>
+          </tr>
+          <tr>
+            <td><code>Manual-de-Manteminiento FV</code></td>
+            <td><span class="score">5/10</span></td>
+            <td>Util para mantenimiento basico, pero escaso para autoconsumo, legalizacion, inversores y protecciones.</td>
+            <td><span class="tag warn">Provisional</span></td>
+          </tr>
+          <tr>
+            <td><code>ISO-8528-5-2018</code></td>
+            <td><span class="score">4/10</span></td>
+            <td>13 paginas, ingles, normativo y poco operativo para mantenimiento de grupos.</td>
+            <td><span class="tag warn">Complementar o sustituir</span></td>
+          </tr>
+          <tr>
+            <td><code>RITE A35931-35984</code></td>
+            <td><span class="score">3/10</span></td>
+            <td>No resuelve bien tabla 3.1 ni periodicidades de mantenimiento.</td>
+            <td><span class="tag bad">Sustituir</span></td>
+          </tr>
+          <tr>
+            <td><code>Alta tension A16436-16554</code></td>
+            <td><span class="score">3/10</span></td>
+            <td>Texto extraible, pero cobertura insuficiente para LAT completo.</td>
+            <td><span class="tag bad">Reemplazar cuando exista LAT completo</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        Nota global del corpus activo: <strong>6/10</strong>. Sirve para arrancar, sobre todo por REBT, pero no es suficiente como corpus definitivo para escalar el chatbot.
+      </div>
+    </section>
+
+    <section>
+      <h2>Criterio General Para Un RAG Tecnico De Este Tipo</h2>
+      <p>Un chatbot tecnico robusto no deberia depender solo de PDFs normativos. Lo normal es organizar el corpus por capas:</p>
+      <ol>
+        <li><strong>Normativa oficial:</strong> BOE, reales decretos, reglamentos e ITCs.</li>
+        <li><strong>Guias oficiales:</strong> MINCOTUR, IDAE, CTE, RIPCI.</li>
+        <li><strong>Manuales practicos:</strong> fabricantes, mantenimiento, ejemplos y casos reales.</li>
+        <li><strong>Documentacion interna:</strong> procedimientos, checklists, manuales propios de Regenera.</li>
+        <li><strong>Datos estructurados:</strong> tablas, FAQs, preguntas de examen, periodicidades y relaciones campo-valor.</li>
+      </ol>
+      <p>Para Azure AI Search, el enfoque mas adecuado es busqueda hibrida: texto exacto + vector + reranking semantico. Esto es especialmente importante para preguntas como <code>tabla 3.1</code>, <code>ITC-BT-52</code>, <code>TN-S</code>, <code>conductor de proteccion</code> o <code>limpieza de evaporadores</code>, donde la literalidad importa tanto como la similitud semantica.</p>
+    </section>
+
+    <section>
+      <h2>Decision Final</h2>
+      <p>El corpus actual es valido como primera base, pero el siguiente paso no deberia ser meter todos los PDFs nuevos. El camino mas seguro es:</p>
+      <ol>
+        <li>Arreglar RITE con documentos pequeños, limpios y directos.</li>
+        <li>Mejorar grupos electrogenos con HIMOINSA.</li>
+        <li>Completar alta tension antes de retirar el documento actual.</li>
+        <li>Reindexar y validar con las preguntas que ya fallaron.</li>
+        <li>Despues enriquecer REBT y FV por fases.</li>
+      </ol>
+      <p class="small">Generado a partir de las dos ultimas conversaciones sobre plan de corpus y evaluacion documental profunda.</p>
+    </section>
+  </main>
+</body>
+</html>

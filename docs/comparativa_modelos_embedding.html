@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comparativa Modelos Embedding — ChatBot RAG Regenera Energy</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #273450;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --accent: #38bdf8;
+    --green: #4ade80;
+    --red: #f87171;
+    --orange: #fb923c;
+    --yellow: #fbbf24;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.8rem;
+    margin-bottom: 0.25rem;
+    color: var(--accent);
+  }
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin-bottom: 2rem;
+  }
+  h2 {
+    font-size: 1.3rem;
+    margin: 2rem 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--accent);
+  }
+  h3 {
+    font-size: 1.05rem;
+    margin: 1.2rem 0 0.6rem;
+    color: var(--text);
+  }
+
+  /* Tabla comparativa principal */
+  .compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 2rem;
+    font-size: 0.9rem;
+  }
+  .compare-table th,
+  .compare-table td {
+    padding: 0.65rem 0.9rem;
+    border: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  .compare-table thead th {
+    background: var(--surface2);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+  }
+  .compare-table tbody tr:nth-child(even) { background: var(--surface); }
+  .compare-table tbody tr:hover { background: var(--surface2); }
+  .compare-table .label { color: var(--text-muted); font-weight: 500; min-width: 180px; }
+  .compare-table .current { background: rgba(56, 189, 248, 0.06); }
+  .compare-table .candidate { background: rgba(74, 222, 128, 0.06); }
+
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+  .badge-green  { background: rgba(74,222,128,0.15); color: var(--green); }
+  .badge-red    { background: rgba(248,113,113,0.15); color: var(--red); }
+  .badge-orange { background: rgba(251,146,60,0.15);  color: var(--orange); }
+  .badge-yellow { background: rgba(251,191,36,0.15);  color: var(--yellow); }
+  .badge-blue   { background: rgba(56,189,248,0.15);  color: var(--accent); }
+
+  /* Barras de score */
+  .score-bar {
+    height: 22px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #fff;
+    min-width: 40px;
+  }
+  .score-bar.high  { background: linear-gradient(90deg, #059669, #4ade80); }
+  .score-bar.med   { background: linear-gradient(90deg, #d97706, #fbbf24); }
+  .score-bar.low   { background: linear-gradient(90deg, #dc2626, #f87171); }
+
+  /* Cards de caso real */
+  .case-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    margin: 0.8rem 0;
+  }
+  .case-card .query {
+    font-style: italic;
+    color: var(--yellow);
+    margin-bottom: 0.5rem;
+  }
+  .case-card .result {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+  }
+  .case-card .result strong { color: var(--text); }
+
+  /* Panel de impacto */
+  .impact-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .impact-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+  }
+  .impact-card h4 {
+    font-size: 0.95rem;
+    margin-bottom: 0.4rem;
+  }
+  .impact-card p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  code {
+    background: var(--surface2);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+  }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    margin: 0.8rem 0;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    color: var(--text-muted);
+  }
+
+  .pros-cons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .pros-cons ul {
+    list-style: none;
+    padding: 0;
+  }
+  .pros-cons li {
+    padding: 0.3rem 0;
+    font-size: 0.88rem;
+  }
+  .pros-cons li::before {
+    display: inline-block;
+    width: 1.2rem;
+    font-weight: bold;
+  }
+  .pros li::before { content: "+"; color: var(--green); }
+  .cons li::before { content: "-"; color: var(--red); }
+
+  .verdict {
+    background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(74,222,128,0.08));
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+  }
+  .verdict h3 { color: var(--accent); margin-bottom: 0.6rem; }
+
+  .footnote {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .tag-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.3rem 0; }
+
+  @media (max-width: 768px) {
+    body { padding: 1rem; }
+    .pros-cons { grid-template-columns: 1fr; }
+    .compare-table { font-size: 0.8rem; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Comparativa de Modelos de Embedding</h1>
+<p class="subtitle">
+  ChatBot RAG &mdash; Regenera Energy &mdash; Mayo 2026<br>
+  Modelo actual vs candidato &middot; Sin cambiar arquitectura (ChromaDB + scoring h&iacute;brido)
+</p>
+
+<!-- ============================================ -->
+<h2>1. Ficha t&eacute;cnica</h2>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th class="label">Par&aacute;metro</th>
+    <th class="current">paraphrase-multilingual-MiniLM-L12-v2 <span class="badge badge-blue">ACTUAL</span></th>
+    <th class="candidate">BAAI/bge-m3 <span class="badge badge-green">CANDIDATO</span></th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">Organizaci&oacute;n</td>
+    <td>Sentence-Transformers (UKP Lab)</td>
+    <td>BAAI (Beijing Academy of AI)</td>
+  </tr>
+  <tr>
+    <td class="label">Arquitectura base</td>
+    <td>MiniLM (distilled BERT)</td>
+    <td>XLM-RoBERTa-large (retrained)</td>
+  </tr>
+  <tr>
+    <td class="label">Par&aacute;metros</td>
+    <td>~118 M</td>
+    <td>~568 M <span class="badge badge-orange">&times;4.8</span></td>
+  </tr>
+  <tr>
+    <td class="label">Capas transformer</td>
+    <td>12</td>
+    <td>24</td>
+  </tr>
+  <tr>
+    <td class="label">Dimensiones embedding</td>
+    <td>384</td>
+    <td>1024 <span class="badge badge-orange">&times;2.7</span></td>
+  </tr>
+  <tr>
+    <td class="label">Max tokens (seq. length)</td>
+    <td><strong>128 tokens</strong> <span class="badge badge-red">LIMITANTE</span></td>
+    <td><strong>8192 tokens</strong> <span class="badge badge-green">&times;64</span></td>
+  </tr>
+  <tr>
+    <td class="label">Idiomas</td>
+    <td>50+</td>
+    <td>100+ (incluye espa&ntilde;ol)</td>
+  </tr>
+  <tr>
+    <td class="label">Tipos de retrieval</td>
+    <td>Dense (vector) solamente</td>
+    <td>Dense + Sparse (lexical) + Multi-vector (ColBERT)</td>
+  </tr>
+  <tr>
+    <td class="label">Tama&ntilde;o en disco</td>
+    <td>~470 MB</td>
+    <td>~2.2 GB</td>
+  </tr>
+  <tr>
+    <td class="label">RAM en inferencia (CPU)</td>
+    <td>~0.6 GB</td>
+    <td>~2.5 GB</td>
+  </tr>
+  <tr>
+    <td class="label">Licencia</td>
+    <td>Apache 2.0</td>
+    <td>MIT</td>
+  </tr>
+  <tr>
+    <td class="label">MTEB Retrieval (avg)</td>
+    <td>~43 (nDCG@10)</td>
+    <td>~58 (nDCG@10) <span class="badge badge-green">+35%</span></td>
+  </tr>
+  <tr>
+    <td class="label">MTEB Retrieval (es)</td>
+    <td>~38</td>
+    <td>~54 <span class="badge badge-green">+42%</span></td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================ -->
+<h2>2. Impacto en el pipeline actual del ChatBot</h2>
+
+<h3>2.1 Configuraci&oacute;n actual</h3>
+<pre>
+MODELO:       paraphrase-multilingual-MiniLM-L12-v2
+CHUNK_SIZE:   900 chars (~160-200 tokens espa&ntilde;ol)
+CHUNK_OVERLAP: 180 chars
+TOP_K:        6
+BACKEND:      ChromaDB (PersistentClient)
+SCORING:      H&iacute;brido (vector + l&eacute;xico + domain boost + rerank)
+COLECCIONES:  3848 chunks indexados (4 PDFs)
+</pre>
+
+<h3>2.2 El problema cr&iacute;tico: ventana de 128 tokens</h3>
+<div class="case-card">
+  <div class="query">&laquo;En una electrificaci&oacute;n b&aacute;sica, ind&iacute;came la secci&oacute;n que debe tener el cableado de alumbrado&raquo;</div>
+  <div class="result">
+    El modelo actual tiene una ventana de <strong>128 tokens</strong>. Un chunk de 900 caracteres en espa&ntilde;ol
+    genera ~160-200 tokens. Esto significa que <strong>el modelo trunca silenciosamente
+    entre el 20% y el 36% del texto</strong> de cada chunk antes de generar el embedding.
+    <br><br>
+    El chunk enriquecido post-Opci&oacute;n&nbsp;A tiene este formato:<br>
+    <code>[ITC-BT-25] INSTALACIONES INTERIORES EN VIVIENDAS. FILA_TABLA. Tabla 1. Caracter&iacute;sticas
+    el&eacute;ctricas de los circuitos. Circuito: C1 Iluminaci&oacute;n; Secci&oacute;n: 1,5 mm&sup2;; ...</code>
+    <br><br>
+    Con 128 tokens, el prefijo <code>[ITC-BT-25] INSTALACIONES INTERIORES...</code> consume ~15 tokens
+    y el dato clave <code>Secci&oacute;n: 1,5 mm&sup2;</code> puede quedar <strong>dentro de la ventana</strong> para filas de tabla
+    (que son cortas). Pero para <strong>chunks de texto largo</strong>, la segunda mitad simplemente no existe
+    para el modelo.
+  </div>
+</div>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th class="label">Aspecto</th>
+    <th class="current">MiniLM (128 tokens)</th>
+    <th class="candidate">bge-m3 (8192 tokens)</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">Chunk 900 chars (~180 tok)</td>
+    <td><span class="badge badge-red">Truncado ~30%</span> &mdash; final perdido</td>
+    <td><span class="badge badge-green">Completo</span> &mdash; todo el texto</td>
+  </tr>
+  <tr>
+    <td class="label">FILA_TABLA enriquecida (~100 tok)</td>
+    <td><span class="badge badge-yellow">Ajustado</span> &mdash; puede entrar</td>
+    <td><span class="badge badge-green">Completo</span> &mdash; sin riesgo</td>
+  </tr>
+  <tr>
+    <td class="label">Query larga del usuario (~40 tok)</td>
+    <td><span class="badge badge-green">OK</span></td>
+    <td><span class="badge badge-green">OK</span></td>
+  </tr>
+  <tr>
+    <td class="label">Tabla completa como chunk (~400 tok)</td>
+    <td><span class="badge badge-red">Solo ve 1/3</span></td>
+    <td><span class="badge badge-green">Completo</span></td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================ -->
+<h2>3. Rendimiento — Velocidad y recursos</h2>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th class="label">M&eacute;trica</th>
+    <th class="current">MiniLM-L12</th>
+    <th class="candidate">bge-m3</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">Indexaci&oacute;n 3848 chunks (CPU)</td>
+    <td>~2 min</td>
+    <td>~8-12 min <span class="badge badge-orange">&times;4-6</span></td>
+  </tr>
+  <tr>
+    <td class="label">Query embedding (1 pregunta, CPU)</td>
+    <td>~15-25 ms</td>
+    <td>~80-150 ms <span class="badge badge-orange">&times;5</span></td>
+  </tr>
+  <tr>
+    <td class="label">Query embedding (GPU T4/A10)</td>
+    <td>~3-5 ms</td>
+    <td>~10-20 ms</td>
+  </tr>
+  <tr>
+    <td class="label">Almacenamiento ChromaDB</td>
+    <td>~5.6 MB (384d &times; 3848)</td>
+    <td>~15 MB (1024d &times; 3848)</td>
+  </tr>
+  <tr>
+    <td class="label">RAM proceso Python</td>
+    <td>~0.6 GB</td>
+    <td>~2.5 GB <span class="badge badge-orange">&times;4</span></td>
+  </tr>
+  <tr>
+    <td class="label">Latencia total RAG (CPU)</td>
+    <td>~1.9 s (observado en logs)</td>
+    <td>~2.1-2.5 s (estimado)</td>
+  </tr>
+  <tr>
+    <td class="label">Impacto en tiempo total respuesta</td>
+    <td colspan="2" style="text-align:center; color:var(--text-muted)">
+      RAG = ~2s de ~12s total. El LLM domina (10s). Diferencia de ~0.3-0.6s en RAG es despreciable.
+    </td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================ -->
+<h2>4. Calidad de retrieval — An&aacute;lisis por caso</h2>
+
+<h3>Caso 1: Electrificaci&oacute;n b&aacute;sica + alumbrado (FALLO REAL)</h3>
+<div class="case-card">
+  <div class="query">&laquo;En una electrificaci&oacute;n b&aacute;sica, ind&iacute;came la secci&oacute;n que debe tener el cableado de alumbrado&raquo;</div>
+  <div class="result">
+    <strong>MiniLM (actual):</strong> Top-1 = ITC-BT-10 grado electrificaci&oacute;n (dist=6.91). La tabla C1 con 1,5 mm&sup2; NO aparece en top 15.<br>
+    <strong>bge-m3 (estimado):</strong> La mayor ventana sem&aacute;ntica y mejor comprensi&oacute;n multi-term deber&iacute;a conectar
+    &laquo;electrificaci&oacute;n b&aacute;sica&raquo; + &laquo;alumbrado&raquo; + &laquo;secci&oacute;n&raquo; con la fila enriquecida <code>[ITC-BT-25] ... C1 Iluminaci&oacute;n ... 1,5 mm&sup2;</code>.
+    <br><br>
+    <strong>Por qu&eacute;:</strong> MiniLM trunca a 128 tokens y tiene embeddings de baja dimensionalidad (384d) que
+    no distinguen bien entre &laquo;secci&oacute;n de cable de alumbrado&raquo; (circuito el&eacute;ctrico) vs
+    &laquo;secci&oacute;n del cableado interno de luminaria&raquo; (construcci&oacute;n del aparato). bge-m3 con 1024d
+    tiene mayor capacidad de desambiguaci&oacute;n sem&aacute;ntica.
+  </div>
+</div>
+
+<h3>Caso 2: Queries num&eacute;ricas con tabla</h3>
+<div class="case-card">
+  <div class="query">&laquo;&iquest;Cu&aacute;l es la distancia m&iacute;nima de 0,2 m para canalizaciones el&eacute;ctricas?&raquo;</div>
+  <div class="result">
+    <strong>MiniLM:</strong> Valores num&eacute;ricos (0,2 / 0,20) tienen baja se&ntilde;al en embeddings de 384d. Requiri&oacute;
+    heur&iacute;sticas extra (<code>_standalone_numbers</code>, <code>numeric_diversity</code>) en scoring.<br>
+    <strong>bge-m3:</strong> Embeddings de 1024d preservan mejor la se&ntilde;al num&eacute;rica. Adem&aacute;s, el modo
+    <strong>sparse (lexical)</strong> nativo podr&iacute;a reemplazar la b&uacute;squeda l&eacute;xica manual actual (~200 l&iacute;neas de scoring).
+  </div>
+</div>
+
+<h3>Caso 3: Queries cross-ITC</h3>
+<div class="case-card">
+  <div class="query">&laquo;Clasificaci&oacute;n de instalaciones generadoras seg&uacute;n la gu&iacute;a BT-40&raquo;</div>
+  <div class="result">
+    <strong>MiniLM:</strong> Requiri&oacute; ~40 l&iacute;neas de scoring hardcodeado (<code>mentions_bt_generators</code>,
+    boosts de +18/+24/+30) para funcionar.<br>
+    <strong>bge-m3:</strong> Mayor capacidad sem&aacute;ntica deber&iacute;a reducir la necesidad de boosts por dominio,
+    aunque no eliminarla completamente. Las heur&iacute;sticas de dominio seguir&iacute;an siendo &uacute;tiles como safety net.
+  </div>
+</div>
+
+<!-- ============================================ -->
+<h2>5. Capacidad multimodal de retrieval (bge-m3 exclusivo)</h2>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th class="label">Modo</th>
+    <th>Descripci&oacute;n</th>
+    <th>Aplicable al ChatBot</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label"><strong>Dense</strong></td>
+    <td>Embedding vectorial cl&aacute;sico (como MiniLM). 1024 dimensiones.</td>
+    <td><span class="badge badge-green">S&Iacute;</span> &mdash; reemplazo directo de MiniLM en ChromaDB</td>
+  </tr>
+  <tr>
+    <td class="label"><strong>Sparse</strong></td>
+    <td>Genera pesos l&eacute;xicos tipo BM25 aprendido. Cada token recibe un peso de importancia.</td>
+    <td><span class="badge badge-yellow">FUTURO</span> &mdash; podr&iacute;a reemplazar el scoring l&eacute;xico manual
+    (~200 l&iacute;neas de <code>overlap_score</code>, <code>core_hits</code>, <code>section_hits</code>).
+    Requiere cambio en ChromaDB o &iacute;ndice externo.</td>
+  </tr>
+  <tr>
+    <td class="label"><strong>ColBERT (multi-vector)</strong></td>
+    <td>Un vector por token. Matching token-a-token con MaxSim.</td>
+    <td><span class="badge badge-red">NO</span> &mdash; ChromaDB no soporta multi-vector. Necesitar&iacute;a Milvus/Qdrant.</td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================ -->
+<h2>6. Cambios necesarios en el c&oacute;digo</h2>
+
+<h3>Cambio m&iacute;nimo (solo dense, drop-in)</h3>
+<pre>
+# config.py — cambiar una l&iacute;nea:
+RERANK_MODEL = os.getenv("RERANK_MODEL", <del>"paraphrase-multilingual-MiniLM-L12-v2"</del>).strip()
+RERANK_MODEL = os.getenv("RERANK_MODEL", <ins>"BAAI/bge-m3"</ins>).strip()
+
+# rag_service.py — actualizar _EF_VERSION para forzar re-index:
+_EF_VERSION = f"bge-m3-v1-structured-refs-table-split-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"
+
+# Luego reset + sync:
+from rag_service import reset_documents, sync_documents
+reset_documents()
+sync_documents()  # ~8-12 min en CPU
+</pre>
+
+<h3>Cambios opcionales (optimizaci&oacute;n)</h3>
+<pre>
+# 1. CHUNK_SIZE: con 8192 tokens de ventana, se puede subir a 1500-2000 chars
+#    sin riesgo de truncamiento. Menos chunks = menos ruido en retrieval.
+CHUNK_SIZE = 1500
+CHUNK_OVERLAP = 300
+
+# 2. Reducir heur&iacute;sticas de scoring si la calidad vectorial mejora.
+#    Medir primero, simplificar despu&eacute;s.
+
+# 3. Usar sparse embeddings de bge-m3 para reemplazar scoring l&eacute;xico manual.
+#    Requiere almacenar sparse vectors aparte (ChromaDB no los soporta nativamente).
+</pre>
+
+<!-- ============================================ -->
+<h2>7. Pros y contras</h2>
+
+<h3>paraphrase-multilingual-MiniLM-L12-v2 <span class="badge badge-blue">ACTUAL</span></h3>
+<div class="pros-cons">
+  <div class="pros">
+    <h4 style="color:var(--green)">Ventajas</h4>
+    <ul>
+      <li>R&aacute;pido en CPU (~25 ms/query)</li>
+      <li>Bajo consumo RAM (~0.6 GB)</li>
+      <li>Probado y estable en el proyecto</li>
+      <li>Indexaci&oacute;n r&aacute;pida (~2 min)</li>
+      <li>Funciona sin GPU</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4 style="color:var(--red)">Desventajas</h4>
+    <ul>
+      <li>Ventana de 128 tokens &mdash; trunca chunks</li>
+      <li>384 dimensiones &mdash; baja capacidad sem&aacute;ntica</li>
+      <li>Requiere ~800 l&iacute;neas de scoring para compensar</li>
+      <li>Falla en queries multi-concepto (electrif. + alumbrado + secci&oacute;n)</li>
+      <li>D&eacute;bil en n&uacute;meros y tablas</li>
+      <li>Benchmark MTEB-es bajo (~38 nDCG)</li>
+    </ul>
+  </div>
+</div>
+
+<h3>BAAI/bge-m3 <span class="badge badge-green">CANDIDATO</span></h3>
+<div class="pros-cons">
+  <div class="pros">
+    <h4 style="color:var(--green)">Ventajas</h4>
+    <ul>
+      <li>8192 tokens &mdash; nunca trunca</li>
+      <li>1024 dimensiones &mdash; alta precisi&oacute;n sem&aacute;ntica</li>
+      <li>Benchmark MTEB-es ~54 nDCG (+42%)</li>
+      <li>Sparse retrieval nativo (futuro: simplificar scoring)</li>
+      <li>Mejor con n&uacute;meros y t&eacute;rminos t&eacute;cnicos</li>
+      <li>Drop-in: misma API SentenceTransformer</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4 style="color:var(--red)">Desventajas</h4>
+    <ul>
+      <li>~2.5 GB RAM (viable pero x4)</li>
+      <li>~80-150 ms/query en CPU (a&uacute;n aceptable)</li>
+      <li>Indexaci&oacute;n ~8-12 min (una sola vez)</li>
+      <li>2.2 GB descarga inicial</li>
+      <li>ColBERT no usable con ChromaDB</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<h2>8. Estimaci&oacute;n de impacto en calidad</h2>
+
+<div class="impact-grid">
+  <div class="impact-card">
+    <h4>Queries simples (1 concepto)</h4>
+    <div class="score-bar high" style="width:85%">Mejora leve +5-10%</div>
+    <p>Ambos modelos funcionan bien. La mejora viene de no truncar.</p>
+  </div>
+  <div class="impact-card">
+    <h4>Queries multi-concepto</h4>
+    <div class="score-bar high" style="width:95%">Mejora alta +25-40%</div>
+    <p>&laquo;electrificaci&oacute;n b&aacute;sica + alumbrado + secci&oacute;n&raquo; &mdash; el caso que fall&oacute;.</p>
+  </div>
+  <div class="impact-card">
+    <h4>Queries con n&uacute;meros</h4>
+    <div class="score-bar high" style="width:90%">Mejora alta +20-30%</div>
+    <p>1024d captura mejor &laquo;0,2 m&raquo; vs &laquo;0,20 m&raquo; vs &laquo;20 cm&raquo;.</p>
+  </div>
+  <div class="impact-card">
+    <h4>Queries sobre tablas</h4>
+    <div class="score-bar high" style="width:92%">Mejora alta +25-35%</div>
+    <p>FILA_TABLA enriquecida + ventana larga = matching completo.</p>
+  </div>
+  <div class="impact-card">
+    <h4>Reducir c&oacute;digo de scoring</h4>
+    <div class="score-bar med" style="width:60%">Potencial medio</div>
+    <p>Podr&iacute;an eliminarse ~200 l&iacute;neas de scoring l&eacute;xico si bge-m3 es suficiente. Requiere medici&oacute;n.</p>
+  </div>
+  <div class="impact-card">
+    <h4>Escalabilidad horizontal</h4>
+    <div class="score-bar high" style="width:88%">Beneficio alto</div>
+    <p>Menos heur&iacute;sticas por dominio = menos c&oacute;digo al a&ntilde;adir PRL, RRHH, etc.</p>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<h2>9. Plan de migraci&oacute;n recomendado</h2>
+
+<table class="compare-table">
+<thead>
+  <tr>
+    <th style="width:60px">Fase</th>
+    <th>Acci&oacute;n</th>
+    <th style="width:100px">Esfuerzo</th>
+    <th style="width:100px">Riesgo</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><strong>1</strong></td>
+    <td>Cambiar <code>RERANK_MODEL</code> a <code>BAAI/bge-m3</code> y reindexar. Sin tocar scoring.</td>
+    <td><span class="badge badge-green">Bajo</span></td>
+    <td><span class="badge badge-green">Bajo</span></td>
+  </tr>
+  <tr>
+    <td><strong>2</strong></td>
+    <td>Probar las 5-10 queries problem&aacute;ticas conocidas. Comparar distancias y top-k.</td>
+    <td><span class="badge badge-green">Bajo</span></td>
+    <td><span class="badge badge-green">Ninguno</span></td>
+  </tr>
+  <tr>
+    <td><strong>3</strong></td>
+    <td>Si mejora: subir <code>CHUNK_SIZE</code> a 1500 y reindexar. Medir de nuevo.</td>
+    <td><span class="badge badge-yellow">Medio</span></td>
+    <td><span class="badge badge-yellow">Medio</span></td>
+  </tr>
+  <tr>
+    <td><strong>4</strong></td>
+    <td>Reducir heur&iacute;sticas de scoring que bge-m3 haga innecesarias.</td>
+    <td><span class="badge badge-orange">Alto</span></td>
+    <td><span class="badge badge-yellow">Medio</span></td>
+  </tr>
+  <tr>
+    <td><strong>5</strong></td>
+    <td>Explorar sparse embeddings para reemplazar scoring l&eacute;xico manual.</td>
+    <td><span class="badge badge-orange">Alto</span></td>
+    <td><span class="badge badge-yellow">Medio</span></td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ============================================ -->
+<div class="verdict">
+  <h3>Veredicto</h3>
+  <p>
+    <strong>bge-m3 es la mejora m&aacute;s impactante posible sin cambiar arquitectura.</strong>
+    El cuello de botella principal del RAG actual no est&aacute; en el scoring (que ya es sofisticado),
+    sino en que <strong>MiniLM trunca el 30% de cada chunk</strong> y genera embeddings de baja
+    dimensionalidad que no distinguen queries multi-concepto en espa&ntilde;ol t&eacute;cnico.
+  </p>
+  <p style="margin-top:0.6rem">
+    El cambio es <strong>drop-in</strong> (1 l&iacute;nea de config + reindex). El coste es ~2 GB m&aacute;s de RAM
+    y ~100ms m&aacute;s por query en CPU &mdash; insignificante frente a los 10s del LLM.
+    La mejora estimada en retrieval es de <strong>+25-40% en queries multi-concepto</strong>,
+    que son exactamente las que fallan hoy.
+  </p>
+  <p style="margin-top:0.6rem; color:var(--yellow)">
+    <strong>Recomendaci&oacute;n:</strong> Implementar Fase 1 (cambio de modelo) y Fase 2 (validaci&oacute;n con queries reales)
+    antes de tocar el scoring. Medir primero, simplificar despu&eacute;s.
+  </p>
+</div>
+
+<div class="footnote">
+  <p>
+    Documento generado el 26/05/2026. Datos de benchmark de MTEB Leaderboard (huggingface.co/spaces/mteb/leaderboard).
+    Estimaciones de latencia basadas en hardware CPU Intel i7/Xeon sin GPU.
+    Los porcentajes de mejora son estimaciones basadas en benchmarks p&uacute;blicos; la mejora real depende del corpus espec&iacute;fico.
+  </p>
+</div>
+
+</body>
+</html>

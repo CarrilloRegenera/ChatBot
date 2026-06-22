@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Migración bge-m3 — Cambios en código e impacto a futuro</title>
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --surface2: #273450;
+    --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
+    --accent: #38bdf8; --green: #4ade80; --red: #f87171;
+    --orange: #fb923c; --yellow: #fbbf24; --purple: #c084fc;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    line-height: 1.65; padding: 2rem; max-width: 1200px; margin: 0 auto;
+  }
+  h1 { font-size: 1.7rem; color: var(--accent); margin-bottom: 0.2rem; }
+  .subtitle { color: var(--muted); font-size: 0.92rem; margin-bottom: 2rem; }
+  h2 {
+    font-size: 1.25rem; margin: 2.2rem 0 0.8rem;
+    padding-bottom: 0.4rem; border-bottom: 1px solid var(--border);
+    color: var(--accent);
+  }
+  h3 { font-size: 1rem; margin: 1.2rem 0 0.5rem; color: var(--text); }
+  h4 { font-size: 0.92rem; margin: 0.8rem 0 0.3rem; color: var(--yellow); }
+
+  .badge {
+    display: inline-block; padding: 0.12rem 0.45rem;
+    border-radius: 4px; font-size: 0.76rem; font-weight: 600;
+  }
+  .b-green  { background: rgba(74,222,128,0.15); color: var(--green); }
+  .b-red    { background: rgba(248,113,113,0.15); color: var(--red); }
+  .b-orange { background: rgba(251,146,60,0.15);  color: var(--orange); }
+  .b-yellow { background: rgba(251,191,36,0.15);  color: var(--yellow); }
+  .b-blue   { background: rgba(56,189,248,0.15);  color: var(--accent); }
+  .b-purple { background: rgba(192,132,252,0.15); color: var(--purple); }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 0.8rem 0 1.5rem; font-size: 0.88rem;
+  }
+  th, td {
+    padding: 0.55rem 0.8rem; border: 1px solid var(--border);
+    text-align: left; vertical-align: top;
+  }
+  thead th { background: var(--surface2); font-weight: 600; position: sticky; top: 0; }
+  tbody tr:nth-child(even) { background: var(--surface); }
+  tbody tr:hover { background: var(--surface2); }
+  .label { color: var(--muted); font-weight: 500; min-width: 160px; }
+
+  pre, code {
+    font-family: 'Cascadia Code', Consolas, monospace;
+  }
+  code {
+    background: var(--surface2); padding: 0.1rem 0.35rem;
+    border-radius: 3px; font-size: 0.83rem;
+  }
+  pre {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 1rem; overflow-x: auto;
+    font-size: 0.82rem; margin: 0.6rem 0; color: var(--muted);
+  }
+  pre .add  { color: var(--green); }
+  pre .del  { color: var(--red); text-decoration: line-through; }
+  pre .com  { color: #6b7280; font-style: italic; }
+  pre .file { color: var(--yellow); font-weight: 600; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem 1.2rem; margin: 0.7rem 0;
+  }
+  .card p { font-size: 0.88rem; color: var(--muted); margin-top: 0.3rem; }
+
+  .grid2 {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 0.8rem; margin: 0.8rem 0;
+  }
+
+  .verdict {
+    background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(74,222,128,0.08));
+    border: 1px solid var(--accent); border-radius: 8px;
+    padding: 1.2rem 1.5rem; margin: 1.5rem 0;
+  }
+  .verdict h3 { color: var(--accent); margin-bottom: 0.5rem; }
+
+  .timeline {
+    border-left: 3px solid var(--accent); margin: 1rem 0; padding-left: 1.5rem;
+  }
+  .timeline .step {
+    position: relative; margin-bottom: 1.5rem;
+  }
+  .timeline .step::before {
+    content: ""; position: absolute; left: -1.85rem; top: 0.35rem;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .timeline .step h4 { margin: 0 0 0.2rem; }
+  .timeline .step p { font-size: 0.85rem; color: var(--muted); }
+
+  .footnote {
+    font-size: 0.78rem; color: var(--muted);
+    margin-top: 2rem; padding-top: 0.8rem; border-top: 1px solid var(--border);
+  }
+
+  @media (max-width: 768px) {
+    body { padding: 1rem; }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Migraci&oacute;n a BAAI/bge-m3</h1>
+<p class="subtitle">
+  Cambios exactos en c&oacute;digo &middot; Impacto en escalado futuro &middot; ChatBot RAG Regenera Energy &middot; Mayo 2026
+</p>
+
+<!-- ====================================================================== -->
+<h2>1. Mapa de archivos afectados</h2>
+
+<table>
+<thead>
+  <tr>
+    <th>Archivo</th>
+    <th>Cambio</th>
+    <th>Riesgo</th>
+    <th>L&iacute;neas</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><code>config.py</code></td>
+    <td>Cambiar nombre del modelo + nueva variable <code>EMBEDDING_MODEL</code></td>
+    <td><span class="badge b-green">Bajo</span></td>
+    <td>~4</td>
+  </tr>
+  <tr>
+    <td><code>rag_service.py</code></td>
+    <td>Adaptar <code>_MultilingualEF</code>, <code>_EF_VERSION</code>, chunk sizes, batch encode</td>
+    <td><span class="badge b-yellow">Medio</span></td>
+    <td>~25</td>
+  </tr>
+  <tr>
+    <td><code>memory_service.py</code></td>
+    <td>Actualizar <code>_MEMORY_EF_VERSION</code> (fuerza re-creaci&oacute;n de memory collection)</td>
+    <td><span class="badge b-green">Bajo</span></td>
+    <td>1</td>
+  </tr>
+  <tr>
+    <td><code>chroma_client.py</code></td>
+    <td>Sin cambios</td>
+    <td><span class="badge b-green">Ninguno</span></td>
+    <td>0</td>
+  </tr>
+  <tr>
+    <td><code>ai_service.py</code></td>
+    <td>Sin cambios (system prompt no depende del modelo de embedding)</td>
+    <td><span class="badge b-green">Ninguno</span></td>
+    <td>0</td>
+  </tr>
+  <tr>
+    <td><code>.env</code></td>
+    <td>Opcional: overrides de <code>EMBEDDING_MODEL</code>, <code>CHUNK_SIZE</code></td>
+    <td><span class="badge b-green">Bajo</span></td>
+    <td>~3</td>
+  </tr>
+  <tr>
+    <td><code>chroma_db/</code></td>
+    <td>Reindex completo (auto por <code>ef_version</code> mismatch)</td>
+    <td><span class="badge b-yellow">Medio</span></td>
+    <td>N/A</td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ====================================================================== -->
+<h2>2. Cambios exactos por archivo</h2>
+
+<!-- ---- config.py ---- -->
+<h3>2.1 <code>config.py</code> <span class="badge b-blue">4 l&iacute;neas</span></h3>
+
+<pre>
+<span class="file"># config.py — L&iacute;nea 65</span>
+<span class="com"># ANTES:</span>
+<span class="del">RERANK_MODEL = os.getenv("RERANK_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()</span>
+
+<span class="com"># DESPUÉS: separar concepto embedding vs rerank + nuevo default</span>
+<span class="add">EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3").strip()</span>
+<span class="add">RERANK_MODEL = os.getenv("RERANK_MODEL", EMBEDDING_MODEL).strip()  # por defecto, mismo modelo</span>
+
+<span class="com"># NUEVO — Chunk sizes ajustados a la ventana de 8192 tokens de bge-m3</span>
+<span class="com"># Se mantienen como env vars para poder volver a los valores anteriores sin tocar c&oacute;digo</span>
+<span class="com"># (MiniLM: CHUNK_SIZE=900, CHUNK_OVERLAP=180)</span>
+</pre>
+
+<div class="card">
+  <h4>Por qu&eacute; separar EMBEDDING_MODEL de RERANK_MODEL</h4>
+  <p>
+    Hoy <code>RERANK_MODEL</code> se usa para DOS cosas: generar embeddings de indexaci&oacute;n Y para reranking.
+    Son conceptos distintos. Separar la variable permite en el futuro usar un modelo ligero para rerank
+    (ej: cross-encoder) y bge-m3 solo para embeddings. Tambi&eacute;n facilita A/B testing.
+  </p>
+</div>
+
+<!-- ---- rag_service.py ---- -->
+<h3>2.2 <code>rag_service.py</code> <span class="badge b-yellow">~25 l&iacute;neas</span></h3>
+
+<h4>2.2.1 Imports y carga del modelo (l&iacute;neas 351-368)</h4>
+<pre>
+<span class="file"># rag_service.py — Carga del modelo</span>
+<span class="com"># ANTES:</span>
+<span class="del">def _load_sentence_transformer(local_files_only: bool) -> SentenceTransformer:</span>
+<span class="del">    kwargs = {"local_files_only": local_files_only}</span>
+<span class="del">    if RERANK_MODEL_REVISION:</span>
+<span class="del">        kwargs["revision"] = RERANK_MODEL_REVISION</span>
+<span class="del">    return SentenceTransformer(RERANK_MODEL, **kwargs)</span>
+
+<span class="com"># DESPUÉS:</span>
+<span class="add">def _load_sentence_transformer(model_name: str, local_files_only: bool) -> SentenceTransformer:</span>
+<span class="add">    kwargs = {"local_files_only": local_files_only}</span>
+<span class="add">    if RERANK_MODEL_REVISION:</span>
+<span class="add">        kwargs["revision"] = RERANK_MODEL_REVISION</span>
+<span class="add">    return SentenceTransformer(model_name, **kwargs)</span>
+
+<span class="com"># Cargar modelo de embedding (puede ser diferente del de rerank)</span>
+<span class="add">_st_model = None</span>
+<span class="add">try:</span>
+<span class="add">    _st_model = _load_sentence_transformer(EMBEDDING_MODEL, local_files_only=True)</span>
+<span class="add">except Exception:</span>
+<span class="add">    try:</span>
+<span class="add">        _st_model = _load_sentence_transformer(EMBEDDING_MODEL, local_files_only=False)</span>
+<span class="add">    except Exception as exc:</span>
+<span class="add">        logger.warning("No se pudo cargar modelo '%s': %s", EMBEDDING_MODEL, exc)</span>
+</pre>
+
+<h4>2.2.2 Embedding function (l&iacute;neas 371-390)</h4>
+<pre>
+<span class="file"># rag_service.py — _MultilingualEF</span>
+<span class="com"># ANTES:</span>
+<span class="del">class _MultilingualEF:</span>
+<span class="del">    def name(self) -> str:</span>
+<span class="del">        return "multilingual-minilm"</span>
+<span class="del">    def _encode(self, input: List[str]) -> List[List[float]]:</span>
+<span class="del">        if _st_model is None:</span>
+<span class="del">            raise RuntimeError("Modelo de embeddings no disponible")</span>
+<span class="del">        return _st_model.encode(input, convert_to_numpy=True).tolist()</span>
+
+<span class="com"># DESPUÉS: batch_size expl&iacute;cito para controlar RAM en indexaci&oacute;n</span>
+<span class="add">class _EmbeddingFunction:</span>
+<span class="add">    """ChromaDB embedding function wrapper. Funciona con cualquier SentenceTransformer."""</span>
+<span class="add"></span>
+<span class="add">    def __init__(self, batch_size: int = 64):</span>
+<span class="add">        self._batch_size = batch_size</span>
+<span class="add"></span>
+<span class="add">    def name(self) -> str:</span>
+<span class="add">        return EMBEDDING_MODEL.split("/")[-1]</span>
+<span class="add"></span>
+<span class="add">    def _encode(self, input: List[str]) -> List[List[float]]:</span>
+<span class="add">        if _st_model is None:</span>
+<span class="add">            raise RuntimeError("Modelo de embeddings no disponible")</span>
+<span class="add">        return _st_model.encode(</span>
+<span class="add">            input,</span>
+<span class="add">            convert_to_numpy=True,</span>
+<span class="add">            batch_size=self._batch_size,</span>
+<span class="add">            show_progress_bar=len(input) > 100,</span>
+<span class="add">        ).tolist()</span>
+<span class="add"></span>
+<span class="add">    def __call__(self, input): return self._encode(input)</span>
+<span class="add">    def embed_documents(self, input): return self._encode(input)</span>
+<span class="add">    def embed_query(self, input): return self._encode(input)</span>
+</pre>
+
+<div class="card">
+  <h4>Por qu&eacute; batch_size expl&iacute;cito</h4>
+  <p>
+    bge-m3 usa ~2.5 GB de RAM base. Con batch_size grande, cada batch consume RAM adicional
+    proporcional a <code>batch_size &times; max_seq_length &times; hidden_dim</code>.
+    Con <code>batch_size=64</code> y 8192 tokens, el pico de RAM se mantiene bajo control (~4 GB total).
+    MiniLM con 128 tokens no ten&iacute;a este problema.
+  </p>
+</div>
+
+<h4>2.2.3 EF_VERSION (l&iacute;nea 390)</h4>
+<pre>
+<span class="file"># rag_service.py — _EF_VERSION</span>
+<span class="com"># ANTES:</span>
+<span class="del">_EF_VERSION = f"multilingual-minilm-v5-structured-refs-table-split-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"</span>
+
+<span class="com"># DESPUÉS: incluir nombre del modelo para detectar cambios autom&aacute;ticamente</span>
+<span class="add">_model_tag = EMBEDDING_MODEL.split("/")[-1].lower().replace("-", "")</span>
+<span class="add">_EF_VERSION = f"{_model_tag}-v1-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}"</span>
+
+<span class="com"># Esto hace que al cambiar EMBEDDING_MODEL, _EF_VERSION cambia autom&aacute;ticamente</span>
+<span class="com"># y _get_or_reset_collection borra y recrea la colecci&oacute;n → reindex autom&aacute;tico</span>
+</pre>
+
+<h4>2.2.4 Chunk sizes (l&iacute;neas 37-38) — OPCIONALES</h4>
+<pre>
+<span class="file"># rag_service.py — Chunk sizes</span>
+<span class="com"># ANTES (limitados por ventana de 128 tokens de MiniLM):</span>
+<span class="del">CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "900"))</span>
+<span class="del">CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))</span>
+
+<span class="com"># DESPUÉS (ventana de 8192 tokens permite chunks m&aacute;s grandes):</span>
+<span class="add">CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "1400"))</span>
+<span class="add">CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "250"))</span>
+
+<span class="com"># ¿Por qu&eacute; 1400 y no 3000?</span>
+<span class="com"># - Chunks m&aacute;s grandes = menos chunks totales = menos ruido en retrieval</span>
+<span class="com"># - Pero chunks demasiado grandes diluyen la se&ntilde;al espec&iacute;fica</span>
+<span class="com"># - 1400 chars ≈ 250-300 tokens espa&ntilde;ol → bien dentro de 8192 tokens</span>
+<span class="com"># - El overlap mayor (250) preserva mejor continuidad entre chunks</span>
+<span class="com"># - RECOMENDACIÓN: probar primero sin cambiar (900/180) y luego subir</span>
+</pre>
+
+<h4>2.2.5 Reranking (l&iacute;neas 2334-2345) — SIN CAMBIOS INMEDIATOS</h4>
+<pre>
+<span class="com"># El reranking usa cos_sim con el mismo modelo.</span>
+<span class="com"># Con bge-m3 seguir&aacute; funcionando porque SentenceTransformer.encode()</span>
+<span class="com"># devuelve embeddings densos por defecto.</span>
+<span class="com"># NO hay que cambiar nada en esta secci&oacute;n.</span>
+
+<span class="com"># FUTURO (Fase 4): si se separa RERANK_MODEL de EMBEDDING_MODEL,</span>
+<span class="com"># cargar un segundo modelo para rerank:</span>
+<span class="com"># _rerank_model = _load_sentence_transformer(RERANK_MODEL, ...)</span>
+</pre>
+
+<!-- ---- memory_service.py ---- -->
+<h3>2.3 <code>memory_service.py</code> <span class="badge b-green">1 l&iacute;nea</span></h3>
+
+<pre>
+<span class="file"># memory_service.py — L&iacute;nea 21</span>
+<span class="com"># ANTES:</span>
+<span class="del">_MEMORY_EF_VERSION = "multilingual-minilm-v1"</span>
+
+<span class="com"># DESPUÉS:</span>
+<span class="add">_MEMORY_EF_VERSION = "bge-m3-v1"</span>
+
+<span class="com"># Esto fuerza que la colecci&oacute;n de memoria validada se recree.</span>
+<span class="com"># Las respuestas aprobadas en ConocimientoValidado (SQL) no se pierden,</span>
+<span class="com"># pero sus embeddings en ChromaDB se regenerar&aacute;n con bge-m3.</span>
+<span class="com"># IMPORTANTE: ejecutar re-embed de memoria tras el cambio.</span>
+</pre>
+
+<div class="card">
+  <h4>Impacto en memoria validada</h4>
+  <p>
+    La colecci&oacute;n <code>reglamentos_memoria_validada</code> se borra y recrea vac&iacute;a al detectar
+    el mismatch de <code>ef_version</code>. Las respuestas aprobadas siguen en SQL Server
+    (<code>dbo.ConocimientoValidado</code>), pero hay que re-inyectarlas en ChromaDB con el nuevo
+    embedding. Si a&uacute;n no hay datos validados, el impacto es cero.
+  </p>
+</div>
+
+<!-- ====================================================================== -->
+<h2>3. Lo que NO cambia (conservamos todo lo hecho)</h2>
+
+<table>
+<thead>
+  <tr><th>Componente</th><th>Estado</th><th>Raz&oacute;n</th></tr>
+</thead>
+<tbody>
+  <tr>
+    <td>Scoring h&iacute;brido (~800 l&iacute;neas)</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Sigue siendo &uacute;til como safety net. Simplificar despu&eacute;s de medir.</td>
+  </tr>
+  <tr>
+    <td>Domain routing (<code>_source_domain_key</code>, <code>expected_domains</code>)</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Esencial para escalabilidad horizontal. Independiente del embedding.</td>
+  </tr>
+  <tr>
+    <td>BT-40/generators boosts (constantes extra&iacute;das)</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Pueden reducirse a futuro si bge-m3 mejora retrieval. Medir primero.</td>
+  </tr>
+  <tr>
+    <td>Enriquecimiento de tabla (Opci&oacute;n A: <code>active_itc_heading</code>)</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Cr&iacute;tico. Con bge-m3 el enriquecimiento ser&aacute; a&uacute;n m&aacute;s efectivo: el modelo puede procesar el prefijo completo sin truncar.</td>
+  </tr>
+  <tr>
+    <td>Context prefix <code>[ITC-BT-XX]</code> en chunks</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Mejor&iacute;a combinada: MiniLM truncaba el chunk despu&eacute;s del prefijo; bge-m3 lo lee completo.</td>
+  </tr>
+  <tr>
+    <td>Noise filter (<code>_is_noise_chunk</code>)</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Filtrado pre-indexaci&oacute;n. Independiente del modelo.</td>
+  </tr>
+  <tr>
+    <td>Query cache thread-safe</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Se invalida autom&aacute;ticamente en <code>reset_documents()</code>.</td>
+  </tr>
+  <tr>
+    <td><code>scope_hint</code>, <code>content_intent</code>, bigrams</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Metadata de chunks. No depende del modelo de embedding.</td>
+  </tr>
+  <tr>
+    <td>OCR pipeline</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Extracci&oacute;n de texto pre-embedding. Sin relaci&oacute;n.</td>
+  </tr>
+  <tr>
+    <td>Model fallback (nano → mini)</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>L&oacute;gica LLM, no de embedding.</td>
+  </tr>
+  <tr>
+    <td><code>test_domain_detection.py</code></td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Tests de clasificaci&oacute;n. No dependen del embedding.</td>
+  </tr>
+  <tr>
+    <td>Integridad ChromaDB (Fix #10)</td>
+    <td><span class="badge b-green">Intacto</span></td>
+    <td>Verificaci&oacute;n hash+probe. Funciona con cualquier modelo.</td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ====================================================================== -->
+<h2>4. Impacto en escalado futuro</h2>
+
+<h3>4.1 M&aacute;s PDFs (10→50→200 documentos)</h3>
+
+<table>
+<thead>
+  <tr>
+    <th class="label">M&eacute;trica</th>
+    <th>10 PDFs<br><small>(actual)</small></th>
+    <th>50 PDFs<br><small>(+ PRL, RRHH)</small></th>
+    <th>200 PDFs<br><small>(todas las &aacute;reas)</small></th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">Chunks estimados</td>
+    <td>~4.000</td>
+    <td>~20.000</td>
+    <td>~80.000</td>
+  </tr>
+  <tr>
+    <td class="label">Almacenamiento ChromaDB<br>(MiniLM 384d)</td>
+    <td>~6 MB</td>
+    <td>~30 MB</td>
+    <td>~120 MB</td>
+  </tr>
+  <tr>
+    <td class="label">Almacenamiento ChromaDB<br>(bge-m3 1024d)</td>
+    <td>~16 MB</td>
+    <td>~80 MB</td>
+    <td>~320 MB</td>
+  </tr>
+  <tr>
+    <td class="label">Tiempo indexaci&oacute;n<br>(bge-m3, CPU)</td>
+    <td>~10 min</td>
+    <td>~50 min</td>
+    <td>~3-4 h <span class="badge b-orange">GPU recomendada</span></td>
+  </tr>
+  <tr>
+    <td class="label">Tiempo query<br>(bge-m3, CPU)</td>
+    <td>~100 ms</td>
+    <td>~120 ms</td>
+    <td>~200 ms <span class="badge b-green">OK</span></td>
+  </tr>
+  <tr>
+    <td class="label">Calidad retrieval<br>(MiniLM con scoring)</td>
+    <td>Aceptable</td>
+    <td><span class="badge b-red">Degrada</span><br>M&aacute;s ruido cross-domain</td>
+    <td><span class="badge b-red">Cr&iacute;tico</span><br>Scoring no escala</td>
+  </tr>
+  <tr>
+    <td class="label">Calidad retrieval<br>(bge-m3 con scoring)</td>
+    <td>Buena</td>
+    <td><span class="badge b-green">Estable</span><br>1024d separa dominios</td>
+    <td><span class="badge b-yellow">Buena</span><br>Puede necesitar sharding</td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>El problema de MiniLM a escala</h4>
+  <p>
+    Con 384 dimensiones, al a&ntilde;adir documentos de PRL, RRHH, etc., los embeddings de dominios
+    diferentes se <strong>&laquo;apelotonan&raquo;</strong> en el espacio vectorial: &laquo;riesgo el&eacute;ctrico&raquo; (PRL) queda
+    cerca de &laquo;riesgo de contacto&raquo; (REBT) porque MiniLM no tiene capacidad para separar
+    matices t&eacute;cnicos en espa&ntilde;ol. bge-m3 con 1024 dimensiones tiene ~2.7&times; m&aacute;s &laquo;espacio&raquo;
+    para separar conceptos — fundamental cuando hay m&uacute;ltiples departamentos.
+  </p>
+</div>
+
+<h3>4.2 M&aacute;s usuarios concurrentes</h3>
+
+<table>
+<thead>
+  <tr>
+    <th class="label">Escenario</th>
+    <th>MiniLM</th>
+    <th>bge-m3</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label">1-5 usuarios simult&aacute;neos</td>
+    <td><span class="badge b-green">OK</span> ~25 ms/query</td>
+    <td><span class="badge b-green">OK</span> ~100 ms/query</td>
+  </tr>
+  <tr>
+    <td class="label">10-20 simult&aacute;neos</td>
+    <td><span class="badge b-green">OK</span></td>
+    <td><span class="badge b-yellow">Monitor</span> ~2.5 GB RAM compartidos</td>
+  </tr>
+  <tr>
+    <td class="label">50+ simult&aacute;neos</td>
+    <td><span class="badge b-yellow">LLM es cuello</span></td>
+    <td><span class="badge b-yellow">LLM es cuello</span></td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <p>
+    En todos los escenarios realistas, el <strong>LLM domina la latencia</strong> (10s vs 0.1s del embedding).
+    El modelo de embedding se carga UNA vez en RAM y se comparte entre requests.
+    Con 50+ usuarios, el cuello de botella es la API de OpenAI, no el embedding local.
+  </p>
+</div>
+
+<h3>4.3 M&aacute;s preguntas recurrentes (memoria validada)</h3>
+
+<table>
+<thead>
+  <tr>
+    <th class="label">Aspecto</th>
+    <th>Impacto</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td class="label"><code>MEMORY_MAX_DISTANCE = 0.35</code></td>
+    <td>
+      bge-m3 produce distancias en escala diferente a MiniLM. Habr&aacute; que
+      <strong>recalibrar este umbral</strong> tras migrar. Las distancias de bge-m3 suelen ser menores
+      para matches buenos → puede que 0.25-0.30 sea mejor.
+    </td>
+  </tr>
+  <tr>
+    <td class="label">Precisi&oacute;n de match</td>
+    <td>
+      Con 1024d, &laquo;¿Qu&eacute; secci&oacute;n tiene el cable de alumbrado?&raquo; y
+      &laquo;¿Cu&aacute;l es la secci&oacute;n del cableado de iluminaci&oacute;n?&raquo; tendr&aacute;n distancia m&aacute;s baja
+      → menos duplicados en memoria, mejor reutilizaci&oacute;n.
+    </td>
+  </tr>
+  <tr>
+    <td class="label">Escala de memoria</td>
+    <td>
+      1000 respuestas validadas × 1024d = ~4 MB en ChromaDB. Sin problema.
+      Con MiniLM ser&iacute;a ~1.5 MB. Ambos negligibles.
+    </td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ====================================================================== -->
+<h2>5. Lo que se podr&iacute;a simplificar A FUTURO (medir primero)</h2>
+
+<p style="color:var(--yellow); margin: 0.5rem 0;">
+  ⚠ Estos cambios NO se hacen en la migraci&oacute;n inicial. Solo despu&eacute;s de validar
+  que bge-m3 mejora el retrieval en queries reales.
+</p>
+
+<table>
+<thead>
+  <tr>
+    <th>C&oacute;digo actual</th>
+    <th>L&iacute;neas</th>
+    <th>Podr&iacute;a simplificarse</th>
+    <th>Condici&oacute;n</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td>Scoring l&eacute;xico manual (<code>overlap_score</code>, <code>core_hits</code>, etc.)</td>
+    <td>~200</td>
+    <td><span class="badge b-yellow">Parcialmente</span></td>
+    <td>Si bge-m3 sparse reemplaza b&uacute;squeda l&eacute;xica</td>
+  </tr>
+  <tr>
+    <td>BT-40/generators boosts (constantes)</td>
+    <td>~40</td>
+    <td><span class="badge b-yellow">Posible</span></td>
+    <td>Si 1024d separa bien dominios sin boost expl&iacute;cito</td>
+  </tr>
+  <tr>
+    <td><code>_standalone_numbers</code> + numeric diversity</td>
+    <td>~50</td>
+    <td><span class="badge b-yellow">Posible</span></td>
+    <td>Si bge-m3 captura mejor se&ntilde;al num&eacute;rica</td>
+  </tr>
+  <tr>
+    <td><code>REBT_ITC_PAGE_RANGES</code> (fallback legacy)</td>
+    <td>~15</td>
+    <td><span class="badge b-green">Probable</span></td>
+    <td>Si <code>[ITC-BT-XX]</code> prefix + bge-m3 encuentra ITCs sin page ranges</td>
+  </tr>
+  <tr>
+    <td><code>table_collection</code> separada (queries legacy)</td>
+    <td>~80</td>
+    <td><span class="badge b-green">Probable</span></td>
+    <td>Ya no se indexa doble. Eliminar queries a table_collection tras validar.</td>
+  </tr>
+  <tr>
+    <td>Reranking con cos_sim</td>
+    <td>~15</td>
+    <td><span class="badge b-orange">Evaluar</span></td>
+    <td>bge-m3 ya es m&aacute;s preciso. El rerank podr&iacute;a ser redundante.</td>
+  </tr>
+</tbody>
+</table>
+
+<div class="card">
+  <h4>Estimaci&oacute;n: simplificaci&oacute;n potencial a largo plazo</h4>
+  <p>
+    Si bge-m3 cumple las expectativas, podr&iacute;an eliminarse <strong>~300-400 l&iacute;neas</strong> de scoring
+    heur&iacute;stico de las ~800 actuales. Esto reduce deuda t&eacute;cnica y facilita onboarding
+    de nuevos departamentos sin a&ntilde;adir boosts espec&iacute;ficos por dominio.
+  </p>
+</div>
+
+<!-- ====================================================================== -->
+<h2>6. Riesgos y mitigaci&oacute;n</h2>
+
+<table>
+<thead>
+  <tr><th>Riesgo</th><th>Impacto</th><th>Mitigaci&oacute;n</th></tr>
+</thead>
+<tbody>
+  <tr>
+    <td>Distancias cambian de escala</td>
+    <td><span class="badge b-yellow">Medio</span></td>
+    <td>
+      <code>MEMORY_MAX_DISTANCE</code> y umbrales de confianza necesitan recalibraci&oacute;n.
+      Comparar distribuciones antes/despu&eacute;s con 10 queries de referencia.
+    </td>
+  </tr>
+  <tr>
+    <td>RAM insuficiente en servidor</td>
+    <td><span class="badge b-yellow">Medio</span></td>
+    <td>
+      bge-m3 necesita ~2.5 GB. Verificar RAM disponible en Azure App Service
+      (plan B2+ tiene 3.5 GB). Si es insuficiente, usar <code>BAAI/bge-m3</code> con
+      <code>model.half()</code> (FP16 → ~1.3 GB).
+    </td>
+  </tr>
+  <tr>
+    <td>Indexaci&oacute;n lenta en CPU</td>
+    <td><span class="badge b-green">Bajo</span></td>
+    <td>
+      Solo se ejecuta una vez (o al a&ntilde;adir PDFs). ~10 min para 4 PDFs es aceptable.
+      Para 200+ PDFs, ejecutar indexaci&oacute;n en local con GPU y subir chroma_db.
+    </td>
+  </tr>
+  <tr>
+    <td>Regresi&oacute;n en queries que hoy funcionan</td>
+    <td><span class="badge b-orange">Medio-Alto</span></td>
+    <td>
+      El scoring h&iacute;brido se mantiene intacto como safety net.
+      Si alguna query empeora, el scoring compensa. Probar 10 queries
+      antes de desplegar.
+    </td>
+  </tr>
+  <tr>
+    <td>Descarga inicial 2.2 GB</td>
+    <td><span class="badge b-green">Bajo</span></td>
+    <td>
+      Se descarga una vez y se cachea. En Azure, incluir en Docker image.
+    </td>
+  </tr>
+</tbody>
+</table>
+
+<!-- ====================================================================== -->
+<h2>7. Plan de ejecuci&oacute;n</h2>
+
+<div class="timeline">
+  <div class="step">
+    <h4>Fase 1 — Cambio de modelo <span class="badge b-green">~30 min</span></h4>
+    <p>
+      Cambiar <code>EMBEDDING_MODEL</code> en config.py, adaptar <code>_EmbeddingFunction</code>,
+      actualizar <code>_EF_VERSION</code> y <code>_MEMORY_EF_VERSION</code>.
+      Ejecutar <code>reset_documents() + sync_documents()</code>.
+    </p>
+  </div>
+  <div class="step">
+    <h4>Fase 2 — Validaci&oacute;n con queries reales <span class="badge b-green">~1 hora</span></h4>
+    <p>
+      Probar las queries problem&aacute;ticas conocidas:
+      electrificaci&oacute;n b&aacute;sica, distancia 0.2m, generadoras BT-40, secciones de conductores.
+      Comparar distancias top-10 antes/despu&eacute;s. Recalibrar <code>MEMORY_MAX_DISTANCE</code>.
+    </p>
+  </div>
+  <div class="step">
+    <h4>Fase 3 — Ajustar chunk size (opcional) <span class="badge b-yellow">~1 hora</span></h4>
+    <p>
+      Subir <code>CHUNK_SIZE</code> a 1400-1500. Reindexar. Comparar de nuevo.
+      Esto reduce n&uacute;mero de chunks (~3000 vs 3848) y mejora se&ntilde;al por chunk.
+    </p>
+  </div>
+  <div class="step">
+    <h4>Fase 4 — Simplificar scoring <span class="badge b-orange">Futuro</span></h4>
+    <p>
+      Si Fases 1-3 muestran mejora consistente: desactivar boosts de dominio
+      uno a uno y medir impacto. Eliminar <code>table_collection</code> queries.
+      Evaluar si reranking sigue siendo necesario.
+    </p>
+  </div>
+  <div class="step">
+    <h4>Fase 5 — Sparse retrieval <span class="badge b-purple">Futuro lejano</span></h4>
+    <p>
+      Explorar embeddings sparse de bge-m3 para reemplazar scoring l&eacute;xico manual.
+      Requiere almacenar sparse vectors (ChromaDB no soporta nativamente →
+      evaluar Qdrant o &iacute;ndice invertido custom).
+    </p>
+  </div>
+</div>
+
+<!-- ====================================================================== -->
+<div class="verdict">
+  <h3>Resumen ejecutivo</h3>
+  <p>
+    <strong>Cambios m&iacute;nimos:</strong> ~30 l&iacute;neas entre 3 archivos
+    (<code>config.py</code>, <code>rag_service.py</code>, <code>memory_service.py</code>).
+  </p>
+  <p>
+    <strong>Lo que se conserva:</strong> TODO el scoring h&iacute;brido, domain routing,
+    enriquecimiento de tablas, context prefix, noise filter, OCR, cache, tests.
+    El cambio es aditivo, no destructivo.
+  </p>
+  <p>
+    <strong>Impacto en escalado:</strong> bge-m3 con 1024 dimensiones escala mucho mejor
+    a m&uacute;ltiples departamentos. 384d de MiniLM no tiene espacio vectorial suficiente
+    para separar REBT + PRL + RRHH + RITE sin scoring agresivo por dominio.
+    Con bge-m3, a&ntilde;adir un nuevo departamento = a&ntilde;adir PDFs y reindexar, sin tocar c&oacute;digo.
+  </p>
+  <p style="color: var(--yellow); margin-top: 0.5rem;">
+    <strong>Coste real:</strong> ~2 GB m&aacute;s de RAM y ~80 ms m&aacute;s por query.
+    En un pipeline donde el LLM tarda 10 segundos, es invisible.
+  </p>
+</div>
+
+<div class="footnote">
+  Documento generado el 26/05/2026. Basado en el an&aacute;lisis del c&oacute;digo fuente en
+  <code>C:\Users\acarrillo\repos\ChatBot\src\backend\</code>.
+  Estimaciones de rendimiento con CPU Intel i7/Xeon sin GPU dedicada.
+</div>
+
+</body>
+</html>
