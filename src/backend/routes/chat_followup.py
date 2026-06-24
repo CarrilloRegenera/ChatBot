@@ -10,11 +10,30 @@ _EXPLICIT_TECHNICAL_ANCHOR_RE = re.compile(
     r"\b(?:rebt|rite|ralt|itc|bt-?\d+|iec|ieee|iso|80005(?:-[123])?|ops|eopsa|shore power|cold ironing|afir)\b",
     flags=re.IGNORECASE,
 )
+# Detecta preguntas de resolución de significado: "qué significa la t", "indaga lo que significa m"
+_DEFINITION_QUERY_RE = re.compile(
+    r"\b(significa[n]?|quiere[s]?\s+decir|que\s+quiere[s]?\s+decir|que\s+es\b|definici[oó]n\s+de)\b",
+    flags=re.IGNORECASE,
+)
 
 
 def normalize_followup_text(question: str) -> str:
     normalized = " ".join((question or "").strip().lower().split())
     return normalized.lstrip("¿?¡!.,;:()[]{}\"' ")
+
+
+def is_symbol_definition_query(question: str) -> bool:
+    """Detecta preguntas de resolución de símbolo/abreviatura sin ancla técnica explícita.
+
+    Ejemplos: 'qué significa la t', 'indaga lo que significa la m', 'que quiere decir 2t'.
+    Devuelve False si la pregunta ya contiene un ancla técnica explícita (RITE, REBT...).
+    """
+    normalized = normalize_followup_text(question)
+    if not normalized:
+        return False
+    if _EXPLICIT_TECHNICAL_ANCHOR_RE.search(normalized):
+        return False
+    return bool(_DEFINITION_QUERY_RE.search(normalized))
 
 
 def should_apply_history_hints(
@@ -28,8 +47,12 @@ def should_apply_history_hints(
     if _FOLLOWUP_PREFIX_RE.search(normalized):
         return True
 
+    # Preguntas de resolución de símbolo/abreviatura heredan contexto aunque sean largas
+    # ("indaga en el archivo y busca lo que significa la t y la m" > 6 tokens)
+    definition_query = is_symbol_definition_query(question)
+
     token_count = len(_FOLLOWUP_WORD_RE.findall(normalized))
-    if token_count > 6:
+    if token_count > 6 and not definition_query:
         return False
     if _EXPLICIT_TECHNICAL_ANCHOR_RE.search(normalized):
         return False
@@ -49,7 +72,10 @@ def should_apply_history_hints(
     ):
         return False
 
-    return normalized.startswith(("que ", "qué ", "cual ", "cuál ", "como ", "cómo "))
+    return (
+        normalized.startswith(("que ", "qué ", "cual ", "cuál ", "como ", "cómo "))
+        or definition_query
+    )
 
 
 def is_followup_prefix_question(question: str) -> bool:

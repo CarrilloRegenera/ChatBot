@@ -928,21 +928,38 @@ _LEGEND_PATTERN = re.compile(
 def _extract_table_legend(data: List[List], n_cols: int) -> Dict[str, str]:
     """Extrae leyenda de abreviaturas de las filas finales de una tabla.
 
-    Filas de leyenda: solo la primera celda tiene texto, el resto vacío.
-    Ejemplo: ['t una vez por temporada (AÑO).', '', '', '']
+    Soporta dos formatos:
+    - Una celda:  ['t una vez por temporada (AÑO).', '', '']
+    - Dos celdas: ['t', 'una vez por temporada (AÑO).', '']  (formato RITE IT3)
     """
     legend: Dict[str, str] = {}
     for row in reversed(data):
         cells = [str(c or "").strip() for c in row]
-        if sum(1 for c in cells if c) != 1:
+        populated = [c for c in cells if c]
+
+        if len(populated) == 1:
+            # Formato una celda: "t una vez por temporada"
+            m = _LEGEND_PATTERN.match(populated[0])
+            if not m:
+                break
+            abbrev = re.sub(r"\s+", " ", m.group(1)).strip().lower()
+            meaning = re.sub(r"\s+", " ", m.group(2)).strip().rstrip(".")
+            legend[abbrev] = meaning
+
+        elif len(populated) == 2 and cells[0] and cells[1]:
+            # Formato dos celdas: ['2 t', 'dos veces por temporada']
+            # La abreviatura debe ser corta (≤6 chars, solo letras/dígitos/*)
+            abbrev_text = cells[0]
+            if len(abbrev_text) <= 6 and re.match(r'^[\d\s]*[a-zA-Z*]+$', abbrev_text):
+                abbrev = re.sub(r"\s+", " ", abbrev_text).strip().lower()
+                meaning = re.sub(r"\s+", " ", cells[1]).strip().rstrip(".")
+                legend[abbrev] = meaning
+            else:
+                break
+
+        else:
             break
-        text = cells[0]
-        m = _LEGEND_PATTERN.match(text)
-        if not m:
-            break
-        abbrev = re.sub(r"\s+", " ", m.group(1)).strip().lower()
-        meaning = re.sub(r"\s+", " ", m.group(2)).strip().rstrip(".")
-        legend[abbrev] = meaning
+
     return legend
 
 

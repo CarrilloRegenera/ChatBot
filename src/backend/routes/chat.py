@@ -17,7 +17,11 @@ from models import (
 )
 from query_router import classify_question
 from routes.auth_helpers import assert_admin, resolve_request_user_id
-from routes.chat_followup import recover_route_from_history, should_apply_history_hints
+from routes.chat_followup import (
+    is_symbol_definition_query,
+    recover_route_from_history,
+    should_apply_history_hints,
+)
 from routes.chat_runtime_state import (
     RequestCancelledError,
     clear_cancelled_request,
@@ -171,6 +175,28 @@ def _should_apply_history_hints(question: str) -> bool:
         question,
         rag_service=_rag_service(),
     )
+
+
+def _augment_if_symbol_query(
+    rag_question: str,
+    original_question: str,
+    hint_domains: List[str],
+    hint_it_section_refs: List[str],
+) -> str:
+    """Expande queries de resolución de símbolo/abreviatura con contexto heredado.
+
+    Sin este paso, 'qué significa la t' busca 't' en todos los dominios.
+    Con el dominio y sección heredados, el retrieval se focaliza en los chunks
+    de leyenda correctos.
+    """
+    if not is_symbol_definition_query(original_question):
+        return rag_question
+    parts = [rag_question, "leyenda definicion abreviatura simbolo periodicidad tabla"]
+    if hint_it_section_refs:
+        parts.extend(hint_it_section_refs[:2])
+    if hint_domains:
+        parts.extend(hint_domains[:2])
+    return " ".join(parts)
 
 
 def _maybe_inherit_inventory_route(question: str, history: List[Dict]) -> str | None:
@@ -976,6 +1002,9 @@ def send_message(data: MessageRequest, request: Request):
 
                 stage_rag_start = time.time()
                 rag_question = _augment_retrieval_question(data.question)
+                rag_question = _augment_if_symbol_query(
+                    rag_question, data.question, hint_domains, hint_it_section_refs
+                )
                 context, sources, retrieval_stats = _rag_service().search_documents_detailed(
                     rag_question,
                     hint_domains=hint_domains or None,
