@@ -1840,11 +1840,18 @@ function formatCurrency(value) {
 
 function formatDateTime(value) {
     if (!value) return "-";
-    const date = new Date(value);
+    // La API devuelve fechas UTC sin sufijo Z (ej: "2026-06-23 15:56:19.265767").
+    // Sin normalizar, new Date() las trata como hora local en algunos navegadores.
+    let normalized = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(normalized) && !/Z$/.test(normalized) && !/[+-]\d{2}:?\d{2}$/.test(normalized)) {
+        normalized = normalized.replace(" ", "T") + "Z";
+    }
+    const date = new Date(normalized);
     if (Number.isNaN(date.getTime())) return value;
     return new Intl.DateTimeFormat("es-ES", {
         dateStyle: "short",
         timeStyle: "short",
+        timeZone: "Europe/Madrid",
     }).format(date);
 }
 
@@ -2433,7 +2440,7 @@ function renderPendingList(items) {
         card.className = "pending-card";
         const userName = normalizeMojibakeText(item.user_name || item.user_email || "Usuario");
         card.innerHTML = `
-            <div class="pending-meta">#${item.id} - usuario=${userName} - conf=${Number(item.confidence || 0).toFixed(2)} - tokens=${item.total_tokens || 0} - ${item.created_at}</div>
+            <div class="pending-meta">#${item.id} - usuario=${userName} - conf=${Number(item.confidence || 0).toFixed(2)} - tokens=${item.total_tokens || 0} - ${formatDateTime(item.created_at)}</div>
             <div class="pending-question">${item.question}</div>
             <div class="pending-answer">${item.answer}</div>
             <div class="pending-actions">
@@ -2794,7 +2801,7 @@ function renderMyPendingList(items) {
         const card = document.createElement("div");
         card.className = "pending-card";
         card.innerHTML = `
-            <div class="pending-meta">#${item.id} - conf=${Number(item.confidence || 0).toFixed(2)} - ${item.created_at}</div>
+            <div class="pending-meta">#${item.id} - conf=${Number(item.confidence || 0).toFixed(2)} - ${formatDateTime(item.created_at)}</div>
             <div class="pending-question">${item.question}</div>
             <div class="pending-answer">${item.answer}</div>
             <div class="pending-actions">
