@@ -173,6 +173,18 @@ def _should_apply_history_hints(question: str) -> bool:
     )
 
 
+def _maybe_inherit_inventory_route(question: str, history: List[Dict]) -> str | None:
+    """Si la pregunta es un follow-up y el turno anterior fue inventario, hereda la ruta."""
+    normalized = _normalize_followup_text(question)
+    if not _FOLLOWUP_PREFIX_RE.search(normalized):
+        return None
+    for item in reversed((history or [])[-3:]):
+        prev_q = str(item.get("question", "")).strip()
+        if prev_q and classify_question(prev_q).get("route") == "document_inventory":
+            return "document_inventory"
+    return None
+
+
 def _recover_route_from_history(
     question: str,
     *,
@@ -636,6 +648,10 @@ def send_message(data: MessageRequest, request: Request):
             business_route_hint=business_route_hint,
             history=route_history,
         )
+        if route != "document_inventory":
+            inherited = _maybe_inherit_inventory_route(data.question, route_history)
+            if inherited:
+                route = inherited
         router_ms = int((time.time() - stage_router_start) * 1000)
         raise_if_request_cancelled(request_id)
 

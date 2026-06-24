@@ -97,8 +97,10 @@ BUSINESS_COMMON_HINTS = {
 DOCUMENT_INVENTORY_HINTS = {
     "que documentos hay",
     "que documentos tenemos",
+    "que documentos tiene",
     "que documentacion tenemos",
     "que documentacion hay",
+    "que documentacion tiene",
     "que documentacion tecnica hay",
     "que documentacion tecnica hay indexada",
     "que documentacion tecnica hay indexada ahora mismo",
@@ -112,11 +114,37 @@ DOCUMENT_INVENTORY_HINTS = {
     "como esta organizada la documentacion tecnica",
     "que dominios documentales hay",
     "que reglamentos tenemos cargados",
+    # sinónimos de archivo/fichero
+    "que archivos hay",
+    "que archivos tenemos",
+    "que archivos tiene",
+    "que ficheros hay",
+    "que ficheros tenemos",
+    "que ficheros tiene",
+    "archivos disponibles",
+    "ficheros disponibles",
 }
 
-_INVENTORY_NOUNS = {"documentos", "documentacion", "reglamentos", "normativa", "bloques"}
+_INVENTORY_NOUNS = {"documentos", "documentacion", "reglamentos", "normativa", "bloques", "archivos", "ficheros", "pdf", "pdfs"}
+# Subconjunto para verbos débiles (tiene/tienen): solo sustantivos inequívocamente de listado de ficheros
+_INVENTORY_NOUNS_LISTING = {"documentos", "archivos", "ficheros", "pdf", "pdfs"}
 _INVENTORY_VERBS = {"hay", "tenemos", "disponibles", "cargados", "cargadas", "indexados", "indexadas", "existen"}
+_INVENTORY_VERBS_WEAK = {"tiene", "tienen"}
 _INVENTORY_STRUCTURE = {"estructura", "organizada", "organizado", "reparten", "divididos", "clasificados", "bloques"}
+
+
+def _token_resembles_inventory_noun(token: str) -> bool:
+    """Detecta typos por transposición como 'docuemntos' → 'documentos' (prefijo 4 chars + longitud ±2).
+    Excluye tokens que ya son sustantivos exactos para evitar activar la ruta de verbs débiles."""
+    if token in _INVENTORY_NOUNS:
+        return False
+    if len(token) < 5:
+        return False
+    prefix = token[:4]
+    for noun in _INVENTORY_NOUNS:
+        if len(noun) >= 4 and noun[:4] == prefix and abs(len(token) - len(noun)) <= 2:
+            return True
+    return False
 
 def _normalize(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text or "")
@@ -158,15 +186,26 @@ def _asks_for_document_inventory(text: str) -> bool:
         return True
     if "bloque de" in text and any(hint in text for hint in TECHNICAL_HINTS):
         return True
-    if any(term in text for term in ("documentos de", "documentacion de", "solo los documentos")) and any(
-        hint in text for hint in TECHNICAL_HINTS
-    ):
+    if any(term in text for term in (
+        "documentos de", "documentacion de", "solo los documentos", "archivos de", "ficheros de",
+    )) and any(hint in text for hint in TECHNICAL_HINTS):
         return True
     tokens = set(text.split())
     if tokens & _INVENTORY_NOUNS and tokens & _INVENTORY_VERBS:
         return True
+    # "tiene"/"tienen" solo con sustantivos inequívocos de listado + dominio técnico
+    if tokens & _INVENTORY_NOUNS_LISTING and tokens & _INVENTORY_VERBS_WEAK and any(
+        hint in text for hint in TECHNICAL_HINTS
+    ):
+        return True
     if tokens & _INVENTORY_NOUNS and tokens & _INVENTORY_STRUCTURE:
         return True
+    # Typo-tolerant: "docuemntos" → matches "documentos" por prefijo
+    if any(_token_resembles_inventory_noun(t) for t in tokens):
+        if tokens & _INVENTORY_VERBS:
+            return True
+        if tokens & _INVENTORY_VERBS_WEAK and any(hint in text for hint in TECHNICAL_HINTS):
+            return True
     return False
 
 
