@@ -278,6 +278,7 @@
                 <button id="admin-tab-deployments" class="admin-view-tab active" type="button" onclick="setAdminView('deployments', this)">Despliegues</button>
                 <button id="admin-tab-overview" class="admin-view-tab" type="button" onclick="setAdminView('overview', this)">Resumen y modelos</button>
                 <button id="admin-tab-pending" class="admin-view-tab" type="button" onclick="setAdminView('pending', this)">Interacciones pendientes</button>
+                <button id="admin-tab-memory" class="admin-view-tab" type="button" onclick="setAdminView('memory', this)">Memoria validada</button>
                 <button id="admin-tab-observability" class="admin-view-tab" type="button" onclick="setAdminView('observability', this)">Observabilidad</button>
             </div>
             <div id="admin-view-deployments" class="admin-view-section">
@@ -352,6 +353,18 @@
                     </div>
                 </div>
                 <div id="admin-pending-list" class="admin-pending-list"></div>
+            </div>
+            <div id="admin-view-memory" class="admin-view-section hidden">
+                <div class="admin-section-header">
+                    <h4>Memoria validada</h4>
+                    <div class="admin-pending-toolbar">
+                        <select id="admin-memory-user-filter" class="admin-user-filter" onchange="setAdminMemoryUser(this.value)" aria-label="Filtrar memoria por usuario">
+                            <option value="">Todos los usuarios</option>
+                        </select>
+                        <button class="admin-refresh-btn" onclick="loadValidatedMemoryPanel()">Actualizar</button>
+                    </div>
+                </div>
+                <div id="admin-memory-list" class="admin-pending-list"></div>
             </div>
             <div id="admin-view-observability" class="admin-view-section hidden">
                 <div class="admin-section-header">

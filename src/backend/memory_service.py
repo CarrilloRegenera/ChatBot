@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+import unicodedata
 from typing import Dict, List, Optional
 
 import chromadb
@@ -11,6 +13,7 @@ from config import (
     MEMORY_COLLECTION_NAME,
     MEMORY_MAX_DISTANCE,
     MEMORY_MAX_RESULTS,
+    STOPWORDS,
 )
 from database import db_conn
 from rag_service import _EF_VERSION, _embedding_fn
@@ -79,6 +82,24 @@ def _from_json(value: Optional[str], fallback):
         return json.loads(value)
     except Exception:
         return fallback
+
+
+def _content_tokens(text: str) -> set:
+    nfd = unicodedata.normalize("NFD", text or "")
+    cleaned = "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn")
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned.lower())
+    return set(cleaned.split()) - STOPWORDS
+
+
+def _has_sufficient_lexical_overlap(q1: str, q2: str, min_jaccard: float = 0.10) -> bool:
+    t1 = _content_tokens(q1)
+    t2 = _content_tokens(q2)
+    if not t1 or not t2:
+        return True
+    intersection = t1 & t2
+    if not intersection:
+        return False
+    return len(intersection) / len(t1 | t2) >= min_jaccard
 
 
 def _estimate_model_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -580,7 +601,7 @@ def validate_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT Id, Pregunta, Respuesta, Fuentes, Contexto, Estado
+            SELECT Id, Pregunta, Respuesta, Fuentes, Contexto, Estado, Ruta
             FROM dbo.InteraccionesRAG
             WHERE Id = ?
             """,
@@ -594,6 +615,7 @@ def validate_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
 
         sources = _from_json(row[3], [])
         sources_json = _to_json(sources)
+        route = row[6] or ""
 
         cursor.execute(
             """
@@ -618,6 +640,9 @@ def validate_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
             interaction_id,
         )
 
+    if route == "document_inventory":
+        return {"status": "validated", "interaction_id": interaction_id}
+
     memory_id = f"mem_{interaction_id}"
     memory_document = f"Pregunta: {row[1]}\nRespuesta: {row[2]}"
     memory_metadata = {
@@ -625,6 +650,7 @@ def validate_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
         "question": row[1],
         "sources": sources_json,
         "reviewer": reviewer,
+        "route": route,
     }
 
     existing = memory_collection.get(ids=[memory_id])
@@ -648,6 +674,13 @@ def reject_interaction(interaction_id: int, reviewer: str = "system") -> Dict:
             reviewer,
             interaction_id,
         )
+    memory_id = f"mem_{interaction_id}"
+    try:
+        existing = memory_collection.get(ids=[memory_id])
+        if existing.get("ids"):
+            memory_collection.delete(ids=[memory_id])
+    except Exception:
+        logger.warning("reject_interaction: no se pudo eliminar %s de Chroma", memory_id)
     return {"status": "rejected", "interaction_id": interaction_id}
 
 
@@ -687,6 +720,15 @@ def search_validated_memory(question: str) -> Optional[Dict]:
     if best_distance is None or best_distance > MEMORY_MAX_DISTANCE:
         return None
 
+    if (best_meta.get("route") or "") == "document_inventory":
+        logger.info("search_validated_memory: descartado hit de ruta document_inventory (dist=%.4f)", best_distance)
+        return None
+
+    stored_question = best_meta.get("question") or ""
+    if stored_question and not _has_sufficient_lexical_overlap(question, stored_question):
+        logger.info("search_validated_memory: descartado por solapamiento lexico insuficiente (dist=%.4f)", best_distance)
+        return None
+
     answer = best_doc
     if "Respuesta:" in best_doc:
         answer = best_doc.split("Respuesta:", 1)[1].strip()
@@ -696,4 +738,136 @@ def search_validated_memory(question: str) -> Optional[Dict]:
         "answer": answer,
         "sources": sources,
         "distance": float(best_distance),
+    }
+
+
+def list_validated_interactions(
+    limit: int = 50,
+    user_id: int | None = None,
+) -> List[Dict]:
+    limit = max(1, min(int(limit or 50), 200))
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        params = [limit]
+        user_filter = ""
+        if user_id is not None:
+            user_filter = " AND c.UsuarioId = ?"
+            params.append(int(user_id))
+        cursor.execute(
+            f"""
+            SELECT TOP (?)
+                i.Id,
+                i.ConversacionId,
+                c.UsuarioId,
+                i.Pregunta,
+                i.Respuesta,
+                i.Fuentes,
+                i.FechaCreacion,
+                i.FechaRevision,
+                i.Confianza,
+                i.TotalTokens,
+                i.Modelo,
+                i.Ruta,
+                i.Estado,
+                i.RevisadoPor,
+                u.Nombre,
+                u.Email
+            FROM dbo.InteraccionesRAG i
+            LEFT JOIN dbo.Conversaciones c ON c.Id = i.ConversacionId
+            LEFT JOIN dbo.Usuarios u ON u.Id = c.UsuarioId
+            WHERE i.Estado IN ('validada', 'rechazada')
+              {user_filter}
+            ORDER BY COALESCE(i.FechaRevision, i.FechaCreacion) DESC
+            """,
+            *params,
+        )
+        rows = cursor.fetchall()
+    return [
+        {
+            "id": row[0],
+            "conversation_id": row[1],
+            "user_id": row[2],
+            "question": row[3],
+            "answer": row[4],
+            "sources": _from_json(row[5], []),
+            "created_at": str(row[6]),
+            "reviewed_at": str(row[7]) if row[7] else "",
+            "confidence": row[8],
+            "total_tokens": row[9] or 0,
+            "model": row[10] or "",
+            "route": row[11] or "",
+            "status": row[12] or "",
+            "reviewed_by": row[13] or "",
+            "user_name": row[14] or "",
+            "user_email": row[15] or "",
+        }
+        for row in rows
+    ]
+
+
+def list_validated_users() -> List[Dict]:
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                c.UsuarioId,
+                MAX(u.Nombre) AS Nombre,
+                MAX(u.Email) AS Email,
+                COUNT(*) AS TotalCount,
+                SUM(CASE WHEN i.Estado = 'validada' THEN 1 ELSE 0 END) AS ValidatedCount,
+                SUM(CASE WHEN i.Estado = 'rechazada' THEN 1 ELSE 0 END) AS RejectedCount
+            FROM dbo.InteraccionesRAG i
+            LEFT JOIN dbo.Conversaciones c ON c.Id = i.ConversacionId
+            LEFT JOIN dbo.Usuarios u ON u.Id = c.UsuarioId
+            WHERE i.Estado IN ('validada', 'rechazada')
+              AND c.UsuarioId IS NOT NULL
+            GROUP BY c.UsuarioId
+            ORDER BY COUNT(*) DESC
+            """
+        )
+        rows = cursor.fetchall()
+    return [
+        {
+            "user_id": int(row[0]),
+            "user_name": row[1] or "",
+            "user_email": row[2] or "",
+            "total_count": int(row[3] or 0),
+            "validated_count": int(row[4] or 0),
+            "rejected_count": int(row[5] or 0),
+        }
+        for row in rows
+    ]
+
+
+def purge_document_inventory_memories(dry_run: bool = True) -> Dict:
+    """Identifica y opcionalmente elimina de Chroma las memorias contaminadas
+    (interacciones validadas con ruta document_inventory). Siempre idempotente."""
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT Id FROM dbo.InteraccionesRAG WHERE Estado = 'validada' AND Ruta = 'document_inventory'"
+        )
+        rows = cursor.fetchall()
+    candidates = [f"mem_{row[0]}" for row in rows]
+    found = []
+    for mem_id in candidates:
+        try:
+            existing = memory_collection.get(ids=[mem_id])
+            if existing.get("ids"):
+                found.append(mem_id)
+        except Exception:
+            pass
+    if not dry_run:
+        for mem_id in found:
+            try:
+                memory_collection.delete(ids=[mem_id])
+            except Exception:
+                logger.warning("purge_document_inventory_memories: no se pudo eliminar %s", mem_id)
+    return {
+        "dry_run": dry_run,
+        "candidates": len(candidates),
+        "found_in_chroma": len(found),
+        "purged": 0 if dry_run else len(found),
+        "ids": found,
     }

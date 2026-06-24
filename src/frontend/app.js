@@ -478,6 +478,7 @@ let adminRangeDays = 7;
 let admin503MetricsLoaded = false;
 let adminActiveView = "deployments";
 let adminPendingUserId = "";
+let adminMemoryUserId = "";
 let deploymentsLoading = false;
 let deploymentsPage = 1;
 const DEPLOYMENTS_PAGE_SIZE = 25;
@@ -2321,7 +2322,7 @@ function setAdminRange(days, button) {
 }
 
 function setAdminView(view, button = null) {
-    const validViews = ["deployments", "overview", "pending", "observability"];
+    const validViews = ["deployments", "overview", "pending", "memory", "observability"];
     adminActiveView = validViews.includes(view) ? view : "deployments";
     validViews.forEach((v) => {
         const section = document.getElementById(`admin-view-${v}`);
@@ -2331,6 +2332,9 @@ function setAdminView(view, button = null) {
     });
     if (adminActiveView === "observability") {
         loadObservabilityPanel();
+    }
+    if (adminActiveView === "memory") {
+        loadValidatedMemoryPanel();
     }
     if (button) {
         button.blur();
@@ -2390,6 +2394,91 @@ async function loadAdminPanel() {
 function setAdminPendingUser(userId) {
     adminPendingUserId = String(userId || "");
     loadAdminPanel();
+}
+
+function setAdminMemoryUser(userId) {
+    adminMemoryUserId = String(userId || "");
+    loadValidatedMemoryPanel();
+}
+
+async function loadValidatedMemoryPanel() {
+    if (!currentUser) return;
+    const container = document.getElementById("admin-memory-list");
+    if (container) {
+        container.innerHTML = `<div class="pending-card"><div class="pending-answer">${renderInlineSpinner("")}</div></div>`;
+    }
+    try {
+        const usersRes = await fetch(`${API}/admin/knowledge/validated/users`, { headers: getAdminHeaders() });
+        const params = new URLSearchParams({ limit: "50" });
+        if (adminMemoryUserId) params.set("user_id", adminMemoryUserId);
+        const listRes = await fetch(`${API}/admin/knowledge/validated?${params.toString()}`, { headers: getAdminHeaders() });
+        if (!usersRes.ok || !listRes.ok) throw new Error("No se pudieron cargar datos de memoria");
+        const usersData = await usersRes.json();
+        const listData = await listRes.json();
+        renderMemoryUserFilter(usersData.users || []);
+        renderValidatedList(listData.validated || []);
+    } catch (err) {
+        console.error("Error loading validated memory panel:", err);
+        if (container) container.innerHTML = `<div class="pending-card"><div class="pending-answer">Error cargando memoria validada.</div></div>`;
+    }
+}
+
+function renderMemoryUserFilter(users) {
+    const select = document.getElementById("admin-memory-user-filter");
+    if (!select) return;
+    const normalized = users.map((u) => ({
+        id: String(u.user_id || ""),
+        label: normalizeMojibakeText(u.user_name || u.user_email || "Usuario"),
+        validated: Number(u.validated_count || 0),
+        rejected: Number(u.rejected_count || 0),
+    })).filter((u) => u.id);
+    if (!normalized.some((u) => u.id === adminMemoryUserId)) adminMemoryUserId = "";
+    select.innerHTML = `<option value="">Todos los usuarios</option>` +
+        normalized.map((u) => `<option value="${u.id}"${u.id === adminMemoryUserId ? " selected" : ""}>${u.label} (✓${u.validated} ✗${u.rejected})</option>`).join("");
+}
+
+function renderValidatedList(items) {
+    const container = document.getElementById("admin-memory-list");
+    if (!container) return;
+    container.innerHTML = "";
+    if (!items.length) {
+        container.innerHTML = `<div class="pending-card"><div class="pending-answer">No hay interacciones validadas o rechazadas.</div></div>`;
+        return;
+    }
+    items.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "pending-card";
+        const userName = normalizeMojibakeText(item.user_name || item.user_email || "Usuario");
+        const statusBadge = item.status === "validada"
+            ? `<span style="color:var(--success-color);font-weight:600;">✓ validada</span>`
+            : `<span style="color:var(--danger-color);font-weight:600;">✗ rechazada</span>`;
+        const retractBtn = item.status === "validada"
+            ? `<button class="reject-btn" onclick="retractMemory(${item.id})">Retirar de memoria</button>`
+            : "";
+        card.innerHTML = `
+            <div class="pending-meta">#${item.id} - usuario=${userName} - ruta=${item.route || "?"} - ${statusBadge} - ${formatDateTime(item.reviewed_at || item.created_at)}</div>
+            <div class="pending-question">${item.question}</div>
+            <div class="pending-answer">${item.answer}</div>
+            ${retractBtn ? `<div class="pending-actions">${retractBtn}</div>` : ""}
+        `;
+        container.appendChild(card);
+    });
+}
+
+async function retractMemory(interactionId) {
+    if (!confirm("¿Retirar esta respuesta de la memoria validada? Dejará de reutilizarse.")) return;
+    try {
+        const res = await fetch(`${API}/admin/knowledge/${interactionId}/retract`, {
+            method: "POST",
+            headers: { ...getAdminHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({ reviewer: currentUser?.email || "admin" }),
+        });
+        if (!res.ok) throw new Error("Error al retirar");
+        loadValidatedMemoryPanel();
+    } catch (err) {
+        console.error("Error retractando memoria:", err);
+        alert("No se pudo retirar la memoria. Inténtalo de nuevo.");
+    }
 }
 
 function renderPendingUserFilter(users) {

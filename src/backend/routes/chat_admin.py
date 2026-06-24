@@ -65,6 +65,18 @@ def admin_pending_users(request: Request):
     return {"users": chat_routes._memory_service().list_pending_users()}
 
 
+@router.get("/admin/knowledge/validated")
+def admin_validated(request: Request, limit: int = 50, user_id: int | None = None):
+    assert_admin(request)
+    return {"validated": chat_routes._memory_service().list_validated_interactions(limit=limit, user_id=user_id)}
+
+
+@router.get("/admin/knowledge/validated/users")
+def admin_validated_users(request: Request):
+    assert_admin(request)
+    return {"users": chat_routes._memory_service().list_validated_users()}
+
+
 @router.get("/admin/knowledge/{interaction_id}")
 def admin_interaction_detail(interaction_id: int, request: Request):
     assert_admin(request)
@@ -277,6 +289,21 @@ def admin_retrieval_compare(request: Request, deploy_a: int = 0, deploy_b: int =
         "period_b": stats_b,
         "deltas": deltas,
     }
+
+
+@router.post("/admin/knowledge/{interaction_id}/retract")
+def admin_retract_memory(interaction_id: int, data: InteractionReviewRequest, request: Request):
+    assert_admin(request)
+    return chat_routes._memory_service().reject_interaction(
+        interaction_id=interaction_id,
+        reviewer=data.reviewer,
+    )
+
+
+@router.post("/admin/memory/purge-inventory")
+def admin_purge_inventory_memories(request: Request, dry_run: bool = True):
+    assert_admin(request)
+    return chat_routes._memory_service().purge_document_inventory_memories(dry_run=dry_run)
 
 
 @router.post("/knowledge/{interaction_id}/validate")
