@@ -406,16 +406,27 @@
         <div class="admin-panel-overlay" onclick="closeMyInteractionsPanel()"></div>
         <div class="admin-panel-content">
             <div class="admin-panel-header">
-                <h3>Mis respuestas pendientes</h3>
+                <h3>Mis respuestas</h3>
                 <button class="admin-close-btn" onclick="closeMyInteractionsPanel()">Cerrar</button>
             </div>
-            <div class="admin-pending-header" style="padding: 12px 20px 0;">
-                <p style="margin:0; font-size:13px; color:var(--text-secondary);">Aprueba o rechaza las respuestas que el chatbot te ha dado. Las aprobadas ayudan a mejorar futuras respuestas.</p>
+            <div class="admin-view-tabs" style="padding: 0 20px;">
+                <button id="my-tab-pending" class="admin-view-tab active" type="button" onclick="setMyPanelTab('pending', this)">Preguntas hechas</button>
+                <button id="my-tab-memory" class="admin-view-tab" type="button" onclick="setMyPanelTab('memory', this)">Mi memoria</button>
             </div>
-            <div style="padding: 8px 20px 4px; display:flex; justify-content:flex-end;">
-                <button class="admin-refresh-btn" onclick="loadMyPendingInteractions()">Actualizar</button>
+            <div id="my-view-pending">
+                <div style="padding: 10px 20px 4px; display:flex; align-items:center; justify-content:space-between;">
+                    <p style="margin:0; font-size:13px; color:var(--text-secondary);">Aprueba o rechaza las respuestas que el chatbot te ha dado.</p>
+                    <button class="admin-refresh-btn" onclick="loadMyPendingInteractions()">Actualizar</button>
+                </div>
+                <div id="my-pending-list" class="admin-pending-list"></div>
             </div>
-            <div id="my-interactions-list" class="admin-pending-list"></div>
+            <div id="my-view-memory" class="hidden">
+                <div style="padding: 10px 20px 4px; display:flex; align-items:center; justify-content:space-between;">
+                    <p style="margin:0; font-size:13px; color:var(--text-secondary);">Respuestas que has aprobado o rechazado. Puedes retirarlas de la memoria.</p>
+                    <button class="admin-refresh-btn" onclick="loadMyValidatedMemory()">Actualizar</button>
+                </div>
+                <div id="my-memory-list" class="admin-pending-list"></div>
+            </div>
         </div>
     </div>
 

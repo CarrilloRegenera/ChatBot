@@ -41,6 +41,17 @@ def get_my_pending_knowledge(request: Request, limit: int = 50, chat_mode: str |
     }
 
 
+@router.get("/knowledge/my-validated")
+def get_my_validated_knowledge(request: Request, limit: int = 50):
+    request_user_id = resolve_request_user_id(request)
+    return {
+        "validated": chat_routes._memory_service().list_validated_interactions(
+            limit=limit,
+            user_id=request_user_id,
+        )
+    }
+
+
 @router.get("/admin/metrics")
 def admin_metrics(request: Request, days: int = 30):
     assert_admin(request)

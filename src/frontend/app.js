@@ -479,6 +479,7 @@ let admin503MetricsLoaded = false;
 let adminActiveView = "deployments";
 let adminPendingUserId = "";
 let adminMemoryUserId = "";
+let myPanelTab = "pending";
 let deploymentsLoading = false;
 let deploymentsPage = 1;
 const DEPLOYMENTS_PAGE_SIZE = 25;
@@ -2452,9 +2453,7 @@ function renderValidatedList(items) {
         const statusBadge = item.status === "validada"
             ? `<span style="color:var(--success-color);font-weight:600;">✓ validada</span>`
             : `<span style="color:var(--danger-color);font-weight:600;">✗ rechazada</span>`;
-        const retractBtn = item.status === "validada"
-            ? `<button class="reject-btn" onclick="retractMemory(${item.id})">Retirar de memoria</button>`
-            : "";
+        const retractBtn = `<button class="reject-btn" onclick="retractMemory(${item.id})">Retirar de memoria</button>`;
         card.innerHTML = `
             <div class="pending-meta">#${item.id} - usuario=${userName} - ruta=${item.route || "?"} - ${statusBadge} - ${formatDateTime(item.reviewed_at || item.created_at)}</div>
             <div class="pending-question">${item.question}</div>
@@ -2851,7 +2850,7 @@ function openMyInteractionsPanel() {
     if (!currentUser) return;
     const panel = document.getElementById("my-interactions-panel");
     if (panel) panel.classList.remove("hidden");
-    loadMyPendingInteractions();
+    setMyPanelTab(myPanelTab);
 }
 
 function closeMyInteractionsPanel() {
@@ -2859,16 +2858,27 @@ function closeMyInteractionsPanel() {
     if (panel) panel.classList.add("hidden");
 }
 
+function setMyPanelTab(tab, button = null) {
+    myPanelTab = tab === "memory" ? "memory" : "pending";
+    ["pending", "memory"].forEach((t) => {
+        const view = document.getElementById(`my-view-${t}`);
+        const btn = document.getElementById(`my-tab-${t}`);
+        if (view) view.classList.toggle("hidden", t !== myPanelTab);
+        if (btn) btn.classList.toggle("active", t === myPanelTab);
+    });
+    if (myPanelTab === "pending") loadMyPendingInteractions();
+    else loadMyValidatedMemory();
+    if (button) button.blur();
+}
+
 async function loadMyPendingInteractions() {
     if (!currentUser) return;
-    const container = document.getElementById("my-interactions-list");
+    const container = document.getElementById("my-pending-list");
     if (!container) return;
     container.innerHTML = `<div class="pending-card"><div class="pending-answer">${renderInlineSpinner("")}</div></div>`;
     try {
         const query = new URLSearchParams({ limit: "50" });
-        if (activeChatMode) {
-            query.set("chat_mode", activeChatMode);
-        }
+        if (activeChatMode) query.set("chat_mode", activeChatMode);
         const res = await fetch(`${API}/knowledge/my-pending?${query.toString()}`, { headers: getUserHeaders() });
         if (!res.ok) throw new Error("Error al cargar interacciones");
         const data = await res.json();
@@ -2878,8 +2888,23 @@ async function loadMyPendingInteractions() {
     }
 }
 
+async function loadMyValidatedMemory() {
+    if (!currentUser) return;
+    const container = document.getElementById("my-memory-list");
+    if (!container) return;
+    container.innerHTML = `<div class="pending-card"><div class="pending-answer">${renderInlineSpinner("")}</div></div>`;
+    try {
+        const res = await fetch(`${API}/knowledge/my-validated?limit=50`, { headers: getUserHeaders() });
+        if (!res.ok) throw new Error("Error al cargar memoria");
+        const data = await res.json();
+        renderMyMemoryList(data.validated || []);
+    } catch (err) {
+        container.innerHTML = `<div class="pending-card"><div class="pending-answer">No se pudo cargar la memoria validada.</div></div>`;
+    }
+}
+
 function renderMyPendingList(items) {
-    const container = document.getElementById("my-interactions-list");
+    const container = document.getElementById("my-pending-list");
     if (!container) return;
     container.innerHTML = "";
     if (!items.length) {
@@ -2896,6 +2921,32 @@ function renderMyPendingList(items) {
             <div class="pending-actions">
                 <button class="approve-btn" onclick="approveMyInteraction(${item.id})">Aprobar</button>
                 <button class="reject-btn" onclick="rejectMyInteraction(${item.id})">Rechazar</button>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function renderMyMemoryList(items) {
+    const container = document.getElementById("my-memory-list");
+    if (!container) return;
+    container.innerHTML = "";
+    if (!items.length) {
+        container.innerHTML = `<div class="pending-card"><div class="pending-answer">No tienes respuestas validadas o rechazadas aún.</div></div>`;
+        return;
+    }
+    items.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "pending-card";
+        const statusBadge = item.status === "validada"
+            ? `<span style="color:var(--success-color);font-weight:600;">✓ aprobada</span>`
+            : `<span style="color:var(--danger-color);font-weight:600;">✗ rechazada</span>`;
+        card.innerHTML = `
+            <div class="pending-meta">#${item.id} - conf=${Number(item.confidence || 0).toFixed(2)} - ${statusBadge} - ${formatDateTime(item.reviewed_at || item.created_at)}</div>
+            <div class="pending-question">${item.question}</div>
+            <div class="pending-answer">${item.answer}</div>
+            <div class="pending-actions">
+                <button class="reject-btn" onclick="retractMyMemory(${item.id})">Retirar de memoria</button>
             </div>
         `;
         container.appendChild(card);
@@ -2928,6 +2979,21 @@ async function rejectMyInteraction(interactionId) {
         return;
     }
     loadMyPendingInteractions();
+}
+
+async function retractMyMemory(interactionId) {
+    if (!currentUser) return;
+    if (!confirm("¿Retirar esta respuesta de la memoria? Dejará de reutilizarse en futuras consultas.")) return;
+    const res = await fetch(`${API}/knowledge/${interactionId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getUserHeaders() },
+        body: JSON.stringify({ reviewer: currentUser.nombre || currentUser.email || "usuario" }),
+    });
+    if (!res.ok) {
+        alert("No se pudo retirar la respuesta.");
+        return;
+    }
+    loadMyValidatedMemory();
 }
 
 // ===== INIT =====
