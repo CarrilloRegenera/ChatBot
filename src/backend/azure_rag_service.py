@@ -59,14 +59,20 @@ from rag_service import (
     _extract_text_blocks,
     _chunk_profile_metadata,
     _document_profile_metadata,
+    _document_layer_boost,
     _expected_document_variants,
+    _is_normative_intent_query,
     _normalize_text,
     _ocr_page_text,
+    _page_structure_context,
     _query_phrase_queries,
+    _query_intent,
     _sanitize_section_label,
+    _query_support_metrics,
     _source_domain_key,
     _source_mention_score,
     _split_text,
+    _inherit_active_structure,
     _st_model,
     _tokenize,
     _looks_like_table_block,
@@ -363,6 +369,8 @@ def _iter_pdf_chunks(
     document_profile = _document_profile_metadata(blob_name, domain)
     file_name = blob_name.rsplit("/", 1)[-1]
     pdf = fitz.open(stream=content, filetype="pdf")
+    active_itc_heading = ""
+    active_itc_section = ""
     try:
         total_pages = len(pdf)
         for page_index, page in enumerate(pdf):
@@ -385,6 +393,11 @@ def _iter_pdf_chunks(
             page_blocks = _extract_text_blocks(text)
             if not page_blocks:
                 continue
+            active_itc_heading, active_itc_section = _page_structure_context(
+                text,
+                active_itc_heading,
+                active_itc_section,
+            )
             for chunk_index, chunk in enumerate(_split_text(text), start=1):
                 section_name = ""
                 for block in page_blocks:
@@ -399,6 +412,11 @@ def _iter_pdf_chunks(
                     chunk_kind = "text"
                 chunk_profile = _chunk_profile_metadata(
                     blob_name, section_name, chunk, chunk_kind
+                )
+                chunk_profile = _inherit_active_structure(
+                    chunk_profile,
+                    active_itc_heading,
+                    active_itc_section,
                 )
                 docs.append({
                     "chunk_id": _chunk_id(blob_name, page_number, chunk_index),
@@ -598,7 +616,13 @@ _LAYER_BOOSTS = {
 }
 
 
-def _domain_boost(item: dict, expected_domains: set) -> float:
+def _domain_boost(
+    item: dict,
+    expected_domains: set,
+    *,
+    normative_intent: bool = False,
+    procedure_intent: bool = False,
+) -> float:
     boost = 0.0
     if expected_domains:
         item_domain = _normalize_text(str(item.get("domain") or item.get("category") or ""))
@@ -606,7 +630,11 @@ def _domain_boost(item: dict, expected_domains: set) -> float:
             boost += _DOMAIN_MATCH_BOOST if item_domain in expected_domains else _DOMAIN_MISMATCH_PENALTY
     layer = _normalize_text(str(item.get("document_layer", "") or ""))
     if layer:
-        boost += _LAYER_BOOSTS.get(layer, 0.0)
+        boost += _document_layer_boost(
+            layer,
+            normative_intent=normative_intent,
+            procedure_intent=procedure_intent,
+        )
     return boost
 
 
@@ -670,6 +698,8 @@ def search_documents_detailed_azure(
         fields=AZURE_SEARCH_VECTOR_FIELD,
     )
     clean_question = _clean_question(question)
+    normative_intent = _is_normative_intent_query(clean_question)
+    procedure_intent = _query_intent(clean_question) == "procedure"
     domains = _expected_domains(clean_question)
     if not domains and hint_domains:
         domains = [d for d in hint_domains if d]
@@ -769,7 +799,12 @@ def search_documents_detailed_azure(
         for i, item in enumerate(candidates):
             bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
             hint_boost = item.get("_hint_boost", 0.0)
-            domain_boost = _domain_boost(item, domain_set)
+            domain_boost = _domain_boost(
+                item,
+                domain_set,
+                normative_intent=normative_intent,
+                procedure_intent=procedure_intent,
+            )
             src_mention = _SOURCE_MENTION_BOOST if _source_mention_score(query_tokens, str(item.get("source_path") or item.get("blob_path") or "")) else 0.0
             final = (float(sem_scores[i]) * RERANK_WEIGHT) + (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost + src_mention
             scored.append((final, item))
@@ -779,7 +814,12 @@ def search_documents_detailed_azure(
         for i, item in enumerate(candidates):
             bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
             hint_boost = item.get("_hint_boost", 0.0)
-            domain_boost = _domain_boost(item, domain_set)
+            domain_boost = _domain_boost(
+                item,
+                domain_set,
+                normative_intent=normative_intent,
+                procedure_intent=procedure_intent,
+            )
             src_mention = _SOURCE_MENTION_BOOST if _source_mention_score(query_tokens, str(item.get("source_path") or item.get("blob_path") or "")) else 0.0
             final = (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost + src_mention
             scored.append((final, item))
@@ -856,6 +896,22 @@ def search_documents_detailed_azure(
             table_selected_chunks += 1
         table_selected_signal_count += int(item.get("table_signal_count", 0) or 0)
 
+    support_items = [
+        (
+            0.0,
+            str(item.get("chunk_id", "")),
+            str(item.get("content", "") or ""),
+            {
+                "source": item.get("source_path") or item.get("blob_path") or "",
+                "section": item.get("section", ""),
+            },
+        )
+        for item in selected
+    ]
+    supported_chunk_ratio, max_query_term_coverage = _query_support_metrics(
+        query_tokens,
+        support_items,
+    )
     retrieval_stats = {
         "backend": "azure_search",
         "selected_count": len(selected),
@@ -876,6 +932,8 @@ def search_documents_detailed_azure(
             for item in selected
             if item.get("document_type")
         }),
+        "supported_chunk_ratio": supported_chunk_ratio,
+        "max_query_term_coverage": max_query_term_coverage,
         "selected_regulations": sorted({
             _normalize_text(str(item.get("regulation") or ""))
             for item in selected

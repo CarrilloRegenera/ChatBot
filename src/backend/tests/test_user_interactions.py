@@ -301,6 +301,90 @@ class TestListPendingInteractionsChatMode(unittest.TestCase):
 
 class TestHistoryHintApplication(unittest.TestCase):
 
+    def test_reference_to_previous_answer_applies_history_hints(self):
+        import routes.chat_followup as followup
+
+        rag = mock.MagicMock()
+        rag.detect_hint_domains.return_value = []
+        rag.detect_hint_document_variants.return_value = []
+        rag.detect_hint_article_refs.return_value = []
+        rag.detect_hint_it_section_refs.return_value = []
+
+        self.assertTrue(
+            followup.should_apply_history_hints(
+                "El cliente quiere aire acondicionado respecto a lo anterior",
+                rag_service=rag,
+            )
+        )
+
+    def test_long_unanchored_engineering_question_can_inherit_focus(self):
+        import routes.chat_followup as followup
+
+        rag = mock.MagicMock()
+        rag.detect_hint_domains.return_value = []
+        rag.detect_hint_document_variants.return_value = []
+        rag.detect_hint_article_refs.return_value = []
+        rag.detect_hint_it_section_refs.return_value = []
+
+        self.assertTrue(
+            followup.should_apply_history_hints(
+                "Tengo 45 metros de linea y bastante carga al final, por donde empiezo",
+                rag_service=rag,
+            )
+        )
+
+    def test_history_focus_uses_latest_anchored_question_not_generated_answer(self):
+        import routes.chat_followup as followup
+
+        rag = mock.MagicMock()
+        rag.detect_hint_domains.side_effect = lambda text: (
+            ["baja_tension"] if "errores frecuentes" in text.lower() else []
+        )
+        rag.detect_hint_document_variants.side_effect = lambda text, domains=None: (
+            ["errores_frecuentes"] if "errores frecuentes" in text.lower() else []
+        )
+        rag.detect_hint_article_refs.return_value = []
+        rag.detect_hint_it_section_refs.return_value = []
+
+        focus = followup.derive_history_hints(
+            [
+                {
+                    "question": "Cuales son los errores frecuentes al elegir cables?",
+                    "response": "El REBT tambien contiene requisitos generales.",
+                }
+            ],
+            rag_service=rag,
+        )
+
+        self.assertEqual(focus["domains"], ["baja_tension"])
+        self.assertEqual(focus["document_variants"], ["errores_frecuentes"])
+        inspected_texts = [call.args[0] for call in rag.detect_hint_domains.call_args_list]
+        self.assertNotIn("El REBT tambien contiene requisitos generales.", inspected_texts)
+
+    def test_history_focus_walks_back_over_ambiguous_followup(self):
+        import routes.chat_followup as followup
+
+        rag = mock.MagicMock()
+        rag.detect_hint_domains.side_effect = lambda text: (
+            ["ops"] if "iec 80005-2" in text.lower() else []
+        )
+        rag.detect_hint_document_variants.side_effect = lambda text, domains=None: (
+            ["monitorizacion_control"] if "iec 80005-2" in text.lower() else []
+        )
+        rag.detect_hint_article_refs.return_value = []
+        rag.detect_hint_it_section_refs.return_value = []
+
+        focus = followup.derive_history_hints(
+            [
+                {"question": "Segun IEC 80005-2 como se intercambian los datos?", "response": "..."},
+                {"question": "Y que mas?", "response": "..."},
+            ],
+            rag_service=rag,
+        )
+
+        self.assertEqual(focus["domains"], ["ops"])
+        self.assertEqual(focus["document_variants"], ["monitorizacion_control"])
+
     def test_explicit_domain_question_does_not_inherit_history_hints(self):
         import routes.chat as chat
 
@@ -310,6 +394,11 @@ class TestHistoryHintApplication(unittest.TestCase):
         import routes.chat as chat
 
         self.assertTrue(chat._should_apply_history_hints("y cual es la periodicidad de limpieza de los evaporadores"))
+
+    def test_now_prefix_question_keeps_history_hints(self):
+        import routes.chat as chat
+
+        self.assertTrue(chat._should_apply_history_hints("ahora explicame para que sirve cada circuito"))
 
     def test_short_underspecified_question_uses_history_hints(self):
         import routes.chat as chat

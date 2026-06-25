@@ -7,6 +7,7 @@ from rag_service import (
     _extract_table_legend,
     _expand_legend_value,
     _row_document,
+    _table_headers_and_body,
 )
 
 
@@ -113,6 +114,16 @@ class TestExpandLegendValue:
 
 
 class TestRowDocumentHeaderFallback:
+    def test_composite_power_header_preserves_both_ranges(self):
+        headers, body = _table_headers_and_body(
+            [
+                ["Tabla 3.1 OPERACION < 70 kW 70 kW <", None, None, None],
+                ["1", "Limpieza", "t", "m"],
+            ]
+        )
+        assert headers == ["numero", "operacion", "< 70 kW", "> 70 kW"]
+        assert body == [["1", "Limpieza", "t", "m"]]
+
     def test_generic_headers_produce_valid_document(self):
         headers = ["columna_1", "columna_2", "columna_3", "columna_4"]
         values = ["1", "Limpieza de los evaporadores", "t (una vez por temporada)", "t (una vez por temporada)"]

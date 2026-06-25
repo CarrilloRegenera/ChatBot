@@ -27,6 +27,7 @@ from rag_service import (  # noqa: E402
     _extract_exact_refs,
     _extract_it_section_refs,
     _is_normative_intent_query,
+    _inherit_active_structure,
     _normative_application_hit_count,
     _rag_index_version_tag,
     _SHIFT31_SOURCE_TOKENS,
@@ -179,6 +180,30 @@ def test_new_domains_use_specific_technical_language():
     )
 
 
+def test_natural_home_panel_language_routes_to_low_voltage():
+    assert _expected_domains(
+        "Estoy revisando el cuadro de una vivienda normal"
+    ) == ["baja_tension"]
+
+
+def test_specific_equipment_domain_beats_generic_maintenance_trigger():
+    assert _expected_domains(
+        "Que mantenimiento preventivo requiere un generador diesel de emergencia?"
+    ) == ["grupos_electrogenos"]
+
+
+def test_generic_maintenance_still_routes_to_rite_without_other_anchor():
+    assert _expected_domains(
+        "Que operaciones de mantenimiento preventivo exige una instalacion termica?"
+    ) == ["rite"]
+
+
+def test_refrigeration_installation_routes_to_rite_without_naming_regulation():
+    assert _expected_domains(
+        "Que mantenimiento necesita una instalacion frigorifica menor de 70 kW?"
+    ) == ["rite"]
+
+
 def test_new_document_variants_are_selected_from_source_and_query():
     assert _document_variant_from_source(
         "media_tension/03_guias_fabricante/libro-blanco-instalacion-media-tension.pdf"
@@ -190,6 +215,46 @@ def test_new_document_variants_are_selected_from_source_and_query():
         "Que pruebas de puesta en marcha exige el RITE?",
         ["climatizacion"],
     ) == ["puesta_marcha_rite"]
+
+
+def test_document_variant_partial_generic_overlap_is_not_enough():
+    assert "manual_schneider" not in _expected_document_variants(
+        "Que condiciones debe cumplir una instalacion generadora de baja tension?",
+        ["baja_tension", "guias_tecnicas"],
+    )
+
+
+def test_active_itc_structure_is_inherited_by_following_table_chunks():
+    enriched = _inherit_active_structure(
+        {
+            "section": "",
+            "section_type": "",
+            "itc_refs": "",
+            "exact_refs": "tabla 1",
+            "section_level": 3,
+        },
+        "ITC-BT-25",
+        "INSTALACIONES INTERIORES EN VIVIENDAS",
+    )
+    assert enriched["itc_refs"].lower() == "itc-bt-25"
+    assert "itc-bt-25" in enriched["exact_refs"]
+    assert enriched["section"] == "INSTALACIONES INTERIORES EN VIVIENDAS"
+
+
+def test_active_itc_remains_primary_when_chunk_cites_other_itcs():
+    enriched = _inherit_active_structure(
+        {
+            "section": "Proteccion general",
+            "section_type": "section",
+            "itc_refs": "ITC-BT-17, ITC-BT-24",
+            "exact_refs": "itc-bt-17, itc-bt-24",
+            "section_level": 1,
+        },
+        "ITC-BT-25",
+        "INSTALACIONES INTERIORES EN VIVIENDAS",
+    )
+    assert enriched["itc_refs"].split(", ")[0] == "ITC-BT-25"
+    assert "ITC-BT-17" in enriched["itc_refs"]
 
 
 def test_ops_phrase_queries_cover_eopsa_checklists():
@@ -1022,6 +1087,10 @@ def test_extract_article_refs_no_false_positives():
 def test_extract_article_refs_deduplicates():
     refs = _extract_article_refs("articulo 12 y art. 12 del mismo reglamento")
     assert refs == ["articulo 12"]
+
+
+def test_extract_exact_refs_preserves_decimal_table_number():
+    assert "tabla 3.1" in _extract_exact_refs("consulta la Tabla 3.1 del RITE")
 
 
 def test_detect_hint_article_refs_from_history():

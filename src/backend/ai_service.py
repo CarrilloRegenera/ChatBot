@@ -279,6 +279,8 @@ def _trim_unsafe_last_line(line: str) -> str:
         return candidate
 
     candidate = TRAILING_FRAGMENT_REF_PATTERN.sub(r"\1.", candidate)
+    if LIST_MARKER_PATTERN.match(candidate):
+        return candidate if re.search(r"[.!?]\s*$", candidate) else candidate + "."
 
     # Mid-word cut: ends with a letter but no sentence terminator → trim to last sentence
     if candidate[-1].isalpha() and not re.search(r"[.!?]\s*$", candidate):
@@ -883,8 +885,12 @@ def _retrieval_quality(retrieval_stats: Optional[Dict[str, object]]) -> str:
     source_diversity = int(retrieval_stats.get("source_diversity", 0) or 0)
     selected_count = int(retrieval_stats.get("selected_count", 0) or 0)
     expected_domains = retrieval_stats.get("expected_domains") or []
+    supported_chunk_ratio = float(retrieval_stats.get("supported_chunk_ratio", 1.0) or 0.0)
+    max_query_term_coverage = float(retrieval_stats.get("max_query_term_coverage", 1.0) or 0.0)
     if selected_count == 0:
         return "empty"
+    if not expected_domains and supported_chunk_ratio == 0.0 and max_query_term_coverage < 0.25:
+        return "poor"
     if expected_domains and domain_match_ratio < 0.34:
         return "poor"
     if source_diversity == 0:

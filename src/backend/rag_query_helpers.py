@@ -49,7 +49,8 @@ def extract_exact_refs(
         refs.add(f"itc {normalized_prefix} {number}")
         refs.add(f"{normalized_prefix}-{number}")
     for value in table_reference_pattern.findall(raw):
-        refs.add(f"tabla {int(value)}")
+        normalized_value = value.lstrip("0") or "0"
+        refs.add(f"tabla {normalized_value}")
     return sorted(refs)
 
 

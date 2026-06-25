@@ -39,6 +39,9 @@ class TestIsSymbolDefinitionQuery(unittest.TestCase):
     def test_indaga_lo_que_significa(self):
         self.assertTrue(self.fn("indaga en el archivo y busca lo que significa la t y la m"))
 
+    def test_plural_quieren_decir(self):
+        self.assertTrue(self.fn("en esa tabla que quieren decir t y m exactamente"))
+
     def test_que_quiere_decir(self):
         self.assertTrue(self.fn("que quiere decir 2t"))
 
@@ -59,6 +62,12 @@ class TestIsSymbolDefinitionQuery(unittest.TestCase):
 
     def test_inventory_question(self):
         self.assertFalse(self.fn("que documentos hay de RITE"))
+
+
+def test_abbreviation_query_with_explicit_domain_is_detected():
+    from routes.chat_followup import is_abbreviation_query
+
+    assert is_abbreviation_query("Como se interpreta m o t en la tabla del RITE?")
 
 
 # ── should_apply_history_hints para definición ────────────────────────────────
@@ -90,13 +99,13 @@ class TestShouldApplyHistoryHintsSymbol(unittest.TestCase):
         )
         self.assertTrue(result)
 
-    # No-regresiones: preguntas largas NO definitivas siguen bloqueadas
-    def test_long_non_definition_blocked(self):
+    # Una pregunta larga sin dominio detectable puede heredar el ultimo foco.
+    def test_long_non_definition_without_detected_domain_inherits(self):
         result = self.fn(
             "cual es el procedimiento para calcular la seccion de un conductor de baja tension",
             rag_service=self._make_rag_service(),
         )
-        self.assertFalse(result)
+        self.assertTrue(result)
 
     def test_long_technical_with_domain_blocked(self):
         # Detecta dominio "rite" explícitamente → bloquea

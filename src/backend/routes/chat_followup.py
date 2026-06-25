@@ -3,7 +3,11 @@ from typing import Callable, Dict, List
 
 
 _FOLLOWUP_PREFIX_RE = re.compile(
-    r"^(?:y|entonces|ademas|además|tambien|también|sobre eso|sobre ello|respecto a eso|respecto a ello|en ese caso)\b"
+    r"^(?:y|ahora|entonces|ademas|además|tambien|también|sobre eso|sobre ello|respecto a eso|respecto a ello|en ese caso)\b"
+)
+_FOLLOWUP_REFERENCE_RE = re.compile(
+    r"\b(?:respecto a lo anterior|como antes|lo anterior|ese calculo|ese cálculo|"
+    r"esa tabla|ese equipo|para cerrar el calculo|para cerrar el cálculo)\b"
 )
 _FOLLOWUP_WORD_RE = re.compile(r"[a-z0-9]+", flags=re.IGNORECASE)
 _EXPLICIT_TECHNICAL_ANCHOR_RE = re.compile(
@@ -12,7 +16,11 @@ _EXPLICIT_TECHNICAL_ANCHOR_RE = re.compile(
 )
 # Detecta preguntas de resolución de significado: "qué significa la t", "indaga lo que significa m"
 _DEFINITION_QUERY_RE = re.compile(
-    r"\b(significa[n]?|quiere[s]?\s+decir|que\s+quiere[s]?\s+decir|que\s+es\b|definici[oó]n\s+de)\b",
+    r"\b(significa[n]?|quiere(?:s|n)?\s+decir|que\s+quiere(?:s|n)?\s+decir|que\s+es\b|definici[oó]n\s+de)\b",
+    flags=re.IGNORECASE,
+)
+_ABBREVIATION_QUERY_RE = re.compile(
+    r"\b(?:significa[n]?|quiere(?:s|n)?\s+decir|interpreta[r]?|representa[n]?|equivale[n]?)\b.*\b[a-z]\b",
     flags=re.IGNORECASE,
 )
 
@@ -36,6 +44,18 @@ def is_symbol_definition_query(question: str) -> bool:
     return bool(_DEFINITION_QUERY_RE.search(normalized))
 
 
+def is_abbreviation_query(question: str) -> bool:
+    normalized = normalize_followup_text(question)
+    if not normalized or not _ABBREVIATION_QUERY_RE.search(normalized):
+        return False
+    has_table_context = any(
+        term in normalized
+        for term in ("tabla", "periodicidad", "abreviatura", "simbolo", "letra")
+    )
+    single_letters = re.findall(r"(?<![a-z0-9])[a-z](?![a-z0-9])", normalized)
+    return has_table_context or len(set(single_letters)) >= 2
+
+
 def should_apply_history_hints(
     question: str,
     *,
@@ -46,14 +66,13 @@ def should_apply_history_hints(
         return False
     if _FOLLOWUP_PREFIX_RE.search(normalized):
         return True
+    if _FOLLOWUP_REFERENCE_RE.search(normalized):
+        return True
 
     # Preguntas de resolución de símbolo/abreviatura heredan contexto aunque sean largas
     # ("indaga en el archivo y busca lo que significa la t y la m" > 6 tokens)
     definition_query = is_symbol_definition_query(question)
 
-    token_count = len(_FOLLOWUP_WORD_RE.findall(normalized))
-    if token_count > 6 and not definition_query:
-        return False
     if _EXPLICIT_TECHNICAL_ANCHOR_RE.search(normalized):
         return False
 
@@ -72,10 +91,40 @@ def should_apply_history_hints(
     ):
         return False
 
-    return (
-        normalized.startswith(("que ", "qué ", "cual ", "cuál ", "como ", "cómo "))
-        or definition_query
-    )
+    # Si la pregunta no trae un ancla nueva, el ultimo foco tecnico es una
+    # mejor restriccion que volver a buscar en todo el corpus. Las preguntas
+    # con dominio explicito salen antes y no heredan.
+    return True
+
+
+def derive_history_hints(
+    history: List[Dict[str, str]] | None,
+    *,
+    rag_service,
+) -> Dict[str, List[str]]:
+    """Recupera el ultimo foco explicito sin analizar respuestas generadas."""
+    empty = {
+        "domains": [],
+        "document_variants": [],
+        "article_refs": [],
+        "it_section_refs": [],
+    }
+    for item in reversed((history or [])[-3:]):
+        question = str(item.get("question", "") or "").strip()
+        if not question:
+            continue
+        domains = rag_service.detect_hint_domains(question)
+        variants = rag_service.detect_hint_document_variants(question, domains or None)
+        article_refs = rag_service.detect_hint_article_refs(question)
+        it_section_refs = rag_service.detect_hint_it_section_refs(question)
+        if domains or variants or article_refs or it_section_refs:
+            return {
+                "domains": domains,
+                "document_variants": variants,
+                "article_refs": article_refs,
+                "it_section_refs": it_section_refs,
+            }
+    return empty
 
 
 def is_followup_prefix_question(question: str) -> bool:

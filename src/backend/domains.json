@@ -184,6 +184,8 @@
         "termicas",
         "climatizacion",
         "calefaccion",
+        "instalacion frigorifica",
+        "instalaciones frigorificas",
         "tabla 3.1",
         "operaciones de mantenimiento",
         "mantenimiento preventivo",
@@ -209,6 +211,14 @@
         "sistemas de automatizacion",
         "instalacion termica"
       ],
+      "weak_trigger_terms": [
+        "operaciones de mantenimiento",
+        "mantenimiento preventivo",
+        "limpieza de condensadores",
+        "limpieza de evaporadores",
+        "condensadores",
+        "evaporadores"
+      ],
       "trigger_regex": [],
       "source_tokens": [
         "rite",
@@ -232,6 +242,40 @@
         "type": "shift31"
       },
       "phrase_queries": [
+        {
+          "if_contains": [
+            "leyenda",
+            "periodicidad"
+          ],
+          "emit": [
+            "Tabla 3.1",
+            "t una vez por temporada",
+            "m una vez al mes"
+          ]
+        },
+        {
+          "if_contains": [
+            "tabla 3.1"
+          ],
+          "emit": [
+            "una vez por temporada",
+            "una vez al mes",
+            "Comprobacion de la estanquidad y niveles de refrigerante y aceite"
+          ]
+        },
+        {
+          "if_contains": [
+            "instalacion frigorifica"
+          ],
+          "emit": [
+            "Limpieza de los evaporadores",
+            "Limpieza de los condensadores",
+            "Comprobacion de la estanquidad y niveles de refrigerante y aceite",
+            "Drenaje limpieza y tratamiento del circuito de torres de refrigeracion",
+            "Tabla 3.1",
+            "Periodicidad"
+          ]
+        },
         {
           "if_contains": [
             "condensadores"
@@ -428,6 +472,8 @@
         "electrificacion basica",
         "electrificacion elevada",
         "circuitos minimos",
+        "cuadro de una vivienda",
+        "circuitos de vivienda",
         "circuito c1",
         "itc-bt-25",
         "prysmian",
@@ -437,7 +483,8 @@
         "seccion del cable",
         "intensidad admisible",
         "factor de correccion",
-        "cables agrupados"
+        "cables agrupados",
+        "cables juntos"
       ],
       "trigger_regex": [],
       "reference_patterns": [
@@ -470,6 +517,46 @@
           ],
           "emit": [
             "electrificacion basica"
+          ]
+        },
+        {
+          "if_contains": [
+            "circuitos minimos"
+          ],
+          "emit": [
+            "Tabla 1. Caracteristicas electricas de los circuitos",
+            "C1 Iluminacion",
+            "C2 Tomas de uso general",
+            "C3 Cocina y horno",
+            "C4 Lavadora lavavajillas y termo electrico",
+            "C5 Bano cuarto de cocina"
+          ]
+        },
+        {
+          "if_contains": [
+            "no pueden faltar"
+          ],
+          "emit": [
+            "Tabla 1. Caracteristicas electricas de los circuitos",
+            "C1 Iluminacion",
+            "C2 Tomas de uso general",
+            "C3 Cocina y horno",
+            "C4 Lavadora lavavajillas y termo electrico",
+            "C5 Bano cuarto de cocina"
+          ]
+        },
+        {
+          "if_contains": [
+            "rebt",
+            "regula"
+          ],
+          "emit": [
+            "El presente Reglamento tiene por objeto",
+            "preservar la seguridad de las personas y los bienes",
+            "El presente Reglamento se aplicara a las instalaciones",
+            "generadoras de electricidad para consumo propio",
+            "corriente alterna igual o inferior a 1.000 voltios",
+            "corriente continua igual o inferior a 1.500 voltios"
           ]
         },
         {
@@ -649,6 +736,20 @@
             "intensidad",
             "seccion del conductor",
             "longitud"
+          ]
+        },
+        {
+          "if_contains": [
+            "dimensionar",
+            "linea"
+          ],
+          "emit": [
+            "Máxima carga prevista",
+            "Tensión de suministro",
+            "Intensidades máximas admisibles",
+            "La caída de tensión máxima admisible",
+            "cortocircuito admisible",
+            "seccion del conductor"
           ]
         }
       ],
@@ -853,6 +954,8 @@
         "grupo automatico",
         "grupos automaticos",
         "generador diesel",
+        "grupo diesel",
+        "grupo de emergencia",
         "electrogeno",
         "electrogenos",
         "remolque",
@@ -886,6 +989,47 @@
         "electrogenos"
       ],
       "phrase_queries": [
+        {
+          "if_contains": [
+            "mantenimiento",
+            "grupo electrogeno"
+          ],
+          "emit": [
+            "planes de mantenimiento especificos del grupo electrogeno",
+            "periodicidad del mantenimiento",
+            "arrancar el grupo al menos una vez al mes",
+            "bateria",
+            "circuito de refrigeracion",
+            "filtros"
+          ]
+        },
+        {
+          "if_contains": [
+            "mantenimiento",
+            "generador diesel"
+          ],
+          "emit": [
+            "planes de mantenimiento especificos del grupo electrogeno",
+            "periodicidad del mantenimiento",
+            "arrancar el grupo al menos una vez al mes",
+            "bateria",
+            "circuito de refrigeracion",
+            "filtros"
+          ]
+        },
+        {
+          "if_contains": [
+            "bateria",
+            "filtros"
+          ],
+          "emit": [
+            "bateria del grupo electrogeno",
+            "nivel y densidad del electrolito",
+            "circuito de refrigeracion",
+            "filtros de combustible",
+            "prueba con carga"
+          ]
+        },
         {
           "if_contains": [
             "load pick-up",
@@ -994,6 +1138,9 @@
             "iso 80005-2",
             "data communication",
             "monitorizacion y control",
+            "supervision y control",
+            "datos de supervision",
+            "intercambio de datos",
             "monitoring and control",
             "ship to shore",
             "shore to ship",
@@ -1259,6 +1406,9 @@
         "lvsc",
         "data communication",
         "monitorizacion y control",
+        "supervision y control",
+        "datos de supervision",
+        "intercambio de datos",
         "control remoto",
         "planificacion y explotacion",
         "redaccion de proyectos",
@@ -1379,6 +1529,18 @@
         },
         {
           "if_contains": [
+            "80005-1",
+            "tension"
+          ],
+          "emit": [
+            "Voltages and frequencies",
+            "nominal voltage of 6,6 kV AC and/or 11 kV AC",
+            "HV shore connections",
+            "galvanically separated"
+          ]
+        },
+        {
+          "if_contains": [
             "80005-2"
           ],
           "emit": [
@@ -1398,6 +1560,31 @@
             "IEC/IEEE 80005-2",
             "interfaz de comunicacion de datos",
             "monitoring and control"
+          ]
+        },
+        {
+          "if_contains": [
+            "supervision",
+            "control"
+          ],
+          "emit": [
+            "Protocol and IP-address",
+            "ModbusTCP/IP protocol",
+            "shore side polls the ship side",
+            "fixed IP address",
+            "dedicated network"
+          ]
+        },
+        {
+          "if_contains": [
+            "intercambio de datos"
+          ],
+          "emit": [
+            "data communication for monitoring and control",
+            "IEC/IEEE 80005-2",
+            "interfaces addresses and data type",
+            "ship to shore",
+            "shore to ship"
           ]
         },
         {

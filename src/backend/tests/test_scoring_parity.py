@@ -11,6 +11,15 @@ from azure_rag_service import (
     _DOMAIN_MISMATCH_PENALTY,
     _LAYER_BOOSTS,
 )
+from rag_service import (
+    _document_layer_boost,
+    _extract_circuit_definitions,
+    _extract_requested_abbreviation_definitions,
+    _clean_context_document,
+    _matches_structural_focus,
+    _query_support_metrics,
+)
+from ai_service import _retrieval_quality, postprocess_answer
 
 
 def test_domain_boost_match():
@@ -42,6 +51,131 @@ def test_layer_boost_values_match_chroma():
     assert _LAYER_BOOSTS["guia_oficial"] == 4.0
     assert _LAYER_BOOSTS["manual_fabricante"] == 0.0
     assert _LAYER_BOOSTS["pendiente"] == -5.0
+
+
+def test_procedure_intent_prioritizes_practical_documents():
+    assert _document_layer_boost("manual_fabricante", procedure_intent=True) > _document_layer_boost(
+        "normativa_oficial",
+        procedure_intent=True,
+    )
+
+
+def test_normative_intent_prioritizes_official_regulation():
+    assert _document_layer_boost("normativa_oficial", normative_intent=True) > _document_layer_boost(
+        "manual_fabricante",
+        normative_intent=True,
+    )
+
+
+def test_structural_focus_accepts_exact_references():
+    metadata = {
+        "section": "ITC-BT-25",
+        "exact_refs": "itc-bt-25",
+        "itc_refs": "itc-bt-25",
+    }
+    assert _matches_structural_focus(
+        metadata,
+        "Circuitos interiores de viviendas.",
+        exact_refs=["itc-bt-25"],
+    )
+
+
+def test_query_support_metrics_detect_unrelated_context():
+    selected = [
+        (1.0, "1", "Reglamento de instalaciones electricas.", {"source": "rebt.pdf"}),
+        (0.9, "2", "Mantenimiento de calderas.", {"source": "rite.pdf"}),
+    ]
+    supported_ratio, max_coverage = _query_support_metrics(
+        {"neumaticos", "camion", "fabricante", "presion"},
+        selected,
+    )
+    assert supported_ratio == 0.0
+    assert max_coverage < 0.25
+
+
+def test_retrieval_quality_marks_unsupported_context_as_poor():
+    assert _retrieval_quality(
+        {
+            "selected_count": 6,
+            "source_diversity": 3,
+            "expected_domains": [],
+            "domain_match_ratio": 1.0,
+            "supported_chunk_ratio": 0.0,
+            "max_query_term_coverage": 0.2,
+        }
+    ) == "poor"
+
+
+def test_requested_abbreviation_definitions_are_consolidated_from_chunks():
+    selected = [
+        (
+            1.0,
+            "1",
+            "columna_3: t (una vez por temporada (AÑO)); columna_4: m (una vez al MES).",
+            {"source": "manual.pdf"},
+        )
+    ]
+    definitions = _extract_requested_abbreviation_definitions(
+        "Que significan las letras t y m de la tabla?",
+        selected,
+    )
+    assert definitions["t"].startswith("una vez por temporada")
+    assert definitions["m"].startswith("una vez al MES")
+
+
+def test_circuit_definitions_are_consolidated_from_split_chunks():
+    selected = [
+        (
+            1.0,
+            "1",
+            "C1 circuito de distribucion interna, destinado a alimentar los puntos de iluminacion. "
+            "C2 circuito de distribucion interna, destinado a tomas de corriente de uso general y frigorifico.",
+            {"source": "rebt.pdf"},
+        )
+    ]
+    definitions = _extract_circuit_definitions(selected)
+    assert definitions["C1"].startswith("circuito de distribucion interna")
+    assert "frigorifico" in definitions["C2"]
+
+
+def test_circuit_definitions_are_consolidated_from_flattened_table():
+    selected = [
+        (
+            1.0,
+            "1",
+            "C1 Iluminacion 200 0,75 C2 Tomas de uso general 3.450 0,2 "
+            "C3 Cocina y horno 5.400 0,5 "
+            "C4 Lavadora, lavavajillas y termo electrico 3.450 0,66 "
+            "C5 Bano, cuarto de cocina 3.450 0,4",
+            {"source": "rebt.pdf"},
+        )
+    ]
+    assert _extract_circuit_definitions(selected) == {
+        "C1": "Iluminacion",
+        "C2": "Tomas de uso general",
+        "C3": "Cocina y horno",
+        "C4": "Lavadora, lavavajillas y termo electrico",
+        "C5": "Bano, cuarto de cocina",
+    }
+
+
+def test_clean_context_document_removes_obsolete_rite_u_legend():
+    text = (
+        "operacion: Limpieza de evaporadores; < 70 kW: t (una vez por temporada).\n"
+        "Leyenda Tabla 3.1 RITE: en el texto extraido, U corresponde a una vez "
+        "por temporada (año). Si una fila aparece como U U, la periodicidad es "
+        "una vez por temporada para ambas columnas de potencia."
+    )
+    cleaned = _clean_context_document(text, "rite/RITE IT3.pdf")
+    assert "U corresponde" not in cleaned
+    assert "< 70 kW: t" in cleaned
+
+
+def test_postprocess_preserves_last_numbered_item_without_period():
+    answer = "1. t: una vez por temporada.\n2. m: una vez al mes"
+    assert postprocess_answer(answer, "que significan t y m") == (
+        "1. t: una vez por temporada.\n2. m: una vez al mes."
+    )
 
 
 def test_normativa_beats_manual_same_domain():

@@ -146,6 +146,30 @@ GENERATORS_TERM_BOOST   = _gt_scoring.get("generators_term_boost", 8)
 GENERATORS_LEXICAL_DOMAIN = _gt_scoring.get("generators_lexical_domain", 10)
 GENERATORS_LEXICAL_TERM   = _gt_scoring.get("generators_lexical_term", 16)
 
+_DOCUMENT_LAYER_BOOSTS = {
+    "normativa_oficial": 8.0,
+    "guia_oficial": 4.0,
+    "manual_fabricante": 0.0,
+    "pendiente": -5.0,
+}
+
+
+def _document_layer_boost(
+    layer: str,
+    *,
+    normative_intent: bool = False,
+    procedure_intent: bool = False,
+) -> float:
+    normalized = _normalize_text(layer or "")
+    if procedure_intent and not normative_intent:
+        return {
+            "normativa_oficial": 0.0,
+            "guia_oficial": 4.0,
+            "manual_fabricante": 6.0,
+            "pendiente": -5.0,
+        }.get(normalized, 0.0)
+    return _DOCUMENT_LAYER_BOOSTS.get(normalized, 0.0)
+
 
 def _is_noise_chunk(text: str) -> bool:
     return is_noise_chunk(text)
@@ -236,14 +260,16 @@ SUMMARY_QUERY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 TABLE_QUERY_PATTERN = re.compile(
-    r"(?:\btabla\b|\bcircuitos?\s+minimos?\b|\bcircuitos?\s+mínimos?\b|\brelacion\s+de\b|\brelación\s+de\b|\blista\s+completa\b)",
+    r"(?:\btabla\b|\bcircuitos?\s+minimos?\b|\bcircuitos?\s+mínimos?\b|"
+    r"\bcircuitos?\s+(?:que\s+)?no\s+pueden?\s+faltar\b|"
+    r"\brelacion\s+de\b|\brelación\s+de\b|\blista\s+completa\b)",
     re.IGNORECASE,
 )
 PAGE_REFERENCE_PATTERN = re.compile(r"\b(?:pag(?:ina)?|p[áa]g(?:ina)?|page)\.?\s*(\d{1,4})\b", re.IGNORECASE)
 ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[ií]a)[-\s]*(bt|lat|rat)?[-\s]*(\d{1,2})\b", re.IGNORECASE)
 # Refs a instrucciones técnicas numeradas del RITE: "IT 3", "IT 3.3", "IT 1.1.1"
 IT_SECTION_REFERENCE_PATTERN = re.compile(r"\bit\s+(\d+(?:\.\d+){0,2})\b", re.IGNORECASE)
-TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3})\b", re.IGNORECASE)
+TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3}(?:\.\d+)?)\b", re.IGNORECASE)
 ARTICLE_REFERENCE_PATTERN = re.compile(
     r"\bart(?:(?:iculo)|(?:[^\da-z\s]{1,4}culo)|(?:\.))?\s*(\d{1,3})\b",
     re.IGNORECASE,
@@ -973,6 +999,41 @@ def _expand_legend_value(value: str, legend: Dict[str, str]) -> str:
     return value
 
 
+def _table_headers_and_body(data: List[List]) -> Tuple[List[str], List[List]]:
+    n_cols = len(data[0])
+    raw_headers = [str(cell or "").strip() for cell in data[0]]
+    filled_header_count = sum(1 for value in raw_headers if value)
+    composite_header = " ".join(raw_headers)
+    power_columns = re.search(
+        r"<\s*70\s*kW.*?70\s*kW\s*<",
+        composite_header,
+        flags=re.IGNORECASE,
+    )
+    if n_cols == 4 and power_columns:
+        raw_headers = ["numero", "operacion", "< 70 kW", "> 70 kW"]
+        body = data[1:]
+    elif filled_header_count < 2 and len(data) > 1:
+        candidate_row1 = [str(cell or "").strip() for cell in data[1]]
+        filled_row1 = sum(1 for value in candidate_row1 if value)
+        if filled_row1 >= 2 and not any(
+            value.isdigit() and len(value) <= 3
+            for value in candidate_row1
+            if value
+        ):
+            raw_headers = candidate_row1
+            body = data[2:]
+        else:
+            raw_headers = [f"columna_{index + 1}" for index in range(n_cols)]
+            body = data[1:]
+    else:
+        body = data[1:]
+    headers = [
+        re.sub(r"\s+", " ", value) or f"columna_{index + 1}"
+        for index, value in enumerate(raw_headers)
+    ]
+    return headers, body
+
+
 def _extract_table_row_chunks(page, page_text: str) -> List[Dict[str, object]]:
     try:
         tables = page.find_tables()
@@ -990,20 +1051,7 @@ def _extract_table_row_chunks(page, page_text: str) -> List[Dict[str, object]]:
             continue
         n_cols = len(data[0])
         legend = _extract_table_legend(data, n_cols)
-        raw_headers = [str(cell or "").strip() for cell in data[0]]
-        filled_header_count = sum(1 for value in raw_headers if value)
-        if filled_header_count < 2 and len(data) > 1:
-            candidate_row1 = [str(cell or "").strip() for cell in data[1]]
-            filled_row1 = sum(1 for v in candidate_row1 if v)
-            if filled_row1 >= 2 and not any(v.isdigit() and len(v) <= 3 for v in candidate_row1 if v):
-                raw_headers = candidate_row1
-                body = data[2:]
-            else:
-                raw_headers = [f"columna_{i + 1}" for i in range(n_cols)]
-                body = data[1:]
-        else:
-            body = data[1:]
-        headers = [re.sub(r"\s+", " ", value) or f"columna_{idx + 1}" for idx, value in enumerate(raw_headers)]
+        headers, body = _table_headers_and_body(data)
         table_title = table_titles[table_index - 1] if table_index <= len(table_titles) else ""
         if not table_title:
             title_match = re.search(r"Tabla\s+\d+[^.]{0,160}", flat_page, re.IGNORECASE)
@@ -1460,6 +1508,94 @@ def _focus_hits(document: str, core_terms: List[str]) -> int:
     return sum(1 for core in core_terms if core in doc_norm)
 
 
+def _query_support_metrics(
+    query_terms: set[str],
+    selected_items: List[Tuple[float, str, str, Dict[str, object]]],
+) -> Tuple[float, float]:
+    normalized_terms = {
+        _normalize_text(term)
+        for term in query_terms
+        if len(_normalize_text(term)) >= 4
+    }
+    if not normalized_terms or not selected_items:
+        return 1.0, 1.0 if selected_items else 0.0
+    minimum_hits = 1 if len(normalized_terms) <= 2 else 2
+    supported = 0
+    max_coverage = 0.0
+    for _, _, document, metadata in selected_items:
+        text = _normalize_text(f"{metadata.get('source', '')} {metadata.get('section', '')} {document}")
+        hits = sum(1 for term in normalized_terms if term in text)
+        max_coverage = max(max_coverage, hits / len(normalized_terms))
+        if hits >= minimum_hits:
+            supported += 1
+    return round(supported / len(selected_items), 4), round(max_coverage, 4)
+
+
+def _extract_requested_abbreviation_definitions(
+    question: str,
+    selected_items: List[Tuple[float, str, str, Dict[str, object]]],
+) -> Dict[str, str]:
+    requested = {
+        letter.lower()
+        for letter in re.findall(r"(?<![a-z0-9])([a-z])(?![a-z0-9])", _normalize_text(question))
+    }
+    if not requested:
+        return {}
+    definitions: Dict[str, str] = {}
+    for _, _, document, _ in selected_items:
+        for match in re.finditer(
+            r"(?<![a-z0-9])(?<!\d )([a-z])\s*\(([^)\n]{4,100}(?:\([^)\n]{1,30}\)[^)\n]{0,40})?)\)",
+            document,
+            flags=re.IGNORECASE,
+        ):
+            letter = match.group(1).lower()
+            meaning = " ".join(match.group(2).split()).strip(" ;,.")
+            if letter in requested and meaning:
+                definitions.setdefault(letter, meaning)
+    return definitions
+
+
+def _extract_circuit_definitions(
+    selected_items: List[Tuple[float, str, str, Dict[str, object]]],
+) -> Dict[str, str]:
+    definitions: Dict[str, str] = {}
+    for _, _, document, _ in selected_items:
+        clean = " ".join(document.split())
+        for match in re.finditer(
+            r"\b(C(?:1[0-3]?|[1-9]))\s+(circuito\b.{10,320}?)(?=\s+C(?:1[0-3]?|[1-9])\b|$)",
+            clean,
+            flags=re.IGNORECASE,
+        ):
+            code = match.group(1).upper()
+            meaning = match.group(2).strip(" .;:")
+            if "destinad" in _normalize_text(meaning):
+                definitions.setdefault(code, meaning)
+        # En tablas aplanadas, el primer valor numerico marca el final de la
+        # denominacion del circuito.
+        for match in re.finditer(
+            r"\b(C(?:1[0-3]?|[1-9]))\s+([^\d.;]{3,100}?)(?=\.?\s+\(?\d)",
+            clean,
+            flags=re.IGNORECASE,
+        ):
+            code = match.group(1).upper()
+            label = " ".join(match.group(2).split()).strip(" .;:")
+            if label and len(label.split()) <= 14:
+                definitions.setdefault(code, label)
+    return definitions
+
+
+def _clean_context_document(document: str, source_name: str) -> str:
+    decoded = _decode_chunk_corruption(document, source_name)
+    return re.sub(
+        r"\n?Leyenda Tabla 3\.1 RITE: en el texto extraido, U corresponde a "
+        r"una vez por temporada \([^)]*\)\. Si una fila aparece como U U, la "
+        r"periodicidad es una vez por temporada para ambas columnas de potencia\.",
+        "",
+        decoded,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def _metadata_text(metadata: Dict[str, object]) -> str:
     return _normalize_text(
         " ".join(
@@ -1472,6 +1608,25 @@ def _metadata_text(metadata: Dict[str, object]) -> str:
             )
         )
     )
+
+
+def _matches_structural_focus(
+    metadata: Dict[str, object],
+    document: str,
+    *,
+    exact_refs: List[str] | None = None,
+    article_refs: List[str] | None = None,
+    it_section_refs: List[str] | None = None,
+) -> bool:
+    refs = [
+        *list(exact_refs or []),
+        *list(article_refs or []),
+        *list(it_section_refs or []),
+    ]
+    if not refs:
+        return False
+    text = _normalize_text(f"{metadata.get('section', '')} {document} {_metadata_text(metadata)}")
+    return any(_normalize_text(ref) in text for ref in refs if ref)
 
 
 def _domain_from_filename_override(source_name: str) -> str:
@@ -1739,6 +1894,58 @@ def _chunk_profile_metadata(
     }
 
 
+def _page_structure_context(
+    text: str,
+    active_itc: str = "",
+    active_section: str = "",
+) -> Tuple[str, str]:
+    match = re.search(
+        r"(ITC[-\s]*BT[-\s]*\d{1,2})\.?\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s,]{5,})",
+        text or "",
+    )
+    if not match:
+        return active_itc, active_section
+    return (
+        match.group(1).replace(" ", "-").upper(),
+        match.group(2).strip()[:80],
+    )
+
+
+def _inherit_active_structure(
+    profile: Dict[str, object],
+    active_itc: str,
+    active_section: str,
+) -> Dict[str, object]:
+    enriched = dict(profile)
+    if active_itc:
+        active_ref = _extract_itc_refs(active_itc)
+        existing_itc_refs = [
+            ref.strip()
+            for ref in str(enriched.get("itc_refs", "") or "").split(",")
+            if ref.strip()
+        ]
+        enriched["itc_refs"] = ", ".join(
+            [active_ref] + [
+                ref for ref in existing_itc_refs
+                if _normalize_text(ref) != _normalize_text(active_ref)
+            ]
+        )
+        exact_refs = [
+            ref.strip()
+            for ref in str(enriched.get("exact_refs", "") or "").split(",")
+            if ref.strip()
+        ]
+        for ref in _extract_exact_refs(active_itc):
+            if ref not in exact_refs:
+                exact_refs.append(ref)
+        enriched["exact_refs"] = ", ".join(exact_refs)
+        enriched["section_level"] = 1
+    if active_section and not str(enriched.get("section", "") or "").strip():
+        enriched["section"] = _sanitize_section_label(active_section)
+        enriched["section_type"] = "section"
+    return enriched
+
+
 def _extract_itc_refs(text: str) -> str:
     refs = sorted({
         re.sub(r"\s+", "-", match.group(0).upper().replace(" ", "-"))
@@ -1813,7 +2020,12 @@ def _expected_document_variants(question: str, expected_domains: List[str]) -> L
                 if len(trigger_tokens) < 2 or not question_tokens:
                     continue
                 overlap = question_tokens & trigger_tokens
-                if len(overlap) >= min(2, len(trigger_tokens)):
+                required_overlap = (
+                    len(trigger_tokens)
+                    if len(trigger_tokens) <= 3
+                    else max(3, int(len(trigger_tokens) * 0.75))
+                )
+                if len(overlap) >= required_overlap:
                     score = float(len(overlap) * 5) + (len(normalized_trigger) / 100.0)
                     best_score = max(best_score, score)
             if best_score > 0:
@@ -1905,18 +2117,30 @@ def _contains_configured_term(text: str, term: str) -> bool:
 
 def _expected_domains(question: str) -> List[str]:
     normalized = _normalize_text(question or "")
-    domains = []
+    strong_domains = []
+    weak_domains = []
     for name, cfg in _DOMAIN_CFG["domains"].items():
         if not cfg.get("trigger_terms") and not cfg.get("trigger_regex") and not cfg.get("reference_patterns"):
             continue
-        matched = any(_contains_configured_term(normalized, t) for t in cfg.get("trigger_terms", []))
-        if not matched:
-            matched = any(re.search(p, normalized) for p in cfg.get("trigger_regex", []))
-        if not matched:
-            matched = any(re.search(p, normalized) for p in cfg.get("reference_patterns", []))
-        if matched and name not in domains:
-            domains.append(name)
-    return domains
+        weak_terms = {
+            _normalize_text(term)
+            for term in cfg.get("weak_trigger_terms", [])
+            if str(term or "").strip()
+        }
+        matched_terms = [
+            _normalize_text(term)
+            for term in cfg.get("trigger_terms", [])
+            if _contains_configured_term(normalized, term)
+        ]
+        structural_match = (
+            any(re.search(pattern, normalized) for pattern in cfg.get("trigger_regex", []))
+            or any(re.search(pattern, normalized) for pattern in cfg.get("reference_patterns", []))
+        )
+        if structural_match or any(term not in weak_terms for term in matched_terms):
+            strong_domains.append(name)
+        elif matched_terms:
+            weak_domains.append(name)
+    return strong_domains or weak_domains
 
 
 def _matched_domain_query_terms(question: str, domain: str) -> List[str]:
@@ -2191,13 +2415,11 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
             page_exact_refs = ", ".join(_extract_exact_refs(f"{source_name} {text}"))
             # Detectar headings ITC en la página (ej: "ITC-BT-25. INSTALACIONES...")
             # y actualizar el contexto activo que se propagará a tablas.
-            _itc_heading_match = re.search(
-                r"(ITC[-\s]*BT[-\s]*\d{1,2})\.\s*([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s,]{5,})",
+            active_itc_heading, active_itc_section = _page_structure_context(
                 text,
+                active_itc_heading,
+                active_itc_section,
             )
-            if _itc_heading_match:
-                active_itc_heading = _itc_heading_match.group(1).replace(" ", "-").upper()
-                active_itc_section = _itc_heading_match.group(2).strip()[:80]
             for chunk_index, chunk in enumerate(_split_text(text), start=1):
                 if _is_noise_chunk(chunk):
                     continue
@@ -2215,6 +2437,11 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     chunk_kind = "text"
                 chunk_profile = _chunk_profile_metadata(
                     source_name, clean_section_name, chunk, chunk_kind
+                )
+                chunk_profile = _inherit_active_structure(
+                    chunk_profile,
+                    active_itc_heading,
+                    active_itc_section,
                 )
                 # Prefijo de contexto para mejorar embedding y búsqueda léxica
                 context_prefix = ""
@@ -2560,7 +2787,24 @@ def _search_documents_detailed_chroma(
         candidate_count = min(candidate_count + 12, 80)
     if structural_followup_query and (expected_domains or expected_document_variants):
         candidate_count = min(candidate_count + 28, 96)
-    results = collection.query(query_embeddings=[_encode_query(semantic_query)], n_results=candidate_count)
+    query_embedding = _encode_query(semantic_query)
+    domain_filter = {"domain": {"$in": expected_domains}} if expected_domains else None
+    query_kwargs = {
+        "query_embeddings": [query_embedding],
+        "n_results": candidate_count,
+    }
+    if domain_filter:
+        query_kwargs["where"] = domain_filter
+    results = collection.query(**query_kwargs)
+    if domain_filter and not (results.get("ids", [[]])[0] or []):
+        logger.warning(
+            "Busqueda acotada sin candidatos para dominios %s; ampliando al corpus",
+            expected_domains,
+        )
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=candidate_count,
+        )
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     ids = results.get("ids", [[]])[0]
@@ -3145,12 +3389,11 @@ def _search_documents_detailed_chroma(
                 score -= 60 if query_profile["article_refs"] else 30
                 score += _domain_exclusion_penalty(expected_domains, source_domain, clean_question)
         chunk_layer = str(metadata.get("document_layer", "") or "")
-        if chunk_layer == "normativa_oficial":
-            score += 8
-        elif chunk_layer == "guia_oficial":
-            score += 4
-        elif chunk_layer == "pendiente":
-            score -= 5
+        score += _document_layer_boost(
+            chunk_layer,
+            normative_intent=bool(query_profile.get("normative_intent_query")),
+            procedure_intent=bool(query_profile.get("procedure_query")),
+        )
         if expected_document_variants:
             source_document_variant = _document_variant_from_source(str(metadata.get("source", "")))
             if source_document_variant and source_document_variant in expected_document_variants:
@@ -3239,12 +3482,11 @@ def _search_documents_detailed_chroma(
                     lexical_score -= 60 if query_profile["article_refs"] else 30
                     lexical_score += _domain_exclusion_penalty(expected_domains, lex_source_domain, clean_question)
             lex_chunk_layer = str(metadata.get("document_layer", "") or "")
-            if lex_chunk_layer == "normativa_oficial":
-                lexical_score += 8
-            elif lex_chunk_layer == "guia_oficial":
-                lexical_score += 4
-            elif lex_chunk_layer == "pendiente":
-                lexical_score -= 5
+            lexical_score += _document_layer_boost(
+                lex_chunk_layer,
+                normative_intent=bool(query_profile.get("normative_intent_query")),
+                procedure_intent=bool(query_profile.get("procedure_query")),
+            )
             inferred_itcs = _inferred_itc_refs(metadata, document)
             try:
                 metadata_page = int(metadata.get("page", 0) or 0)
@@ -3473,12 +3715,13 @@ def _search_documents_detailed_chroma(
         source_document_variant = _document_variant_from_source(str(item[3].get("source", "")))
         return bool(source_document_variant and source_document_variant in expected_document_variants)
 
-    def _matches_structural_focus(item: Tuple[float, str, str, Dict[str, object]]) -> bool:
-        if not query_profile["article_refs"] and not query_profile["it_section_refs"]:
-            return False
-        text = _normalize_text(f"{item[3].get('section', '')} {item[2]} {_metadata_text(item[3])}")
-        return any(ref in text for ref in query_profile["article_refs"]) or any(
-            ref in text for ref in query_profile["it_section_refs"]
+    def _matches_item_structural_focus(item: Tuple[float, str, str, Dict[str, object]]) -> bool:
+        return _matches_structural_focus(
+            item[3],
+            item[2],
+            exact_refs=query_profile["exact_refs"],
+            article_refs=query_profile["article_refs"],
+            it_section_refs=query_profile["it_section_refs"],
         )
 
     selected = []
@@ -3528,8 +3771,8 @@ def _search_documents_detailed_chroma(
         variant_selection_items = [item for item in selection_items if _matches_variant_focus(item)]
         if variant_selection_items:
             selection_items = variant_selection_items
-    if query_profile["article_refs"] or query_profile["it_section_refs"]:
-        structural_selection_items = [item for item in selection_items if _matches_structural_focus(item)]
+    if query_profile["exact_refs"] or query_profile["article_refs"] or query_profile["it_section_refs"]:
+        structural_selection_items = [item for item in selection_items if _matches_item_structural_focus(item)]
         if structural_selection_items:
             selection_items = structural_selection_items
     layer_counts: Dict[str, int] = {}
@@ -3617,6 +3860,16 @@ def _search_documents_detailed_chroma(
         if focused:
             focused.sort(key=lambda item: (_focus_hits(item[2], core_terms), item[0]), reverse=True)
             selected = (focused + non_focused)[:n_results]
+
+    if query_profile["list_query"] and selected:
+        selected.sort(
+            key=lambda item: (
+                len(CIRCUIT_LIST_CUE_PATTERN.findall(item[2])),
+                1 if LIST_CUE_PATTERN.search(item[2]) else 0,
+                item[0],
+            ),
+            reverse=True,
+        )
 
     # Enforcement final: article_refs + expected_domains → eliminar items de dominios foráneos.
     # Solo se aplica si hay suficientes items del dominio esperado para no degradar la respuesta.
@@ -3847,6 +4100,43 @@ def _search_documents_detailed_chroma(
                 logger.warning("Neighbor expansion failed: %s", exc)
 
     context_parts = []
+    abbreviation_definitions = _extract_requested_abbreviation_definitions(
+        clean_question,
+        selected,
+    )
+    if abbreviation_definitions:
+        definition_lines = [
+            f"{letter} = {meaning}"
+            for letter, meaning in sorted(abbreviation_definitions.items())
+        ]
+        context_parts.append(
+            "[Leyenda consolidada a partir de los fragmentos recuperados]\n"
+            + "\n".join(definition_lines)
+        )
+    if (query_profile["list_query"] or query_profile["table_query"]) and "circuit" in normalized_question:
+        circuit_definitions = _extract_circuit_definitions(selected)
+        if (
+            "minim" in normalized_question
+            or "electrificacion basica" in normalized_question
+            or "no pueden faltar" in normalized_question
+        ):
+            circuit_definitions = {
+                code: meaning
+                for code, meaning in circuit_definitions.items()
+                if code in {"C1", "C2", "C3", "C4", "C5"}
+            }
+        if circuit_definitions:
+            circuit_lines = [
+                f"{code}: {meaning}"
+                for code, meaning in sorted(
+                    circuit_definitions.items(),
+                    key=lambda item: int(item[0][1:]),
+                )
+            ]
+            context_parts.append(
+                "[Lista consolidada a partir de los fragmentos recuperados]\n"
+                + "\n".join(circuit_lines)
+            )
     sources = []
     seen_sources = set()
     matched_domains = 0
@@ -3867,7 +4157,7 @@ def _search_documents_detailed_chroma(
         inferred_itcs = sorted(_inferred_itc_refs(metadata, document))
         itc_suffix = f", {', '.join(ref.upper() for ref in inferred_itcs[:3])}" if inferred_itcs else ""
         source_label = f"{metadata['source']} (pag. {metadata['page']}{printed_suffix}{itc_suffix}{section_suffix}{kind_suffix})"
-        context_parts.append(f"[{source_label}]\n{_decode_chunk_corruption(document, source_name)}")
+        context_parts.append(f"[{source_label}]\n{_clean_context_document(document, source_name)}")
         if source_label not in seen_sources:
             sources.append(source_label)
             seen_sources.add(source_label)
@@ -3910,6 +4200,10 @@ def _search_documents_detailed_chroma(
         _source_taxonomy(str(item[3].get("source", "")), item[3])["document_type"]
         for item in selected
     })
+    supported_chunk_ratio, max_query_term_coverage = _query_support_metrics(
+        question_keywords,
+        selected,
+    )
     retrieval_stats = {
         "candidate_count": candidate_count,
         "selected_count": len(selected),
@@ -3923,6 +4217,8 @@ def _search_documents_detailed_chroma(
         "expected_departments": expected_departments,
         "department_match_ratio": round(matched_departments / max(len(selected), 1), 4) if expected_departments else 1.0,
         "selected_document_types": selected_document_types,
+        "supported_chunk_ratio": supported_chunk_ratio,
+        "max_query_term_coverage": max_query_term_coverage,
         "broad_query": broad_query,
         "table_selected_chunks": table_selected_chunks,
         "table_collection_hits": table_collection_hits,

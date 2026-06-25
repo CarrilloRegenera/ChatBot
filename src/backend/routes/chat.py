@@ -18,6 +18,8 @@ from models import (
 from query_router import classify_question
 from routes.auth_helpers import assert_admin, resolve_request_user_id
 from routes.chat_followup import (
+    derive_history_hints,
+    is_abbreviation_query,
     is_symbol_definition_query,
     recover_route_from_history,
     should_apply_history_hints,
@@ -189,7 +191,10 @@ def _augment_if_symbol_query(
     Con el dominio y sección heredados, el retrieval se focaliza en los chunks
     de leyenda correctos.
     """
-    if not is_symbol_definition_query(original_question):
+    if not (
+        is_symbol_definition_query(original_question)
+        or is_abbreviation_query(original_question)
+    ):
         return rag_question
     parts = [rag_question, "leyenda definicion abreviatura simbolo periodicidad tabla"]
     if hint_it_section_refs:
@@ -973,23 +978,14 @@ def send_message(data: MessageRequest, request: Request):
             else:
                 history = _get_recent_history(data.conversation_id, limit=2)
                 history_for_hints = route_history if _should_apply_history_hints(data.question) else []
-                recent_text = " ".join(
-                    f"{h.get('question', '')} {h.get('response', '')}".strip()
-                    for h in history_for_hints
+                history_focus = derive_history_hints(
+                    history_for_hints,
+                    rag_service=_rag_service(),
                 )
-                hint_domains = _rag_service().detect_hint_domains(recent_text) if recent_text.strip() else []
-                hint_document_variants = _rag_service().detect_hint_document_variants(recent_text, hint_domains) if recent_text.strip() else []
-                hint_article_refs = _rag_service().detect_hint_article_refs(recent_text) if recent_text.strip() else []
-                hint_it_section_refs = _rag_service().detect_hint_it_section_refs(recent_text) if recent_text.strip() else []
-
-                # Hints dispersos: si >=3 dominios, reducir al turno mas reciente
-                if len(hint_domains) >= 3 and history_for_hints:
-                    last_turn = history_for_hints[-1]
-                    last_text = f"{last_turn.get('question', '')} {last_turn.get('response', '')}".strip()
-                    narrowed = _rag_service().detect_hint_domains(last_text) if last_text else []
-                    if narrowed and len(narrowed) < len(hint_domains):
-                        hint_domains = narrowed
-                        hint_document_variants = _rag_service().detect_hint_document_variants(last_text, narrowed)
+                hint_domains = history_focus["domains"]
+                hint_document_variants = history_focus["document_variants"]
+                hint_article_refs = history_focus["article_refs"]
+                hint_it_section_refs = history_focus["it_section_refs"]
 
                 # Descartar hints heredados si la pregunta actual apunta a un dominio diferente
                 if hint_domains:
