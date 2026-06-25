@@ -51,6 +51,11 @@ CASES = [
     # Baja tensión
     ("baja_tension/BOE-326_REBT_ITC-BT-25.pdf", "baja_tension"),
     ("rebt/ITC-BT-40.pdf", "baja_tension"),
+    ("baja_tension/02_guias_fabricante/prysmian/errores_frecuentes.pdf", "baja_tension"),
+    ("baja_tension/03_manuales_practicos/schneider/manual.pdf", "baja_tension"),
+    # Nuevos dominios técnicos
+    ("media_tension/03_guias_fabricante/libro-blanco-instalacion-media-tension.pdf", "media_tension"),
+    ("climatizacion/01_guias_oficiales/guia-puesta-en-marcha-rite.pdf", "climatizacion"),
     # Guías técnicas (BT-40 es guía, no normativa, y debe ganar el override de guía)
     ("guias_tecnicas/Guia_BT_40.pdf", "guias_tecnicas"),
     ("iluminacion/UNE-12464-1_alumbrado.pdf", "guias_tecnicas"),
@@ -92,6 +97,22 @@ TAXONOMY_CASES = [
     (
         "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf",
         {"department": "ingenieria", "document_type": "reglamento", "document_layer": "normativa_oficial", "confidentiality": "internal"},
+    ),
+    (
+        "baja_tension/02_guias_fabricante/prysmian/errores_frecuentes_2023_v2.pdf",
+        {"department": "ingenieria", "document_type": "guia_tecnica", "document_layer": "manual_fabricante", "confidentiality": "internal"},
+    ),
+    (
+        "baja_tension/03_manuales_practicos/schneider/manual-electricidad-baja-tension-1.pdf",
+        {"department": "ingenieria", "document_type": "manual", "document_layer": "manual_fabricante", "confidentiality": "internal"},
+    ),
+    (
+        "media_tension/03_guias_fabricante/libro-blanco-instalacion-media-tension.pdf",
+        {"department": "ingenieria", "document_type": "guia_tecnica", "document_layer": "manual_fabricante", "confidentiality": "internal"},
+    ),
+    (
+        "climatizacion/01_guias_oficiales/guia-puesta-en-marcha-rite.pdf",
+        {"department": "ingenieria", "document_type": "guia_tecnica", "document_layer": "guia_oficial", "confidentiality": "internal"},
     ),
     (
         "rite/A35931-35984.pdf",
@@ -144,6 +165,31 @@ def test_expected_domains_uses_configured_reference_patterns():
     assert "guias_tecnicas" in _expected_domains("Que exige UNE 12464-1?")
     assert "ops" in _expected_domains("Que es OPS y como funciona la shore-side electricity?")
     assert "ops" in _expected_domains("Resumen de IEC 80005 para OPS")
+
+
+def test_new_domains_use_specific_technical_language():
+    assert "media_tension" in _expected_domains(
+        "Como se dimensionan los cables de media tension y sus accesorios?"
+    )
+    assert "climatizacion" in _expected_domains(
+        "Que pruebas de puesta en marcha exige el RITE para una instalacion termica?"
+    )
+    assert "climatizacion" in _expected_domains(
+        "Como se diseña una instalacion centralizada de calefaccion, refrigeracion y ACS?"
+    )
+
+
+def test_new_document_variants_are_selected_from_source_and_query():
+    assert _document_variant_from_source(
+        "media_tension/03_guias_fabricante/libro-blanco-instalacion-media-tension.pdf"
+    ) == "cables_media_tension"
+    assert _document_variant_from_source(
+        "climatizacion/01_guias_oficiales/Guia IDAE de puesta en marcha segun RITE.pdf"
+    ) == "puesta_marcha_rite"
+    assert _expected_document_variants(
+        "Que pruebas de puesta en marcha exige el RITE?",
+        ["climatizacion"],
+    ) == ["puesta_marcha_rite"]
 
 
 def test_ops_phrase_queries_cover_eopsa_checklists():

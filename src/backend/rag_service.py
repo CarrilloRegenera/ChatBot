@@ -418,6 +418,7 @@ TECHNICAL_EQUIVALENT_RULES = (
 # Configuración de dominios cargada desde domains.json.
 # Para añadir un dominio nuevo edita ese fichero — no este código.
 DOMAIN_FILENAME_OVERRIDES: dict = _DOMAIN_CFG.get("filename_overrides", {})
+DOMAIN_PATH_PROFILES: tuple = tuple(_DOMAIN_CFG.get("path_profiles", []))
 
 DOMAIN_SOURCE_TOKEN_HINTS: dict = {
     name: set(cfg.get("source_tokens", []))
@@ -1484,6 +1485,31 @@ def _domain_from_filename_override(source_name: str) -> str:
     return ""
 
 
+def _path_profile(source_name: str) -> Dict[str, str]:
+    """Devuelve el perfil de la ruta mas especifica configurada."""
+    normalized = _normalize_text(_source_pdf_path(source_name).replace("\\", "/"))
+    matches = []
+    for profile in DOMAIN_PATH_PROFILES:
+        prefix = _normalize_text(str(profile.get("path_prefix", "") or "").replace("\\", "/")).rstrip("/")
+        if prefix and (normalized == prefix or normalized.startswith(f"{prefix}/")):
+            matches.append((len(prefix), profile))
+    if not matches:
+        return {}
+    _, profile = max(matches, key=lambda item: item[0])
+    return {
+        key: str(profile.get(key, "") or "").strip()
+        for key in (
+            "domain",
+            "department",
+            "document_type",
+            "document_layer",
+            "confidentiality",
+            "document_variant",
+        )
+        if str(profile.get(key, "") or "").strip()
+    }
+
+
 def _filename_tokens(source_name: str) -> set:
     """Tokeniza un filename a palabras+combinaciones con guiones para matcheo por word boundary.
 
@@ -1601,6 +1627,9 @@ def _source_domain_key(source_name: str, metadata: Dict[str, object] | None = No
     override = _domain_from_filename_override(source_name)
     if override:
         return override
+    profile_domain = _path_profile(source_name).get("domain", "")
+    if profile_domain:
+        return profile_domain
     configured_folder = _domain_from_configured_folder(source_name)
     if configured_folder:
         return configured_folder
@@ -1625,6 +1654,9 @@ def _taxonomy_for_domain(domain: str) -> Dict[str, str]:
 def _source_taxonomy(source_name: str, metadata: Dict[str, object] | None = None) -> Dict[str, str]:
     domain = _source_domain_key(source_name, metadata)
     base = dict(_taxonomy_for_domain(domain))
+    for key, value in _path_profile(source_name).items():
+        if key in base and value:
+            base[key] = value
     if metadata:
         for key in ("department", "document_type", "document_layer", "confidentiality"):
             explicit = str(metadata.get(key, "") or "").strip()
@@ -1665,7 +1697,11 @@ def _document_profile_metadata(
         "document_type": taxonomy["document_type"],
         "confidentiality": taxonomy["confidentiality"],
         "regulation": _regulation_key(source_name, resolved_domain),
-        "document_variant": _document_variant_from_source(source_name),
+        "document_variant": (
+            str((metadata or {}).get("document_variant", "") or "").strip()
+            or _path_profile(source_name).get("document_variant", "")
+            or _document_variant_from_source(source_name)
+        ),
     }
     layer = taxonomy.get("document_layer", "")
     if layer:
@@ -1738,11 +1774,13 @@ def _document_variant_from_source(source_name: str) -> str:
     """
     if not source_name:
         return ""
-    tokens = _filename_tokens(_source_pdf_path(source_name))
+    source_path = _source_pdf_path(source_name)
+    normalized_filename = _normalize_text(source_path.replace("\\", "/").rsplit("/", 1)[-1])
+    tokens = _filename_tokens(source_path)
     for cfg in _DOMAIN_CFG.get("domains", {}).values():
         for variant in cfg.get("document_variants", []):
             patterns = {_normalize_text(p) for p in variant.get("filename_patterns", [])}
-            if tokens & patterns:
+            if tokens & patterns or any(pattern in normalized_filename for pattern in patterns):
                 return variant["variant_key"]
     return ""
 

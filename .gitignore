@@ -28,6 +28,7 @@ data/documentos/
 tmp-chatbot-*.log
 tmp-frontend-*.log
 tmp-logs/
+docs/auditoria_tecnica_rag_2026-06-25.md
 
 # Test and deployment artifacts
 .pytest_cache/

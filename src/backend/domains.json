@@ -1660,6 +1660,160 @@
       ],
       "scoring": {}
     },
+    "media_tension": {
+      "department": "ingenieria",
+      "document_type": "guia_tecnica",
+      "document_layer": "manual_fabricante",
+      "confidentiality": "internal",
+      "document_variants": [
+        {
+          "variant_key": "cables_media_tension",
+          "filename_patterns": [
+            "libro-blanco-instalacion-media-tension",
+            "libro-blanco-instalacion-media",
+            "libro blanco instalacion media tension"
+          ],
+          "query_triggers": [
+            "libro blanco de media tension",
+            "cables de media tension",
+            "instalacion de cables de media tension",
+            "accesorios de media tension",
+            "dimensionamiento de cables de media tension"
+          ]
+        }
+      ],
+      "trigger_terms": [
+        "media tension",
+        "cables de media tension",
+        "cable de media tension",
+        "accesorios de media tension",
+        "instalacion de cables de media tension",
+        "dimensionamiento de cables de media tension",
+        "libro blanco de media tension"
+      ],
+      "trigger_regex": [],
+      "reference_patterns": [],
+      "source_tokens": [
+        "media_tension",
+        "media-tension",
+        "libro-blanco-instalacion-media-tension"
+      ],
+      "source_phrases": [
+        "media tension",
+        "cables de media tension"
+      ],
+      "folder_prefixes": [
+        "media_tension"
+      ],
+      "phrase_queries": [
+        {
+          "if_contains": [
+            "media tension",
+            "cable"
+          ],
+          "emit": [
+            "cables de media tension",
+            "dimensionamiento",
+            "intensidad admisible",
+            "caida de tension",
+            "cortocircuito",
+            "accesorios"
+          ]
+        }
+      ],
+      "scoring": {}
+    },
+    "climatizacion": {
+      "department": "ingenieria",
+      "document_type": "guia_tecnica",
+      "document_layer": "guia_oficial",
+      "confidentiality": "internal",
+      "document_variants": [
+        {
+          "variant_key": "instalaciones_centralizadas",
+          "filename_patterns": [
+            "instalaciones centralizadas",
+            "calefaccion refrigeracion y acs"
+          ],
+          "query_triggers": [
+            "instalaciones centralizadas",
+            "calefaccion refrigeracion y acs",
+            "produccion centralizada",
+            "distribucion centralizada",
+            "agua caliente sanitaria centralizada"
+          ]
+        },
+        {
+          "variant_key": "puesta_marcha_rite",
+          "filename_patterns": [
+            "puesta en marcha",
+            "puesta-en-marcha"
+          ],
+          "query_triggers": [
+            "puesta en marcha segun rite",
+            "puesta en marcha de instalaciones termicas",
+            "pruebas de puesta en marcha",
+            "recepcion de instalaciones termicas",
+            "ajuste y equilibrado"
+          ]
+        }
+      ],
+      "trigger_terms": [
+        "instalaciones centralizadas",
+        "instalacion centralizada",
+        "climatizacion centralizada",
+        "calefaccion refrigeracion y acs",
+        "produccion centralizada",
+        "distribucion centralizada",
+        "puesta en marcha segun rite",
+        "puesta en marcha de instalaciones termicas",
+        "pruebas de puesta en marcha",
+        "ajuste y equilibrado",
+        "recepcion de instalaciones termicas"
+      ],
+      "trigger_regex": [],
+      "reference_patterns": [],
+      "source_tokens": [
+        "climatizacion",
+        "instalaciones_centralizadas",
+        "puesta_en_marcha",
+        "puesta-en-marcha"
+      ],
+      "source_phrases": [
+        "instalaciones centralizadas",
+        "puesta en marcha"
+      ],
+      "folder_prefixes": [
+        "climatizacion"
+      ],
+      "phrase_queries": [
+        {
+          "if_contains": [
+            "puesta en marcha"
+          ],
+          "emit": [
+            "puesta en marcha de instalaciones termicas",
+            "pruebas",
+            "ajuste",
+            "equilibrado",
+            "recepcion"
+          ]
+        },
+        {
+          "if_contains": [
+            "instalaciones centralizadas"
+          ],
+          "emit": [
+            "calefaccion",
+            "refrigeracion",
+            "ACS",
+            "produccion centralizada",
+            "distribucion"
+          ]
+        }
+      ],
+      "scoring": {}
+    },
     "pendiente_ocr": {
       "department": "general",
       "document_type": "pendiente_ocr",
@@ -1679,6 +1833,56 @@
     }
   },
   "filename_overrides": {},
+  "path_profiles": [
+    {
+      "path_prefix": "baja_tension/01_normativa_oficial",
+      "domain": "baja_tension",
+      "document_type": "reglamento",
+      "document_layer": "normativa_oficial"
+    },
+    {
+      "path_prefix": "baja_tension/02_guias_fabricante",
+      "domain": "baja_tension",
+      "document_type": "guia_tecnica",
+      "document_layer": "manual_fabricante"
+    },
+    {
+      "path_prefix": "baja_tension/03_manuales_practicos",
+      "domain": "baja_tension",
+      "document_type": "manual",
+      "document_layer": "manual_fabricante"
+    },
+    {
+      "path_prefix": "media_tension/01_normativa_oficial",
+      "domain": "media_tension",
+      "document_type": "reglamento",
+      "document_layer": "normativa_oficial"
+    },
+    {
+      "path_prefix": "media_tension/02_guias_oficiales",
+      "domain": "media_tension",
+      "document_type": "guia_tecnica",
+      "document_layer": "guia_oficial"
+    },
+    {
+      "path_prefix": "media_tension/03_guias_fabricante",
+      "domain": "media_tension",
+      "document_type": "guia_tecnica",
+      "document_layer": "manual_fabricante"
+    },
+    {
+      "path_prefix": "climatizacion/01_guias_oficiales",
+      "domain": "climatizacion",
+      "document_type": "guia_tecnica",
+      "document_layer": "guia_oficial"
+    },
+    {
+      "path_prefix": "climatizacion/02_manuales_practicos",
+      "domain": "climatizacion",
+      "document_type": "manual",
+      "document_layer": "manual_fabricante"
+    }
+  ],
   "domain_exclusions": [
     {
       "primary": "ops",
