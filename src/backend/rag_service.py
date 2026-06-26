@@ -714,6 +714,12 @@ def _find_chunk_boundary(text: str, chunk_size: int = CHUNK_SIZE, grace: int = C
         return len(text)
 
     forward_limit = min(len(text), chunk_size + grace)
+
+    # Prioridad máxima: doble salto de línea (límite de párrafo)
+    for idx in range(chunk_size, forward_limit - 1):
+        if text[idx] == "\n" and text[idx + 1] == "\n":
+            return idx + 2
+
     for idx in range(chunk_size, forward_limit):
         if text[idx] in ".;!?" and (idx + 1 == len(text) or text[idx + 1].isspace()):
             return idx + 1

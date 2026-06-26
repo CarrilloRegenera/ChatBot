@@ -1097,6 +1097,35 @@
             "ISO 8528-2:2005, Table 1",
             "below maximum safety frequency"
           ]
+        },
+        {
+          "if_contains": [
+            "tiempo de preparacion",
+            "carga"
+          ],
+          "emit": [
+            "3.19 load pick-up readiness time",
+            "load pick-up readiness time"
+          ]
+        },
+        {
+          "if_contains": [
+            "marcha en vacio",
+            "enfriamiento"
+          ],
+          "emit": [
+            "3.20 off-load run-on time",
+            "cooling run-on time"
+          ]
+        },
+        {
+          "if_contains": [
+            "frecuencia nominal"
+          ],
+          "emit": [
+            "declared frequency rated frequency",
+            "frequency at which the generating set is designed to operate"
+          ]
         }
       ],
       "scoring": {}
