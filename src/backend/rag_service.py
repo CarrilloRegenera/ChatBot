@@ -663,8 +663,9 @@ def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -
         if (col.metadata or {}).get("ef_version") != _EF_VERSION:
             raise ValueError("ef_version mismatch")
         return col
-    except Exception:
-        logger.info("Embedding distinto al indexado — borrando y recreando colección")
+    except ValueError:
+        # Solo borrar ante incompatibilidad de versión de embeddings — nunca ante errores transitorios.
+        logger.info("Versión de embeddings distinta a la indexada — borrando y recreando colección '%s'", name)
         try:
             client.delete_collection(name)
         except Exception:
@@ -4231,6 +4232,11 @@ def _search_documents_detailed_chroma(
         "table_coverage_ratio": table_coverage_ratio,
         "score_top": round(selected[0][0], 2) if selected else 0.0,
         "score_bottom": round(selected[-1][0], 2) if selected else 0.0,
+        "all_below_threshold": (
+            MIN_CHUNK_SCORE > 0
+            and bool(selected)
+            and selected[0][0] < MIN_CHUNK_SCORE
+        ),
     }
     if logger.isEnabledFor(logging.DEBUG):
         for rank, item in enumerate(selected, 1):

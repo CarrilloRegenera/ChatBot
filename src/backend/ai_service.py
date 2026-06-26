@@ -889,6 +889,8 @@ def _retrieval_quality(retrieval_stats: Optional[Dict[str, object]]) -> str:
     max_query_term_coverage = float(retrieval_stats.get("max_query_term_coverage", 1.0) or 0.0)
     if selected_count == 0:
         return "empty"
+    if retrieval_stats.get("all_below_threshold"):
+        return "poor"
     if not expected_domains and supported_chunk_ratio == 0.0 and max_query_term_coverage < 0.25:
         return "poor"
     if expected_domains and domain_match_ratio < 0.34:

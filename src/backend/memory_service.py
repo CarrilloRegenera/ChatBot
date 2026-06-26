@@ -43,11 +43,6 @@ chroma_client = get_chroma_client()
 memory_collection = _get_memory_collection(chroma_client, MEMORY_COLLECTION_NAME, _embedding_fn)
 
 MODEL_PRICING_USD_PER_MILLION = {
-    "gpt-5.4-nano": {
-        "input": 0.10,
-        "output": 0.40,
-        "notes": "Tarifa pendiente confirmar OpenAI gpt-5.4-nano",
-    },
     "gpt-4.1-mini": {
         "input": 0.40,
         "output": 1.60,
@@ -91,7 +86,7 @@ def _content_tokens(text: str) -> set:
     return set(cleaned.split()) - STOPWORDS
 
 
-def _has_sufficient_lexical_overlap(q1: str, q2: str, min_jaccard: float = 0.10) -> bool:
+def _has_sufficient_lexical_overlap(q1: str, q2: str, min_jaccard: float = 0.25) -> bool:
     t1 = _content_tokens(q1)
     t2 = _content_tokens(q2)
     if not t1 or not t2:
