@@ -19,6 +19,7 @@ from sentence_transformers.util import cos_sim
 
 from chroma_client import get_chroma_client
 from config import (
+    CHROMA_DB_PATH,
     COLLECTION_NAME,
     CROSS_DOMAIN_MIN_SCORE,
     DOCUMENTS_PATH,
@@ -673,9 +674,27 @@ def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -
         return client.create_collection(name=name, embedding_function=ef, metadata={"ef_version": _EF_VERSION})
 
 
+_ACTIVE_COLLECTION_FILE = Path(CHROMA_DB_PATH) / "_active_collection.txt"
+
+
+def _read_active_collection_name() -> str:
+    try:
+        name = _ACTIVE_COLLECTION_FILE.read_text(encoding="utf-8").strip()
+        return name or COLLECTION_NAME
+    except (FileNotFoundError, OSError):
+        return COLLECTION_NAME
+
+
+def _write_active_collection_name(name: str) -> None:
+    try:
+        _ACTIVE_COLLECTION_FILE.write_text(name, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("No se pudo persistir el nombre de colección activa: %s", exc)
+
+
 chroma_client = get_chroma_client()
 _embedding_fn = _MultilingualEF() if _st_model else None
-collection = _get_or_reset_collection(chroma_client, COLLECTION_NAME, _embedding_fn)
+collection = _get_or_reset_collection(chroma_client, _read_active_collection_name(), _embedding_fn)
 table_collection = _get_or_reset_collection(chroma_client, TABLE_COLLECTION_NAME, _embedding_fn)
 
 
@@ -2372,6 +2391,36 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
     document_profile = _document_profile_metadata(source_name, domain)
     documents, metadatas, ids = [], [], []
 
+    if filepath.suffix.lower() == ".md":
+        text = filepath.read_text(encoding="utf-8", errors="replace")
+        for chunk_index, chunk in enumerate(_split_text(text), start=1):
+            if _is_noise_chunk(chunk):
+                continue
+            if _looks_like_table_block(chunk):
+                chunk_kind = "table"
+            elif _extract_numeric_terms(chunk):
+                chunk_kind = "numeric"
+            else:
+                chunk_kind = "text"
+            chunk_profile = _chunk_profile_metadata(source_name, "", chunk, chunk_kind)
+            context_prefix = f"[{chunk_profile['itc_refs']}] " if chunk_profile["itc_refs"] else ""
+            indexed_chunk = f"{context_prefix}{chunk}" if context_prefix else chunk
+            documents.append(indexed_chunk)
+            metadatas.append({
+                "source": source_name,
+                "folder": str(filepath.parent).replace("\\", "/"),
+                **document_profile,
+                "page": 1,
+                "printed_page": "",
+                "chunk": chunk_index,
+                **chunk_profile,
+                "file_hash": file_hash,
+            })
+            ids.append(f"{source_name}-1-{chunk_index}")
+        if documents:
+            _collection_add_batched(collection, documents=documents, metadatas=metadatas, ids=ids)
+        return len(documents)
+
     pdf = fitz.open(str(filepath))
     # Heading ITC activo: persiste entre páginas para que las tablas
     # en páginas posteriores hereden la ITC de su sección.
@@ -2543,6 +2592,7 @@ def _sync_documents_chroma(
     folder_path: str = DOCUMENTS_PATH,
     progress_callback: Callable[[Dict[str, object]], None] | None = None,
 ) -> Dict[str, int]:
+    global collection, table_collection
     if _embedding_fn is None:
         raise RuntimeError(
             "Embedding model no disponible. Descarga/cacha localmente "
@@ -2553,16 +2603,42 @@ def _sync_documents_chroma(
 
     root_path = Path(folder_path)
     pdf_paths = sorted(root_path.rglob("*.pdf")) if RECURSIVE_PDF_SCAN else sorted(root_path.glob("*.pdf"))
+    md_paths = sorted(root_path.rglob("*.md")) if RECURSIVE_PDF_SCAN else sorted(root_path.glob("*.md"))
+    # Si existe un .md con el mismo nombre base que un .pdf (en la misma carpeta),
+    # usar el .md (texto pre-extraído de mayor calidad) y omitir el .pdf.
+    md_by_stem = {(p.parent, p.stem): p for p in md_paths}
+    filtered_pdf_paths = [p for p in pdf_paths if (p.parent, p.stem) not in md_by_stem]
     current_files = {
         str(p.relative_to(root_path)).replace("\\", "/"): p
-        for p in pdf_paths
+        for p in sorted(filtered_pdf_paths + list(md_paths))
     }
     total_files = len(current_files)
 
     indexed = _get_indexed_sources()
+    _bluegreen_old_name: str | None = None
     if indexed and all(v == "" for v in indexed.values()):
-        logger.info("Índice sin file_hash detectado — reindexando con embedding multilingüe")
-        reset_documents()
+        logger.info("Índice sin file_hash detectado — iniciando reindexado blue/green")
+        _bluegreen_old_name = collection.name
+        _staging_name = f"{COLLECTION_NAME}_staging"
+        try:
+            chroma_client.delete_collection(_staging_name)
+        except Exception:
+            pass
+        collection = chroma_client.create_collection(
+            name=_staging_name,
+            embedding_function=_embedding_fn,
+            metadata={"ef_version": _EF_VERSION},
+        )
+        try:
+            chroma_client.delete_collection(TABLE_COLLECTION_NAME)
+        except Exception:
+            pass
+        table_collection = chroma_client.create_collection(
+            name=TABLE_COLLECTION_NAME,
+            embedding_function=_embedding_fn,
+            metadata={"ef_version": _EF_VERSION},
+        )
+        _query_cache.clear()
         indexed = {}
 
     added = updated = removed = 0
@@ -2619,6 +2695,26 @@ def _sync_documents_chroma(
         _index_file(filepath, root_path, current_hash)
 
     logger.info("Sync completado — añadidos:%d actualizados:%d eliminados:%d", added, updated, removed)
+
+    if _bluegreen_old_name:
+        staging_count = collection.count()
+        if staging_count > 0:
+            try:
+                chroma_client.delete_collection(_bluegreen_old_name)
+            except Exception as exc:
+                logger.warning("No se pudo eliminar colección anterior '%s': %s", _bluegreen_old_name, exc)
+            _write_active_collection_name(collection.name)
+            logger.info(
+                "Blue/green swap completado: '%s' → '%s' (%d chunks)",
+                _bluegreen_old_name, collection.name, staging_count,
+            )
+        else:
+            logger.error(
+                "Staging vacío tras reindexado — restaurando colección anterior '%s'",
+                _bluegreen_old_name,
+            )
+            collection = _get_or_reset_collection(chroma_client, _bluegreen_old_name, _embedding_fn)
+
     return {"added": added, "updated": updated, "removed": removed}
 
 

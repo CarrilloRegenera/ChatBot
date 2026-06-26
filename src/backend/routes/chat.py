@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from business_query_service import answer_business_question, detect_business_route
-from config import CONVERSATION_LOCK_TIMEOUT_SECS
+from config import CONVERSATION_LOCK_TIMEOUT_SECS, TOP_K_COMPLEX_QUERY, TOP_K_SYMBOL_QUERY
 from database import db_conn
 from models import (
     ConversationRequest,
@@ -1001,8 +1001,14 @@ def send_message(data: MessageRequest, request: Request):
                 rag_question = _augment_if_symbol_query(
                     rag_question, data.question, hint_domains, hint_it_section_refs
                 )
+                n_results = (
+                    TOP_K_SYMBOL_QUERY
+                    if (is_symbol_definition_query(data.question) or is_abbreviation_query(data.question))
+                    else TOP_K_COMPLEX_QUERY
+                )
                 context, sources, retrieval_stats = _rag_service().search_documents_detailed(
                     rag_question,
+                    n_results=n_results,
                     hint_domains=hint_domains or None,
                     hint_document_variants=hint_document_variants or None,
                     hint_article_refs=hint_article_refs or None,

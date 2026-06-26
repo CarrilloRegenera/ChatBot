@@ -1454,7 +1454,6 @@
         "puertos electrificados"
       ],
       "trigger_regex": [
-        "\\bops\\b",
         "\\bsse\\b",
         "\\b80005(?:-[123])?\\b",
         "\\bhvsc\\b",
@@ -2075,13 +2074,13 @@
       "primary": "ops",
       "excluded": "alta_tension",
       "extra_penalty": -20,
-      "condition_tokens": ["buque", "puerto", "shore", "hvsc", "80005", "eopsa", "atraque", "muelle"]
+      "condition_tokens": ["buque", "puerto", "shore", "hvsc", "80005", "eopsa", "atraque", "muelle", "onshore", "shore power"]
     },
     {
       "primary": "alta_tension",
       "excluded": "ops",
       "extra_penalty": -20,
-      "condition_tokens": ["itc-lat", "lat-", "a16436", "linea aerea", "apoyo", "tendido"]
+      "condition_tokens": ["itc-lat", "lat-", "a16436", "linea aerea", "apoyo", "tendido", "servidumbre de paso", "anteproyecto de linea"]
     }
   ]
 }
