@@ -605,8 +605,26 @@ rerank_model = _st_model if ENABLE_RERANK else None
 
 
 class _MultilingualEF:
-    def name(self) -> str:
+    @staticmethod
+    def name() -> str:
         return RERANK_MODEL.split("/")[-1].lower()
+
+    def is_legacy(self) -> bool:
+        return False
+
+    def default_space(self) -> str:
+        return "cosine"
+
+    def supported_spaces(self) -> List[str]:
+        return ["cosine", "l2", "ip"]
+
+    def get_config(self) -> Dict[str, object]:
+        return {
+            "name": self.name(),
+            "default_space": self.default_space(),
+            "supported_spaces": self.supported_spaces(),
+            "is_legacy": self.is_legacy(),
+        }
 
     def _encode(self, input: List[str]) -> List[List[float]]:
         return _encode_passages(input)
