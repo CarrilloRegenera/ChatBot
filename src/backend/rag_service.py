@@ -63,6 +63,10 @@ from rag_query_helpers import (
     extract_reference_terms as _extract_reference_terms_impl,
     extract_topic_terms as _extract_topic_terms_impl,
 )
+from rag_chunking_service import (
+    find_chunk_boundary as _find_chunk_boundary_impl,
+    split_text as _split_text_impl,
+)
 from rag_pdf_utils import decode_chunk_corruption, is_noise_chunk, normalize_rite_table31_text, ocr_page_text
 
 
@@ -757,74 +761,25 @@ def _ensure_active_chroma_collections() -> None:
 
 
 def _find_chunk_boundary(text: str, chunk_size: int = CHUNK_SIZE, grace: int = CHUNK_SENTENCE_GRACE) -> int:
-    if len(text) <= chunk_size:
-        return len(text)
-
-    forward_limit = min(len(text), chunk_size + grace)
-
-    # Prioridad máxima: doble salto de línea (límite de párrafo)
-    for idx in range(chunk_size, forward_limit - 1):
-        if text[idx] == "\n" and text[idx + 1] == "\n":
-            return idx + 2
-
-    for idx in range(chunk_size, forward_limit):
-        if text[idx] in ".;!?" and (idx + 1 == len(text) or text[idx + 1].isspace()):
-            return idx + 1
-
-    backward_limit = max(MIN_CHUNK_LENGTH, chunk_size - grace)
-    for idx in range(chunk_size - 1, backward_limit - 1, -1):
-        if text[idx] in ".;!?" and (idx + 1 == len(text) or text[idx + 1].isspace()):
-            return idx + 1
-
-    for idx in range(chunk_size, min(len(text), chunk_size + 80)):
-        if text[idx].isspace():
-            return idx
-
-    for idx in range(chunk_size - 1, max(MIN_CHUNK_LENGTH, chunk_size - 80) - 1, -1):
-        if text[idx].isspace():
-            return idx
-
-    return chunk_size
+    return _find_chunk_boundary_impl(
+        text,
+        chunk_size=chunk_size,
+        grace=grace,
+        min_chunk_length=MIN_CHUNK_LENGTH,
+    )
 
 
 def _split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
-    blocks = _extract_text_blocks(text)
-    if not blocks:
-        return []
-
-    chunks = []
-    current = ""
-    current_section = ""
-
-    for block in blocks:
-        block_text = block["text"]
-        block_section = block["section"]
-        candidate = f"{current} {block_text}".strip() if current else block_text
-        if len(candidate) <= chunk_size:
-            current = candidate
-            current_section = current_section or block_section
-            continue
-
-        if current and len(current) >= MIN_CHUNK_LENGTH:
-            chunks.append(_format_chunk(current, current_section))
-
-        overlap_tail = current[-overlap:].strip() if current else ""
-        current = f"{overlap_tail} {block_text}".strip() if overlap_tail else block_text
-        current_section = block_section
-
-        while len(current) > chunk_size:
-            boundary = _find_chunk_boundary(current, chunk_size=chunk_size)
-            partial = current[:boundary].strip()
-            if len(partial) >= MIN_CHUNK_LENGTH:
-                chunks.append(_format_chunk(partial, current_section))
-            next_start = max(boundary - overlap, 1)
-            current = current[next_start:].strip()
-
-    if current and len(current) >= MIN_CHUNK_LENGTH:
-        chunks.append(_format_chunk(current, current_section))
-
-    return chunks
-
+    return _split_text_impl(
+        text,
+        chunk_size=chunk_size,
+        overlap=overlap,
+        chunk_sentence_grace=CHUNK_SENTENCE_GRACE,
+        min_chunk_length=MIN_CHUNK_LENGTH,
+        extract_text_blocks=_extract_text_blocks,
+        format_chunk=_format_chunk,
+        find_chunk_boundary_fn=_find_chunk_boundary_impl,
+    )
 
 
 def _tokenize(text: str) -> List[str]:
