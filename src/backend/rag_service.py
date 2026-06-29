@@ -3,7 +3,6 @@ import html as _html
 import json
 import logging
 import os
-import pickle
 import re
 import threading
 import time
@@ -24,6 +23,7 @@ from config import (
     COLLECTION_NAME,
     CROSS_DOMAIN_MIN_SCORE,
     DOCUMENTS_PATH,
+    EMBEDDING_CACHE_MAX_ENTRIES,
     ENABLE_RERANK,
     MAX_CHUNKS_PER_SOURCE,
     MIN_CHUNK_SCORE,
@@ -41,6 +41,7 @@ from config import (
     TABLE_COLLECTION_NAME,
     TOP_K_RESULTS,
 )
+from embedding_cache import EmbeddingCache
 from rag_query_helpers import (
     build_query_profile as _build_query_profile_impl,
     extract_article_refs as _extract_article_refs_impl,
@@ -659,43 +660,23 @@ _index_version_tag = _rag_index_version_tag(RAG_INDEX_VERSION)
 _EF_VERSION = f"{_model_tag}-v2-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}-i{_index_version_tag}"
 
 _EMBEDDING_CACHE_FILE = Path(CHROMA_DB_PATH) / "_embedding_cache.pkl"
-_embedding_cache: dict = {}
-_embedding_cache_loaded = False
-_embedding_cache_dirty = False
+_embedding_cache = EmbeddingCache(
+    _EMBEDDING_CACHE_FILE,
+    ef_version=_EF_VERSION,
+    max_entries=EMBEDDING_CACHE_MAX_ENTRIES,
+)
 
 
 def _chunk_cache_key(text: str) -> str:
-    return hashlib.sha256(f"{_EF_VERSION}|{text}".encode("utf-8")).hexdigest()
+    return _embedding_cache.key_for_text(text)
 
 
 def _load_embedding_cache() -> None:
-    global _embedding_cache, _embedding_cache_loaded
-    if _embedding_cache_loaded:
-        return
-    try:
-        with open(_EMBEDDING_CACHE_FILE, "rb") as f:
-            data = pickle.load(f)
-        if isinstance(data, dict):
-            _embedding_cache = data
-            logger.debug("Caché de embeddings cargada: %d entradas", len(_embedding_cache))
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        logger.warning("No se pudo cargar caché de embeddings: %s", exc)
-    _embedding_cache_loaded = True
+    _embedding_cache.load()
 
 
 def _save_embedding_cache() -> None:
-    global _embedding_cache_dirty
-    if not _embedding_cache_dirty:
-        return
-    try:
-        with open(_EMBEDDING_CACHE_FILE, "wb") as f:
-            pickle.dump(_embedding_cache, f)
-        _embedding_cache_dirty = False
-        logger.debug("Caché de embeddings guardada: %d entradas", len(_embedding_cache))
-    except Exception as exc:
-        logger.warning("No se pudo guardar caché de embeddings: %s", exc)
+    _embedding_cache.save()
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
@@ -2420,19 +2401,19 @@ def _collection_add_batched(
     use_embedding_cache: bool = False,
 ) -> None:
     if use_embedding_cache and _embedding_fn is not None:
-        global _embedding_cache, _embedding_cache_dirty
         if len(documents) != len(metadatas) or len(documents) != len(ids):
             raise ValueError("documents, metadatas e ids deben tener la misma longitud")
         _load_embedding_cache()
         keys = [_chunk_cache_key(doc) for doc in documents]
-        precomputed = [_embedding_cache.get(k) for k in keys]
+        precomputed = _embedding_cache.get_many(keys)
         miss_indices = [i for i, emb in enumerate(precomputed) if emb is None]
         if miss_indices:
             new_embs = _encode_passages([documents[i] for i in miss_indices])
+            cache_updates = []
             for idx, emb in zip(miss_indices, new_embs):
                 precomputed[idx] = emb
-                _embedding_cache[keys[idx]] = emb
-            _embedding_cache_dirty = True
+                cache_updates.append((keys[idx], emb))
+            _embedding_cache.put_many(cache_updates)
         safe_batch = max(1, int(batch_size or 1))
         for start in range(0, len(documents), safe_batch):
             end = start + safe_batch

@@ -1,4 +1,3 @@
-import pickle
 import sys
 import tempfile
 from pathlib import Path
@@ -63,9 +62,7 @@ def test_collection_add_batched_calls_collection_in_chunks():
 
 
 def _reset_cache_globals():
-    rag_service._embedding_cache = {}
-    rag_service._embedding_cache_loaded = False
-    rag_service._embedding_cache_dirty = False
+    rag_service._embedding_cache.reset_runtime_state()
 
 
 def test_chunk_cache_key_is_deterministic():
@@ -79,17 +76,16 @@ def test_save_and_load_embedding_cache_roundtrip():
     _reset_cache_globals()
     with tempfile.TemporaryDirectory() as tmpdir:
         cache_file = Path(tmpdir) / "_embedding_cache.pkl"
-        with mock.patch.object(rag_service, "_EMBEDDING_CACHE_FILE", cache_file):
-            rag_service._embedding_cache = {"abc": [0.1, 0.2]}
-            rag_service._embedding_cache_dirty = True
+        test_cache = rag_service.EmbeddingCache(cache_file, ef_version="test-v1", max_entries=10)
+        with mock.patch.object(rag_service, "_embedding_cache", test_cache):
+            rag_service._embedding_cache.put_many([("abc", [0.1, 0.2])])
             _save_embedding_cache()
             assert cache_file.exists()
-            assert not rag_service._embedding_cache_dirty
+            assert not rag_service._embedding_cache.dirty
 
-            rag_service._embedding_cache = {}
-            rag_service._embedding_cache_loaded = False
+            rag_service._embedding_cache.reset_runtime_state()
             _load_embedding_cache()
-            assert rag_service._embedding_cache == {"abc": [0.1, 0.2]}
+            assert rag_service._embedding_cache.get_many(["abc"]) == [[0.1, 0.2]]
 
 
 def test_collection_add_batched_cache_miss_then_hit():
@@ -118,7 +114,11 @@ def test_collection_add_batched_cache_miss_then_hit():
     with (
         mock.patch.object(rag_service, "_embedding_fn", new=object()),
         mock.patch.object(rag_service, "_encode_passages", side_effect=fake_encode),
-        mock.patch.object(rag_service, "_EMBEDDING_CACHE_FILE", Path("/nonexistent/_embedding_cache.pkl")),
+        mock.patch.object(
+            rag_service,
+            "_embedding_cache",
+            rag_service.EmbeddingCache(Path("/nonexistent/_embedding_cache.pkl"), ef_version="test-v1", max_entries=10),
+        ),
     ):
         # Primera llamada: cache miss → debe codificar
         _collection_add_batched(col, documents=docs, metadatas=metas, ids=ids, use_embedding_cache=True)
@@ -133,3 +133,14 @@ def test_collection_add_batched_cache_miss_then_hit():
         # Las embeddings llegan a ChromaDB en ambos casos
         assert col.calls[0]["embeddings"] == [fake_emb, fake_emb]
         assert col2.calls[0]["embeddings"] == [fake_emb, fake_emb]
+
+
+def test_embedding_cache_prunes_old_entries():
+    cache = rag_service.EmbeddingCache(Path("/nonexistent/cache.pkl"), ef_version="test-v1", max_entries=2)
+    cache.put_many([
+        ("a", [0.1]),
+        ("b", [0.2]),
+    ])
+    cache.put_many([("c", [0.3])])
+
+    assert cache.get_many(["a", "b", "c"]) == [None, [0.2], [0.3]]

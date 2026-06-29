@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
+DEFAULT_EMBEDDING_CACHE_MAX_ENTRIES = 20000
 
 load_dotenv(ENV_PATH)
 
@@ -151,6 +152,9 @@ APPREGENERA_DEV_BYPASS_KEY = os.getenv("APPREGENERA_DEV_BYPASS_KEY", "").strip()
 
 RAG_BACKEND = os.getenv("RAG_BACKEND", "chroma").strip().lower()
 RAG_INDEX_VERSION = os.getenv("RAG_INDEX_VERSION", "3").strip() or "3"
+EMBEDDING_CACHE_MAX_ENTRIES = int(
+    os.getenv("EMBEDDING_CACHE_MAX_ENTRIES", str(DEFAULT_EMBEDDING_CACHE_MAX_ENTRIES))
+)
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT", "").strip().rstrip("/")
 AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY", "").strip()
 AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME", "idx-chatbot-rag").strip()
