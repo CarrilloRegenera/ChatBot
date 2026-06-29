@@ -134,6 +134,22 @@ def is_followup_prefix_question(question: str) -> bool:
     return bool(_FOLLOWUP_PREFIX_RE.search(normalized))
 
 
+def maybe_inherit_inventory_route(
+    question: str,
+    *,
+    history: List[Dict[str, str]] | None,
+    classify_question: Callable[[str], Dict[str, str]],
+) -> str | None:
+    """Si la pregunta es un follow-up y el turno anterior fue inventario, hereda la ruta."""
+    if not is_followup_prefix_question(question):
+        return None
+    for item in reversed((history or [])[-3:]):
+        previous_question = str(item.get("question", "") or "").strip()
+        if previous_question and classify_question(previous_question).get("route") == "document_inventory":
+            return "document_inventory"
+    return None
+
+
 def recover_route_from_history(
     question: str,
     *,

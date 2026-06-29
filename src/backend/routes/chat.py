@@ -43,6 +43,7 @@ from routes.chat_followup import (
     derive_history_hints,
     is_abbreviation_query,
     is_symbol_definition_query,
+    maybe_inherit_inventory_route as _maybe_inherit_inventory_route_impl,
     recover_route_from_history,
     should_apply_history_hints,
 )
@@ -164,15 +165,11 @@ def _augment_if_symbol_query(
 
 
 def _maybe_inherit_inventory_route(question: str, history: List[Dict]) -> str | None:
-    """Si la pregunta es un follow-up y el turno anterior fue inventario, hereda la ruta."""
-    normalized = _normalize_followup_text(question)
-    if not _FOLLOWUP_PREFIX_RE.search(normalized):
-        return None
-    for item in reversed((history or [])[-3:]):
-        prev_q = str(item.get("question", "")).strip()
-        if prev_q and classify_question(prev_q).get("route") == "document_inventory":
-            return "document_inventory"
-    return None
+    return _maybe_inherit_inventory_route_impl(
+        question,
+        history=history,
+        classify_question=classify_question,
+    )
 
 
 def _recover_route_from_history(
