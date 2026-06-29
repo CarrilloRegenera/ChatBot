@@ -1,5 +1,4 @@
 import logging
-import re
 import time
 from threading import Lock, Thread
 from typing import Dict, List
@@ -69,14 +68,6 @@ logger = logging.getLogger(__name__)
 _document_sync_lock = Lock()
 _document_sync_inflight = False
 _document_sync_status = dict(DEFAULT_SYNC_STATUS)
-_FOLLOWUP_PREFIX_RE = re.compile(
-    r"^(?:y|entonces|ademas|además|tambien|también|sobre eso|sobre ello|respecto a eso|respecto a ello|en ese caso)\b"
-)
-
-
-def _normalize_followup_text(question: str) -> str:
-    normalized = " ".join((question or "").strip().lower().split())
-    return normalized.lstrip("¿?¡!.,;:()[]{}\"' ")
 
 
 def _memory_service():
