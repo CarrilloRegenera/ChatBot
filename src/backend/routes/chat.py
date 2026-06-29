@@ -40,6 +40,7 @@ from models import (
 from query_router import classify_question
 from routes.auth_helpers import assert_admin, resolve_request_user_id
 from routes.chat_followup import (
+    augment_if_symbol_query as _augment_if_symbol_query_impl,
     derive_history_hints,
     is_abbreviation_query,
     is_symbol_definition_query,
@@ -145,23 +146,12 @@ def _augment_if_symbol_query(
     hint_domains: List[str],
     hint_it_section_refs: List[str],
 ) -> str:
-    """Expande queries de resolución de símbolo/abreviatura con contexto heredado.
-
-    Sin este paso, 'qué significa la t' busca 't' en todos los dominios.
-    Con el dominio y sección heredados, el retrieval se focaliza en los chunks
-    de leyenda correctos.
-    """
-    if not (
-        is_symbol_definition_query(original_question)
-        or is_abbreviation_query(original_question)
-    ):
-        return rag_question
-    parts = [rag_question, "leyenda definicion abreviatura simbolo periodicidad tabla"]
-    if hint_it_section_refs:
-        parts.extend(hint_it_section_refs[:2])
-    if hint_domains:
-        parts.extend(hint_domains[:2])
-    return " ".join(parts)
+    return _augment_if_symbol_query_impl(
+        rag_question,
+        original_question=original_question,
+        hint_domains=hint_domains,
+        hint_it_section_refs=hint_it_section_refs,
+    )
 
 
 def _maybe_inherit_inventory_route(question: str, history: List[Dict]) -> str | None:

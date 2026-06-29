@@ -150,6 +150,27 @@ def maybe_inherit_inventory_route(
     return None
 
 
+def augment_if_symbol_query(
+    rag_question: str,
+    *,
+    original_question: str,
+    hint_domains: List[str],
+    hint_it_section_refs: List[str],
+) -> str:
+    """Expande queries de resolución de símbolo/abreviatura con contexto heredado."""
+    if not (
+        is_symbol_definition_query(original_question)
+        or is_abbreviation_query(original_question)
+    ):
+        return rag_question
+    parts = [rag_question, "leyenda definicion abreviatura simbolo periodicidad tabla"]
+    if hint_it_section_refs:
+        parts.extend(hint_it_section_refs[:2])
+    if hint_domains:
+        parts.extend(hint_domains[:2])
+    return " ".join(parts)
+
+
 def recover_route_from_history(
     question: str,
     *,
