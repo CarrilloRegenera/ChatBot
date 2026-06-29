@@ -3,6 +3,7 @@ import html as _html
 import json
 import logging
 import os
+import pickle
 import re
 import threading
 import time
@@ -656,6 +657,45 @@ def _rag_index_version_tag(value: str) -> str:
 
 _index_version_tag = _rag_index_version_tag(RAG_INDEX_VERSION)
 _EF_VERSION = f"{_model_tag}-v2-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}-i{_index_version_tag}"
+
+_EMBEDDING_CACHE_FILE = Path(CHROMA_DB_PATH) / "_embedding_cache.pkl"
+_embedding_cache: dict = {}
+_embedding_cache_loaded = False
+_embedding_cache_dirty = False
+
+
+def _chunk_cache_key(text: str) -> str:
+    return hashlib.sha256(f"{_EF_VERSION}|{text}".encode("utf-8")).hexdigest()
+
+
+def _load_embedding_cache() -> None:
+    global _embedding_cache, _embedding_cache_loaded
+    if _embedding_cache_loaded:
+        return
+    try:
+        with open(_EMBEDDING_CACHE_FILE, "rb") as f:
+            data = pickle.load(f)
+        if isinstance(data, dict):
+            _embedding_cache = data
+            logger.debug("Caché de embeddings cargada: %d entradas", len(_embedding_cache))
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("No se pudo cargar caché de embeddings: %s", exc)
+    _embedding_cache_loaded = True
+
+
+def _save_embedding_cache() -> None:
+    global _embedding_cache_dirty
+    if not _embedding_cache_dirty:
+        return
+    try:
+        with open(_EMBEDDING_CACHE_FILE, "wb") as f:
+            pickle.dump(_embedding_cache, f)
+        _embedding_cache_dirty = False
+        logger.debug("Caché de embeddings guardada: %d entradas", len(_embedding_cache))
+    except Exception as exc:
+        logger.warning("No se pudo guardar caché de embeddings: %s", exc)
 
 
 def _get_or_reset_collection(client: chromadb.PersistentClient, name: str, ef) -> chromadb.Collection:
@@ -2377,7 +2417,32 @@ def _collection_add_batched(
     metadatas: List[Dict[str, object]],
     ids: List[str],
     batch_size: int = CHROMA_ADD_BATCH_SIZE,
+    use_embedding_cache: bool = False,
 ) -> None:
+    if use_embedding_cache and _embedding_fn is not None:
+        global _embedding_cache, _embedding_cache_dirty
+        if len(documents) != len(metadatas) or len(documents) != len(ids):
+            raise ValueError("documents, metadatas e ids deben tener la misma longitud")
+        _load_embedding_cache()
+        keys = [_chunk_cache_key(doc) for doc in documents]
+        precomputed = [_embedding_cache.get(k) for k in keys]
+        miss_indices = [i for i, emb in enumerate(precomputed) if emb is None]
+        if miss_indices:
+            new_embs = _encode_passages([documents[i] for i in miss_indices])
+            for idx, emb in zip(miss_indices, new_embs):
+                precomputed[idx] = emb
+                _embedding_cache[keys[idx]] = emb
+            _embedding_cache_dirty = True
+        safe_batch = max(1, int(batch_size or 1))
+        for start in range(0, len(documents), safe_batch):
+            end = start + safe_batch
+            target_collection.add(
+                documents=documents[start:end],
+                metadatas=metadatas[start:end],
+                ids=ids[start:end],
+                embeddings=precomputed[start:end],
+            )
+        return
     for docs_batch, meta_batch, ids_batch in _iter_add_batches(
         documents,
         metadatas,
@@ -2424,7 +2489,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
             })
             ids.append(f"{source_name}-1-{chunk_index}")
         if documents:
-            _collection_add_batched(collection, documents=documents, metadatas=metadatas, ids=ids)
+            _collection_add_batched(collection, documents=documents, metadatas=metadatas, ids=ids, use_embedding_cache=True)
         return len(documents)
 
     pdf = fitz.open(str(filepath))
@@ -2590,6 +2655,7 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
             documents=documents,
             metadatas=metadatas,
             ids=ids,
+            use_embedding_cache=True,
         )
     return len(documents)
 
@@ -2721,6 +2787,7 @@ def _sync_documents_chroma(
             )
             collection = _get_or_reset_collection(chroma_client, _bluegreen_old_name, _embedding_fn)
 
+    _save_embedding_cache()
     return {"added": added, "updated": updated, "removed": removed}
 
 
