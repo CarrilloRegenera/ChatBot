@@ -25,6 +25,9 @@ from chat_document_sync_service import (
     start_document_sync_background as _start_document_sync_background_impl,
     update_document_sync_status as _update_document_sync_status_impl,
 )
+from chat_interaction_recording_service import (
+    record_pending_interaction_safe as _record_pending_interaction_safe_impl,
+)
 from chat_technical_response_service import (
     apply_known_technical_answer_overrides as _apply_known_technical_answer_overrides_impl,
     augment_retrieval_question as _augment_retrieval_question_impl,
@@ -250,31 +253,20 @@ def _record_pending_interaction_safe(
     from_memory: bool = False,
     elapsed_ms: int = 0,
 ) -> int | None:
-    try:
-        return _memory_service().record_interaction_pending(
-            conversation_id=conversation_id,
-            question=question,
-            answer=answer,
-            sources=sources or [],
-            context=context,
-            confidence=float(confidence),
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
-            model=model,
-            base_model=model,
-            final_model=model,
-            base_confidence=float(confidence),
-            final_confidence=float(confidence),
-            escalated=False,
-            escalation_reason="",
-            route=route,
-            from_memory=from_memory,
-            elapsed_ms=elapsed_ms,
-        )
-    except Exception:
-        logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo registrar InteraccionesRAG para ruta=%s", route)
-        return None
+    return _record_pending_interaction_safe_impl(
+        memory_service_factory=_memory_service,
+        logger=logger,
+        conversation_id=conversation_id,
+        question=question,
+        answer=answer,
+        confidence=confidence,
+        route=route,
+        sources=sources,
+        context=context,
+        model=model,
+        from_memory=from_memory,
+        elapsed_ms=elapsed_ms,
+    )
 
 
 def _build_history_interaction_join() -> str:
