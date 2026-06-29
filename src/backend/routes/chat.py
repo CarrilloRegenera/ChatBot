@@ -10,6 +10,7 @@ from ai_service import AIResponseError, format_answer_for_user, generate_ai_resp
 from business_query_service import answer_business_question, detect_business_route
 from config import CONVERSATION_LOCK_TIMEOUT_SECS, TOP_K_COMPLEX_QUERY, TOP_K_SYMBOL_QUERY
 from database import db_conn
+from document_inventory_service import format_document_inventory_response
 from models import (
     ConversationRequest,
     MessageCancelRequest,
@@ -273,76 +274,6 @@ def _augment_retrieval_question(question: str) -> str:
     if "bilbao" in normalized and any(token in normalized for token in ("de que trata", "trata", "puerto")):
         return f"{question} infraestructura electrica conexion de los buques red electrica terrestre santurtzi"
     return question
-
-
-_DOMAIN_DISPLAY_NAMES = {
-    "alta_tension": "Alta tension",
-    "baja_tension": "Baja tension",
-    "fotovoltaica_om": "Fotovoltaica O&M",
-    "grupos_electrogenos": "Grupos electrogenos",
-    "guias_tecnicas": "Guias tecnicas",
-    "rite": "RITE",
-    "ops": "OPS",
-}
-
-
-def _group_indexed_sources(indexed_sources: Dict[str, str]) -> Dict[str, List[str]]:
-    grouped: Dict[str, List[str]] = {}
-    for source in sorted(indexed_sources):
-        normalized = str(source or "").replace("\\", "/").strip("/")
-        if not normalized:
-            continue
-        parts = normalized.split("/")
-        domain = parts[0]
-        grouped.setdefault(domain, []).append(normalized)
-    return grouped
-
-
-def _inventory_focus_domains(question: str, grouped_sources: Dict[str, List[str]]) -> List[str]:
-    detected = [
-        domain
-        for domain in _rag_service().detect_hint_domains(question or "")
-        if domain in grouped_sources
-    ]
-    return detected
-
-
-def _source_display_name(source: str) -> str:
-    normalized = str(source or "").replace("\\", "/").strip("/")
-    if not normalized:
-        return ""
-    return normalized.rsplit("/", 1)[-1]
-
-
-def _format_document_inventory_response(indexed_sources: Dict[str, str], question: str = "") -> str:
-    grouped = _group_indexed_sources(indexed_sources)
-    if not grouped:
-        return (
-            "Ahora mismo no veo documentos tecnicos indexados. "
-            "Cuando termine la sincronizacion documental podre listar los documentos disponibles."
-        )
-
-    focus_domains = _inventory_focus_domains(question, grouped)
-    if focus_domains:
-        domains_to_render = focus_domains
-        if len(focus_domains) == 1:
-            title = f"Los documentos que tenemos en {_DOMAIN_DISPLAY_NAMES.get(focus_domains[0], focus_domains[0])} son:"
-        else:
-            title = "Los documentos que tenemos en esos bloques son:"
-    else:
-        domains_to_render = sorted(grouped)
-        title = "Los documentos tecnicos disponibles son:"
-
-    lines = [title]
-    seen_names: set[str] = set()
-    for domain in domains_to_render:
-        for source in grouped.get(domain, []):
-            name = _source_display_name(source)
-            if not name or name in seen_names:
-                continue
-            seen_names.add(name)
-            lines.append(f"- {name}")
-    return "\n".join(lines)
 
 
 def _apply_known_technical_answer_overrides(question: str, response: str, confidence: float) -> tuple[str, float]:
@@ -826,7 +757,11 @@ def send_message(data: MessageRequest, request: Request):
 
         if route == "document_inventory":
             indexed_sources = _rag_service().list_indexed_sources()
-            response = _format_document_inventory_response(indexed_sources, data.question)
+            response = format_document_inventory_response(
+                indexed_sources,
+                data.question,
+                detect_hint_domains=_rag_service().detect_hint_domains,
+            )
             elapsed = int((time.time() - start) * 1000)
             interaction_id = _record_pending_interaction_safe(
                 conversation_id=data.conversation_id,

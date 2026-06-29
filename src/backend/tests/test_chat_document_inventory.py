@@ -5,17 +5,18 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import rag_service
-from routes.chat import _format_document_inventory_response
+from document_inventory_service import format_document_inventory_response
 
 
 def test_format_document_inventory_response_groups_domains_and_counts():
-    response = _format_document_inventory_response(
+    response = format_document_inventory_response(
         {
             "ops/01_normativa_base/1329648_CENELEC_IEC_PDF.pdf": "h1",
             "ops/03_checklists_operacion/EOPSA_Checklist_OPS_ES.pdf": "h2",
             "rite/RITE IT3.pdf": "h3",
             "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf": "h4",
-        }
+        },
+        detect_hint_domains=rag_service.detect_hint_domains,
     )
 
     assert "Los documentos tecnicos disponibles son:" in response
@@ -28,18 +29,19 @@ def test_format_document_inventory_response_groups_domains_and_counts():
 
 
 def test_format_document_inventory_response_handles_empty_inventory():
-    response = _format_document_inventory_response({})
+    response = format_document_inventory_response({}, detect_hint_domains=rag_service.detect_hint_domains)
     assert "no veo documentos tecnicos indexados" in response.lower()
 
 
 def test_format_document_inventory_response_can_focus_on_ops_only():
-    response = _format_document_inventory_response(
+    response = format_document_inventory_response(
         {
             "ops/01_normativa_base/1329648_CENELEC_IEC_PDF.pdf": "h1",
             "ops/03_checklists_operacion/EOPSA_Checklist_OPS_ES.pdf": "h2",
             "rite/RITE IT3.pdf": "h3",
         },
         "Quiero que me digas solo los documentos que tenemos de OPS",
+        detect_hint_domains=rag_service.detect_hint_domains,
     )
 
     assert "Los documentos que tenemos en OPS son:" in response
@@ -49,7 +51,7 @@ def test_format_document_inventory_response_can_focus_on_ops_only():
 
 
 def test_format_document_inventory_response_can_focus_on_other_areas_too():
-    response = _format_document_inventory_response(
+    response = format_document_inventory_response(
         {
             "ops/01_normativa_base/1329648_CENELEC_IEC_PDF.pdf": "h1",
             "rite/RITE IT3.pdf": "h2",
@@ -57,6 +59,7 @@ def test_format_document_inventory_response_can_focus_on_other_areas_too():
             "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf": "h4",
         },
         "Que documentos tenemos de RITE?",
+        detect_hint_domains=rag_service.detect_hint_domains,
     )
 
     assert "Los documentos que tenemos en RITE son:" in response
