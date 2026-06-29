@@ -8,6 +8,16 @@ from fastapi import APIRouter, HTTPException, Request
 
 from ai_service import AIResponseError, format_answer_for_user, generate_ai_response_with_fallback
 from business_query_service import answer_business_question, detect_business_route
+from chat_conversation_service import (
+    assert_conversation_owner as _assert_conversation_owner_impl,
+    build_cross_mode_message as _build_cross_mode_message_impl,
+    build_history_interaction_join as _build_history_interaction_join_impl,
+    get_conversation_chat_mode as _get_conversation_chat_mode_impl,
+    get_recent_history as _get_recent_history_impl,
+    infer_chat_mode_from_title as _infer_chat_mode_from_title_impl,
+    normalize_chat_mode as _normalize_chat_mode_impl,
+    save_chat_message as _save_chat_message_impl,
+)
 from config import CONVERSATION_LOCK_TIMEOUT_SECS, TOP_K_COMPLEX_QUERY, TOP_K_SYMBOL_QUERY
 from database import db_conn
 from document_inventory_service import format_document_inventory_response
@@ -138,39 +148,22 @@ def _rag_service():
 
 
 def _normalize_chat_mode(value: str | None) -> str:
-    return "business" if (value or "").strip().lower() == "business" else "technical"
+    return _normalize_chat_mode_impl(value)
 
 
 def _infer_chat_mode_from_title(title: str | None) -> str:
-    normalized = (title or "").strip().lower()
-    return "business" if "negocio" in normalized else "technical"
+    return _infer_chat_mode_from_title_impl(title)
 
 
 def _get_conversation_chat_mode(conversation_id: int) -> str:
-    with db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT ChatMode, Titulo FROM Conversaciones WHERE Id = ?", conversation_id)
-        row = cursor.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
-    return _normalize_chat_mode(row[0] or _infer_chat_mode_from_title(row[1]))
+    return _get_conversation_chat_mode_impl(
+        conversation_id,
+        db_conn=db_conn,
+    )
 
 
 def _build_cross_mode_message(chat_mode: str, route: str) -> str:
-    if chat_mode == "business":
-        return (
-            "Este chatbot de negocio solo responde consultas de Licitaciones y Produccion. "
-            "Vuelve al selector y usa el chatbot reglamento tecnico para preguntas documentales o normativas."
-        )
-    if route in {"business_licitaciones", "business_produccion"}:
-        return (
-            "Este chatbot reglamento tecnico solo responde sobre normativa y documentacion tecnica. "
-            "Vuelve al selector y usa el chatbot de negocio para consultar Licitaciones o Produccion."
-        )
-    return (
-        "Este chatbot reglamento tecnico solo responde sobre normativa y documentacion tecnica. "
-        "Formula una consulta tecnica relacionada con REBT, RITE, RALT o los documentos cargados."
-    )
+    return _build_cross_mode_message_impl(chat_mode, route)
 
 
 def _should_apply_history_hints(question: str) -> bool:
@@ -427,33 +420,22 @@ def get_conversation_lock(conversation_id: int) -> Lock:
 
 
 def _get_recent_history(conversation_id: int, limit: int = 2) -> List[Dict]:
-    with db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT Pregunta, Respuesta FROM ("
-            "  SELECT TOP (?) Pregunta, Respuesta, FechaCreacion, Id"
-            "  FROM Mensajes WHERE ConversacionId = ?"
-            "  ORDER BY FechaCreacion DESC, Id DESC"
-            ") sub ORDER BY FechaCreacion ASC, Id ASC",
-            limit,
-            conversation_id,
-        )
-        rows = cursor.fetchall()
-    return [{"question": row[0], "response": format_answer_for_user(row[1], None, question=row[0])} for row in rows]
+    return _get_recent_history_impl(
+        conversation_id,
+        db_conn=db_conn,
+        format_answer_for_user=format_answer_for_user,
+        limit=limit,
+    )
 
 
 def _save_chat_message(conversation_id: int, question: str, response: str, elapsed_ms: int) -> int:
-    start = time.time()
-    with db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO Mensajes (ConversacionId, Pregunta, Respuesta, TiempoRespuestaMs) VALUES (?, ?, ?, ?)",
-            conversation_id,
-            question,
-            response,
-            elapsed_ms,
-        )
-    return int((time.time() - start) * 1000)
+    return _save_chat_message_impl(
+        conversation_id,
+        question,
+        response,
+        elapsed_ms,
+        db_conn=db_conn,
+    )
 
 
 def _record_pending_interaction_safe(
@@ -497,31 +479,15 @@ def _record_pending_interaction_safe(
 
 
 def _build_history_interaction_join() -> str:
-    return (
-        "OUTER APPLY ("
-        " SELECT TOP 1 i.Id, i.Estado, i.Confianza"
-        " FROM dbo.InteraccionesRAG i"
-        " WHERE i.ConversacionId = m.ConversacionId"
-        "   AND i.Pregunta = m.Pregunta"
-        "   AND i.Respuesta = m.Respuesta"
-        " ORDER BY i.FechaCreacion DESC, i.Id DESC"
-        ") ir"
-    )
+    return _build_history_interaction_join_impl()
 
 
 def _assert_conversation_owner(conversation_id: int, request_user_id: int) -> tuple:
-    with db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT Id, UsuarioId, Titulo, ChatMode FROM Conversaciones WHERE Id = ?",
-            conversation_id,
-        )
-        row = cursor.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
-    if int(row[1]) != int(request_user_id):
-        raise HTTPException(status_code=403, detail="No tienes acceso a esa conversacion")
-    return row
+    return _assert_conversation_owner_impl(
+        conversation_id,
+        request_user_id,
+        db_conn=db_conn,
+    )
 
 
 @router.post("/conversations")
