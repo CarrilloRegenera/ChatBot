@@ -18,6 +18,13 @@ from chat_conversation_service import (
     normalize_chat_mode as _normalize_chat_mode_impl,
     save_chat_message as _save_chat_message_impl,
 )
+from chat_document_sync_service import (
+    DEFAULT_SYNC_STATUS,
+    export_state as _export_document_sync_state_impl,
+    import_state as _import_document_sync_state_impl,
+    start_document_sync_background as _start_document_sync_background_impl,
+    update_document_sync_status as _update_document_sync_status_impl,
+)
 from config import CONVERSATION_LOCK_TIMEOUT_SECS, TOP_K_COMPLEX_QUERY, TOP_K_SYMBOL_QUERY
 from database import db_conn
 from document_inventory_service import format_document_inventory_response
@@ -52,18 +59,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 _document_sync_lock = Lock()
 _document_sync_inflight = False
-_document_sync_status = {
-    "state": "idle",
-    "started_at": None,
-    "finished_at": None,
-    "result": None,
-    "error": "",
-    "heartbeat_at": None,
-    "phase": "",
-    "current_file": "",
-    "processed_files": 0,
-    "total_files": 0,
-}
+_document_sync_status = dict(DEFAULT_SYNC_STATUS)
 _FOLLOWUP_PREFIX_RE = re.compile(
     r"^(?:y|entonces|ademas|además|tambien|también|sobre eso|sobre ello|respecto a eso|respecto a ello|en ese caso)\b"
 )
@@ -81,64 +77,29 @@ def _memory_service():
 
 
 def _update_document_sync_status(**updates) -> Dict[str, object]:
-    global _document_sync_status
-    with _document_sync_lock:
-        _document_sync_status = {
-            **_document_sync_status,
-            **updates,
-            "heartbeat_at": time.time(),
-        }
-        return dict(_document_sync_status)
+    global _document_sync_status, _document_sync_inflight
+    _import_document_sync_state_impl(_document_sync_status, _document_sync_inflight)
+    _document_sync_status = _update_document_sync_status_impl(**updates)
+    _document_sync_status, _document_sync_inflight = _export_document_sync_state_impl()
+    return dict(_document_sync_status)
 
 
 def _start_document_sync_background() -> Dict[str, object]:
-    global _document_sync_inflight, _document_sync_status
-    with _document_sync_lock:
-        if _document_sync_inflight:
-            return dict(_document_sync_status)
-        _document_sync_inflight = True
-        _document_sync_status = {
-            "state": "running",
-            "started_at": time.time(),
-            "finished_at": None,
-            "result": None,
-            "error": "",
-            "heartbeat_at": time.time(),
-            "phase": "starting",
-            "current_file": "",
-            "processed_files": 0,
-            "total_files": 0,
-        }
+    global _document_sync_status, _document_sync_inflight
+    _import_document_sync_state_impl(_document_sync_status, _document_sync_inflight)
 
-    def _worker() -> None:
-        global _document_sync_inflight
-        try:
-            def _progress_callback(payload: Dict[str, object]) -> None:
-                _update_document_sync_status(**payload)
+    def _sync_globals(status: Dict[str, object], inflight: bool) -> None:
+        global _document_sync_status, _document_sync_inflight
+        _document_sync_status = dict(status)
+        _document_sync_inflight = bool(inflight)
 
-            result = _rag_service().sync_documents(progress_callback=_progress_callback)
-            _update_document_sync_status(
-                state="completed",
-                finished_at=time.time(),
-                result=result,
-                error="",
-                phase="completed",
-                current_file="",
-            )
-        except Exception as exc:
-            logger.exception("Error durante sync documental en segundo plano")
-            _update_document_sync_status(
-                state="failed",
-                finished_at=time.time(),
-                error=str(exc),
-                phase="failed",
-            )
-        finally:
-            with _document_sync_lock:
-                _document_sync_inflight = False
-
-    Thread(target=_worker, daemon=True, name="document-sync").start()
-    return dict(_document_sync_status)
+    initial = _start_document_sync_background_impl(
+        rag_service_factory=_rag_service,
+        logger=logger,
+        state_callback=_sync_globals,
+    )
+    _document_sync_status, _document_sync_inflight = _export_document_sync_state_impl()
+    return dict(initial)
 
 
 def _rag_service():
