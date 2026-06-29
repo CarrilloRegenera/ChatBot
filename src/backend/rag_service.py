@@ -42,6 +42,14 @@ from config import (
     TOP_K_RESULTS,
 )
 from embedding_cache import EmbeddingCache
+from rag_chroma_sync import (
+    add_batched_to_collection,
+    delete_source_chunks,
+    discover_current_files,
+    file_hash,
+    get_indexed_sources,
+    iter_add_batches,
+)
 from rag_query_helpers import (
     build_query_profile as _build_query_profile_impl,
     extract_article_refs as _extract_article_refs_impl,
@@ -2337,29 +2345,8 @@ def reset_documents() -> None:
     )
 
 
-def _file_hash(filepath: str) -> str:
-    h = hashlib.md5()
-    with open(filepath, "rb") as f:
-        for block in iter(lambda: f.read(8192), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
 def _get_indexed_sources() -> Dict[str, str]:
-    total = collection.count()
-    if total == 0:
-        return {}
-    sources: Dict[str, str] = {}
-    batch_size = 5000
-    for offset in range(0, total, batch_size):
-        results = collection.get(
-            include=["metadatas"], limit=batch_size, offset=offset
-        )
-        for meta in (results.get("metadatas") or []):
-            source = meta.get("source", "")
-            if source and source not in sources:
-                sources[source] = meta.get("file_hash", "")
-    return sources
+    return get_indexed_sources(collection)
 
 
 def list_indexed_sources() -> Dict[str, str]:
@@ -2371,10 +2358,7 @@ def list_indexed_sources() -> Dict[str, str]:
 
 
 def _delete_source_chunks(source_name: str) -> None:
-    for col in (collection, table_collection):
-        results = col.get(where={"source": source_name}, include=[])
-        if results["ids"]:
-            col.delete(ids=results["ids"])
+    delete_source_chunks(source_name, collections=(collection, table_collection))
 
 
 def _iter_add_batches(
@@ -2383,12 +2367,12 @@ def _iter_add_batches(
     ids: List[str],
     batch_size: int = CHROMA_ADD_BATCH_SIZE,
 ):
-    if len(documents) != len(metadatas) or len(documents) != len(ids):
-        raise ValueError("documents, metadatas e ids deben tener la misma longitud")
-    safe_batch_size = max(1, int(batch_size or 1))
-    for start in range(0, len(documents), safe_batch_size):
-        end = start + safe_batch_size
-        yield documents[start:end], metadatas[start:end], ids[start:end]
+    yield from iter_add_batches(
+        documents,
+        metadatas,
+        ids,
+        batch_size=batch_size,
+    )
 
 
 def _collection_add_batched(
@@ -2400,41 +2384,18 @@ def _collection_add_batched(
     batch_size: int = CHROMA_ADD_BATCH_SIZE,
     use_embedding_cache: bool = False,
 ) -> None:
-    if use_embedding_cache and _embedding_fn is not None:
-        if len(documents) != len(metadatas) or len(documents) != len(ids):
-            raise ValueError("documents, metadatas e ids deben tener la misma longitud")
-        _load_embedding_cache()
-        keys = [_chunk_cache_key(doc) for doc in documents]
-        precomputed = _embedding_cache.get_many(keys)
-        miss_indices = [i for i, emb in enumerate(precomputed) if emb is None]
-        if miss_indices:
-            new_embs = _encode_passages([documents[i] for i in miss_indices])
-            cache_updates = []
-            for idx, emb in zip(miss_indices, new_embs):
-                precomputed[idx] = emb
-                cache_updates.append((keys[idx], emb))
-            _embedding_cache.put_many(cache_updates)
-        safe_batch = max(1, int(batch_size or 1))
-        for start in range(0, len(documents), safe_batch):
-            end = start + safe_batch
-            target_collection.add(
-                documents=documents[start:end],
-                metadatas=metadatas[start:end],
-                ids=ids[start:end],
-                embeddings=precomputed[start:end],
-            )
-        return
-    for docs_batch, meta_batch, ids_batch in _iter_add_batches(
-        documents,
-        metadatas,
-        ids,
+    add_batched_to_collection(
+        target_collection,
+        documents=documents,
+        metadatas=metadatas,
+        ids=ids,
         batch_size=batch_size,
-    ):
-        target_collection.add(
-            documents=docs_batch,
-            metadatas=meta_batch,
-            ids=ids_batch,
-        )
+        use_embedding_cache=use_embedding_cache,
+        embedding_fn=_embedding_fn,
+        embedding_cache=_embedding_cache,
+        encode_passages=_encode_passages,
+        cache_key_for_text=_chunk_cache_key,
+    )
 
 
 def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
@@ -2655,16 +2616,7 @@ def _sync_documents_chroma(
         raise FileNotFoundError(f"No existe la carpeta de documentos: {folder_path}")
 
     root_path = Path(folder_path)
-    pdf_paths = sorted(root_path.rglob("*.pdf")) if RECURSIVE_PDF_SCAN else sorted(root_path.glob("*.pdf"))
-    md_paths = sorted(root_path.rglob("*.md")) if RECURSIVE_PDF_SCAN else sorted(root_path.glob("*.md"))
-    # Si existe un .md con el mismo nombre base que un .pdf (en la misma carpeta),
-    # usar el .md (texto pre-extraído de mayor calidad) y omitir el .pdf.
-    md_by_stem = {(p.parent, p.stem): p for p in md_paths}
-    filtered_pdf_paths = [p for p in pdf_paths if (p.parent, p.stem) not in md_by_stem]
-    current_files = {
-        str(p.relative_to(root_path)).replace("\\", "/"): p
-        for p in sorted(filtered_pdf_paths + list(md_paths))
-    }
+    current_files = discover_current_files(root_path, recursive_pdf_scan=RECURSIVE_PDF_SCAN)
     total_files = len(current_files)
 
     indexed = _get_indexed_sources()
@@ -2725,7 +2677,7 @@ def _sync_documents_chroma(
                 "processed_files": processed_files,
                 "total_files": total_files,
             })
-        current_hash = _file_hash(str(filepath))
+        current_hash = file_hash(str(filepath))
         if source_name in indexed:
             if indexed[source_name] == current_hash:
                 # Verificar integridad: si el hash coincide pero no hay chunks,

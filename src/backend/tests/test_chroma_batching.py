@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import rag_service
 from rag_service import _collection_add_batched, _iter_add_batches
+from rag_chroma_sync import discover_current_files, get_indexed_sources
 
 
 def test_iter_add_batches_splits_large_payload():
@@ -144,3 +145,35 @@ def test_embedding_cache_prunes_old_entries():
     cache.put_many([("c", [0.3])])
 
     assert cache.get_many(["a", "b", "c"]) == [None, [0.2], [0.3]]
+
+
+def test_discover_current_files_prefers_markdown_over_pdf(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "manual.pdf").write_bytes(b"%PDF-1.4")
+    (docs / "manual.md").write_text("contenido", encoding="utf-8")
+    (docs / "otro.pdf").write_bytes(b"%PDF-1.4")
+
+    current_files = discover_current_files(docs, recursive_pdf_scan=True)
+
+    assert sorted(current_files) == ["manual.md", "otro.pdf"]
+
+
+def test_get_indexed_sources_deduplicates_by_source():
+    class FakeCollection:
+        def count(self):
+            return 3
+
+        def get(self, *, include, limit, offset):
+            assert include == ["metadatas"]
+            assert limit == 5000
+            assert offset == 0
+            return {
+                "metadatas": [
+                    {"source": "a.pdf", "file_hash": "111"},
+                    {"source": "a.pdf", "file_hash": "111"},
+                    {"source": "b.pdf", "file_hash": "222"},
+                ]
+            }
+
+    assert get_indexed_sources(FakeCollection()) == {"a.pdf": "111", "b.pdf": "222"}
