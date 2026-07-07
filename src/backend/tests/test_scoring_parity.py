@@ -16,8 +16,10 @@ from rag_service import (
     _extract_circuit_definitions,
     _extract_requested_abbreviation_definitions,
     _clean_context_document,
+    _looks_like_toc_chunk,
     _matches_structural_focus,
     _query_support_metrics,
+    _reference_matches_text,
 )
 from ai_service import _retrieval_quality, postprocess_answer
 
@@ -293,6 +295,38 @@ def test_source_mention_works_for_future_pdfs():
 def test_source_mention_electrotecnico():
     qt = _q_tokens("segun el reglamento electrotecnico que dice la itc-bt-25")
     assert _source_mention_score(qt, "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf") == SOURCE_MENTION_BOOST
+
+
+def test_toc_chunk_detection_flags_early_index_like_article_listing():
+    metadata = {
+        "page": 2,
+        "section": "Artículo 2. Ámbito de aplicación. . . . . . . . . . . . . . . . . . . . . . . .",
+    }
+    document = (
+        "Artículo 2. Ámbito de aplicación. . . . . . . . . . . . . . . . . . . . . . . . 8 "
+        "Artículo 3. Responsabilidad de su aplicación. . . . . . . . . . . . . . . . . . 9 "
+        "Artículo 4. Contenido del RITE. . . . . . . . . . . . . . . . . . . . . . . . . 9 "
+        "CAPÍTULO II. Exigencias técnicas . . . . . . . . . . . . . . . . . . . . . . . . 10"
+    )
+    assert _looks_like_toc_chunk(document, metadata) is True
+
+
+def test_toc_chunk_detection_keeps_real_article_body():
+    metadata = {
+        "page": 8,
+        "section": "Artículo 2. Ámbito de aplicación",
+    }
+    document = (
+        "Artículo 2. Ámbito de aplicación. El presente reglamento tiene por objeto "
+        "establecer las exigencias de eficiencia energética y seguridad que deben cumplir "
+        "las instalaciones térmicas en los edificios."
+    )
+    assert _looks_like_toc_chunk(document, metadata) is False
+
+
+def test_article_reference_match_is_not_confused_with_subsections():
+    assert _reference_matches_text("articulo 2 ambito de aplicacion", "articulo 2") is True
+    assert _reference_matches_text("articulo 2.3 requerira proyecto tecnico", "articulo 2") is False
 
 
 # --- domain_exclusion_penalty tests ---

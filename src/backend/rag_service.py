@@ -1654,7 +1654,17 @@ def _matches_structural_focus(
     if not refs:
         return False
     text = _normalize_text(f"{metadata.get('section', '')} {document} {_metadata_text(metadata)}")
-    return any(_normalize_text(ref) in text for ref in refs if ref)
+    return any(_reference_matches_text(text, ref) for ref in refs if ref)
+
+
+def _reference_matches_text(text: str, ref: str) -> bool:
+    normalized_text = _normalize_text(text or "")
+    normalized_ref = _normalize_text(ref or "")
+    if not normalized_text or not normalized_ref:
+        return False
+    if normalized_ref.startswith("articulo "):
+        return re.search(rf"(?<![a-z0-9]){re.escape(normalized_ref)}(?!\.\d)(?![a-z0-9])", normalized_text) is not None
+    return normalized_ref in normalized_text
 
 
 def _domain_from_filename_override(source_name: str) -> str:
@@ -1734,6 +1744,26 @@ def _source_mention_score(question_tokens: set, source_name: str) -> int:
     if len(hits) == 1 and min_token_len < 5:
         return 0
     return SOURCE_MENTION_BOOST
+
+
+def _looks_like_toc_chunk(document: str, metadata: Dict[str, object]) -> bool:
+    try:
+        page = int(str(metadata.get("page", "") or "0"))
+    except ValueError:
+        page = 0
+    if page <= 0 or page > 4:
+        return False
+
+    section = str(metadata.get("section", "") or "")
+    raw_text = f"{section} {document or ''}"
+    normalized = _normalize_text(raw_text)
+    if not normalized:
+        return False
+
+    article_mentions = len(re.findall(r"articulo\s+\d+(?:\.\d+)?", normalized))
+    chapter_mentions = len(re.findall(r"capitulo\s+[ivxlcdm]+", normalized))
+    dot_leaders = bool(re.search(r"\.\s*\.\s*\.\s*\.", raw_text))
+    return article_mentions >= 4 and (dot_leaders or chapter_mentions >= 1)
 
 
 def _source_pdf_path(source_name: str) -> str:
@@ -3500,17 +3530,21 @@ def _search_documents_detailed_chroma(
         if query_profile["it_section_refs"]:
             it_ref_hits = sum(
                 1 for ref in query_profile["it_section_refs"]
-                if ref in section_title or ref in doc_norm
+                if _reference_matches_text(section_title, ref) or _reference_matches_text(doc_norm, ref)
             )
             if it_ref_hits:
                 score += it_ref_hits * IT_SECTION_BOOST
         if query_profile["article_refs"]:
             article_ref_hits = sum(
                 1 for ref in query_profile["article_refs"]
-                if ref in section_title or ref in doc_norm or ref in metadata_norm
+                if _reference_matches_text(section_title, ref)
+                or _reference_matches_text(doc_norm, ref)
+                or _reference_matches_text(metadata_norm, ref)
             )
             if article_ref_hits:
                 score += article_ref_hits * ARTICLE_REF_BOOST
+            if _looks_like_toc_chunk(document, metadata):
+                score -= 90
         if query_profile["comparison"] and len(doc_tokens.intersection(question_tokens)) >= 2:
             score += COMPARISON_PRIORITY_BOOST
         if core_terms and core_hits == 0:
@@ -3690,17 +3724,21 @@ def _search_documents_detailed_chroma(
             if query_profile["it_section_refs"]:
                 it_ref_hits_lex = sum(
                     1 for ref in query_profile["it_section_refs"]
-                    if ref in section_title or ref in doc_norm
+                    if _reference_matches_text(section_title, ref) or _reference_matches_text(doc_norm, ref)
                 )
                 if it_ref_hits_lex:
                     lexical_score += it_ref_hits_lex * IT_SECTION_BOOST
             if query_profile["article_refs"]:
                 article_ref_hits_lex = sum(
                     1 for ref in query_profile["article_refs"]
-                    if ref in section_title or ref in doc_norm or ref in metadata_norm
+                    if _reference_matches_text(section_title, ref)
+                    or _reference_matches_text(doc_norm, ref)
+                    or _reference_matches_text(metadata_norm, ref)
                 )
                 if article_ref_hits_lex:
                     lexical_score += article_ref_hits_lex * ARTICLE_REF_BOOST
+                if _looks_like_toc_chunk(document, metadata):
+                    lexical_score -= 90
             document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
             doc_norm = _normalize_text(document)
             labeled_match_hits = 0
