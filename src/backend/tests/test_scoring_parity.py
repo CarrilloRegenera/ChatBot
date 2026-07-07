@@ -276,6 +276,16 @@ def test_hint_boosts_article_ref():
     assert candidates[1]["_hint_boost"] == 0
 
 
+def test_hint_boosts_article_ref_do_not_match_subsections():
+    candidates = [
+        {"document_variant": "", "article_refs": "articulo 2.3", "it_section_refs": ""},
+        {"document_variant": "", "article_refs": "articulo 2", "it_section_refs": ""},
+    ]
+    _apply_hint_boosts(candidates, [], ["articulo 2"], None)
+    assert candidates[0]["_hint_boost"] == 0
+    assert candidates[1]["_hint_boost"] > 0
+
+
 def test_hint_boosts_it_section_ref():
     candidates = [
         {"document_variant": "", "article_refs": "", "it_section_refs": "it 3.3"},
