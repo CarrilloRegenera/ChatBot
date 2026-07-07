@@ -879,6 +879,56 @@ def _extract_text_blocks(text: str) -> List[Dict[str, str]]:
     return blocks
 
 
+def _split_structured_blocks(
+    blocks: List[Dict[str, str]],
+    chunk_size: int = CHUNK_SIZE,
+    overlap: int = CHUNK_OVERLAP,
+) -> List[Tuple[str, str]]:
+    if not blocks:
+        return []
+
+    chunks: List[Tuple[str, str]] = []
+    current = ""
+    current_section = ""
+
+    for block in blocks:
+        block_text = str(block.get("text", "") or "").strip()
+        block_section = str(block.get("section", "") or "").strip()
+        if not block_text:
+            continue
+
+        candidate = f"{current} {block_text}".strip() if current else block_text
+        if len(candidate) <= chunk_size:
+            current = candidate
+            current_section = current_section or block_section
+            continue
+
+        if current and len(current) >= MIN_CHUNK_LENGTH:
+            chunks.append((current, current_section))
+
+        overlap_tail = current[-overlap:].strip() if current else ""
+        current = f"{overlap_tail} {block_text}".strip() if overlap_tail else block_text
+        current_section = block_section
+
+        while len(current) > chunk_size:
+            boundary = _find_chunk_boundary_impl(
+                current,
+                chunk_size=chunk_size,
+                grace=CHUNK_SENTENCE_GRACE,
+                min_chunk_length=MIN_CHUNK_LENGTH,
+            )
+            partial = current[:boundary].strip()
+            if len(partial) >= MIN_CHUNK_LENGTH:
+                chunks.append((partial, current_section))
+            next_start = max(boundary - overlap, 1)
+            current = current[next_start:].strip()
+
+    if current and len(current) >= MIN_CHUNK_LENGTH:
+        chunks.append((current, current_section))
+
+    return chunks
+
+
 def _looks_like_table_block(text: str) -> bool:
     if not text:
         return False
@@ -2565,15 +2615,9 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 active_itc_heading,
                 active_itc_section,
             )
-            for chunk_index, chunk in enumerate(_split_text(text), start=1):
+            for chunk_index, (chunk, clean_section_name) in enumerate(_split_structured_blocks(page_blocks), start=1):
                 if _is_noise_chunk(chunk):
                     continue
-                section_name = ""
-                for block in page_blocks:
-                    if block["text"][:60] in chunk:
-                        section_name = block["section"]
-                        break
-                clean_section_name = _sanitize_section_label(section_name[:SECTION_LABEL_MAX_LENGTH])
                 if _looks_like_table_block(chunk):
                     chunk_kind = "table"
                 elif _extract_numeric_terms(chunk):

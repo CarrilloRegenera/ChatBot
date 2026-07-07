@@ -20,6 +20,7 @@ from rag_service import (
     _matches_structural_focus,
     _query_support_metrics,
     _reference_matches_text,
+    _split_structured_blocks,
     _structural_anchor_score,
     _structured_search_terms,
 )
@@ -110,6 +111,23 @@ def test_structured_search_terms_expand_article_reference_variants():
     assert "artículo 2" in terms
     assert "art. 2" in terms
     assert "Artículo 2" in terms
+
+
+def test_split_structured_blocks_preserves_section_per_chunk():
+    blocks = [
+        {
+            "text": "Artículo 2. Ámbito de aplicación. " + ("alpha " * 80),
+            "section": "Artículo 2. Ámbito de aplicación",
+        },
+        {
+            "text": "Artículo 3. Responsabilidad de su aplicación. " + ("beta " * 80),
+            "section": "Artículo 3. Responsabilidad de su aplicación",
+        },
+    ]
+    chunks = _split_structured_blocks(blocks, chunk_size=180, overlap=20)
+    assert len(chunks) >= 2
+    assert chunks[0][1] == "Artículo 2. Ámbito de aplicación"
+    assert any(section == "Artículo 3. Responsabilidad de su aplicación" for _text, section in chunks)
 
 
 def test_query_support_metrics_detect_unrelated_context():
