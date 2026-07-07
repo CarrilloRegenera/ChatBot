@@ -1667,6 +1667,70 @@ def _reference_matches_text(text: str, ref: str) -> bool:
     return normalized_ref in normalized_text
 
 
+def _reference_starts_text(text: str, ref: str) -> bool:
+    normalized_text = _normalize_text(text or "").strip()
+    normalized_ref = _normalize_text(ref or "").strip()
+    if not normalized_text or not normalized_ref:
+        return False
+    if normalized_ref.startswith("articulo "):
+        return re.search(rf"^{re.escape(normalized_ref)}(?!\.\d)(?![a-z0-9])", normalized_text) is not None
+    return re.search(rf"^{re.escape(normalized_ref)}(?![a-z0-9])", normalized_text) is not None
+
+
+def _structural_anchor_score(
+    metadata: Dict[str, object],
+    document: str,
+    *,
+    exact_refs: List[str] | None = None,
+    article_refs: List[str] | None = None,
+    it_section_refs: List[str] | None = None,
+) -> int:
+    refs = [
+        *list(exact_refs or []),
+        *list(article_refs or []),
+        *list(it_section_refs or []),
+    ]
+    if not refs:
+        return 0
+
+    section_title = _normalize_text(str(metadata.get("section", "") or "")).strip()
+    document_start = _normalize_text((document or "")[:240]).strip()
+    score = 0
+    for ref in refs:
+        if _reference_starts_text(section_title, ref):
+            score += 24
+        elif _reference_starts_text(document_start, ref):
+            score += 16
+    return score
+
+
+def _structured_search_terms(query_profile: Dict[str, object]) -> List[str]:
+    terms: List[str] = []
+    for article_ref in list(query_profile.get("article_refs", []))[:3]:
+        article_number = str(article_ref).split()[-1]
+        terms.extend((
+            str(article_ref),
+            str(article_ref).replace("articulo ", "artículo "),
+            f"art. {article_number}",
+            f"Artículo {article_number}",
+        ))
+    for it_ref in list(query_profile.get("it_section_refs", []))[:3]:
+        terms.extend((str(it_ref), str(it_ref).upper()))
+
+    seen: set[str] = set()
+    deduped: List[str] = []
+    for term in terms:
+        clean = str(term or "").strip()
+        if not clean:
+            continue
+        marker = clean
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(clean)
+    return deduped
+
+
 def _domain_from_filename_override(source_name: str) -> str:
     """Override exacto/substring del filename (máxima prioridad)."""
     if not source_name:
@@ -2959,12 +3023,7 @@ def _search_documents_detailed_chroma(
                 except Exception as exc:
                     logger.warning("ITC-forced retrieval failed for %s: %s", search_term, exc)
 
-    structured_search_terms: List[str] = []
-    for article_ref in query_profile["article_refs"][:3]:
-        article_number = article_ref.split()[-1]
-        structured_search_terms.extend((article_ref, f"art. {article_number}"))
-    for it_ref in query_profile["it_section_refs"][:3]:
-        structured_search_terms.extend((it_ref, it_ref.upper()))
+    structured_search_terms = _structured_search_terms(query_profile)
     if structured_search_terms:
         existing_ids = set(ids)
         for search_term in structured_search_terms[:8]:
@@ -3363,6 +3422,13 @@ def _search_documents_detailed_chroma(
             exact_hits = sum(1 for ref in query_profile["exact_refs"] if ref in doc_norm or ref in metadata_norm)
             if exact_hits:
                 score += exact_hits * 28
+        score += _structural_anchor_score(
+            metadata,
+            document,
+            exact_refs=query_profile["exact_refs"],
+            article_refs=query_profile["article_refs"],
+            it_section_refs=query_profile["it_section_refs"],
+        )
         if query_profile["intent"] in {"numeric_value", "table_lookup"}:
             if str(metadata.get("chunk_kind", "")) == "table_row":
                 score += 30
@@ -3633,6 +3699,13 @@ def _search_documents_detailed_chroma(
             if query_profile["exact_refs"]:
                 exact_hits = sum(1 for ref in query_profile["exact_refs"] if ref in doc_norm or ref in metadata_norm)
                 lexical_score += exact_hits * 24
+            lexical_score += _structural_anchor_score(
+                metadata,
+                document,
+                exact_refs=query_profile["exact_refs"],
+                article_refs=query_profile["article_refs"],
+                it_section_refs=query_profile["it_section_refs"],
+            )
             if query_profile["intent"] in {"numeric_value", "table_lookup"} and str(metadata.get("chunk_kind", "")) == "table_row":
                 lexical_score += 25
             if query_profile["numeric_variants"]:

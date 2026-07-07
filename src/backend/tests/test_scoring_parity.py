@@ -20,6 +20,8 @@ from rag_service import (
     _matches_structural_focus,
     _query_support_metrics,
     _reference_matches_text,
+    _structural_anchor_score,
+    _structured_search_terms,
 )
 from ai_service import _retrieval_quality, postprocess_answer
 
@@ -80,6 +82,34 @@ def test_structural_focus_accepts_exact_references():
         "Circuitos interiores de viviendas.",
         exact_refs=["itc-bt-25"],
     )
+
+
+def test_structural_anchor_score_prioritizes_exact_section_start():
+    metadata = {"section": "Artículo 12. Inspecciones periódicas"}
+    score = _structural_anchor_score(
+        metadata,
+        "Las instalaciones se inspeccionarán periódicamente.",
+        article_refs=["articulo 12"],
+    )
+    assert score >= 24
+
+
+def test_structural_anchor_score_does_not_reward_indirect_mention():
+    metadata = {"section": "Condiciones generales"}
+    score = _structural_anchor_score(
+        metadata,
+        "Este apartado remite al artículo 12 para las inspecciones periódicas.",
+        article_refs=["articulo 12"],
+    )
+    assert score == 0
+
+
+def test_structured_search_terms_expand_article_reference_variants():
+    terms = _structured_search_terms({"article_refs": ["articulo 2"], "it_section_refs": []})
+    assert "articulo 2" in terms
+    assert "artículo 2" in terms
+    assert "art. 2" in terms
+    assert "Artículo 2" in terms
 
 
 def test_query_support_metrics_detect_unrelated_context():
