@@ -2330,6 +2330,21 @@ def list_indexed_sources() -> Dict[str, str]:
     return _get_indexed_sources()
 
 
+def _empty_retrieval_stats(
+    *,
+    expected_domains: List[str] | None = None,
+    index_status: str = "ready",
+) -> Dict[str, object]:
+    return {
+        "selected_count": 0,
+        "source_diversity": 0,
+        "expected_domains": expected_domains or [],
+        "domain_match_ratio": 0.0,
+        "index_status": index_status,
+        "backend": "chroma",
+    }
+
+
 def _delete_source_chunks(source_name: str) -> None:
     delete_source_chunks(source_name, collections=(collection, table_collection))
 
@@ -2727,10 +2742,10 @@ def _search_documents_detailed_chroma(
     hint_it_section_refs: List[str] | None = None,
 ) -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
-        return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+        return "", [], _empty_retrieval_stats(index_status="not_queried")
     if _embedding_fn is None:
         logger.error("Busqueda RAG deshabilitada: embedding model '%s' no disponible", RERANK_MODEL)
-        return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+        return "", [], _empty_retrieval_stats(index_status="unavailable")
     _ensure_active_chroma_collections()
 
     clean_question = _clean_question(question)
@@ -2738,13 +2753,17 @@ def _search_documents_detailed_chroma(
     mentions_bt_generators = _query_mentions_bt_generators(clean_question)
     mentions_rebt_regulation = _query_mentions_rebt_regulation(clean_question)
     question_specific_scopes = _question_mentions_specific_scope(_normalize_text(clean_question))
+    expected_domains = [domain] if domain else _expected_domains(clean_question)
+    if not expected_domains and hint_domains:
+        expected_domains = [d for d in hint_domains if d]
+        logger.debug("hint_domains aplicados como fallback: %s", expected_domains)
     if collection.count() == 0:
         try:
             sync_documents()
         except Exception:
-            return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+            return "", [], _empty_retrieval_stats(expected_domains=expected_domains, index_status="sync_failed")
         if collection.count() == 0:
-            return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+            return "", [], _empty_retrieval_stats(expected_domains=expected_domains, index_status="empty")
 
     n_results = max(n_results, 6)
     question_tokens = set(_tokenize(clean_question))
@@ -2776,10 +2795,6 @@ def _search_documents_detailed_chroma(
         for t in ("generadoras", "aisladas", "asistidas", "interconectadas", "clasificacion", "condiciones"):
             if t not in core_terms:
                 core_terms.append(t)
-    expected_domains = [domain] if domain else _expected_domains(clean_question)
-    if not expected_domains and hint_domains:
-        expected_domains = [d for d in hint_domains if d]
-        logger.debug("hint_domains aplicados como fallback: %s", expected_domains)
     if mentions_bt40 and "guias_tecnicas" not in expected_domains:
         expected_domains.append("guias_tecnicas")
     if target_itc_refs and "baja_tension" not in expected_domains:
@@ -3715,6 +3730,8 @@ def _search_documents_detailed_chroma(
             "source_diversity": 0,
             "expected_domains": expected_domains,
             "domain_match_ratio": 0.0,
+            "index_status": "ready",
+            "backend": "chroma",
         }
 
     # --- Reranking: embedding similarity + BM25 léxico complementario ---
@@ -4289,6 +4306,8 @@ def _search_documents_detailed_chroma(
         "expected_domains": expected_domains,
         "expected_document_variants": expected_document_variants,
         "domain_match_ratio": round(matched_domains / max(len(selected), 1), 4) if expected_domains else 1.0,
+        "index_status": "ready",
+        "backend": "chroma",
         "selected_departments": selected_departments,
         "expected_departments": expected_departments,
         "department_match_ratio": round(matched_departments / max(len(selected), 1), 4) if expected_departments else 1.0,

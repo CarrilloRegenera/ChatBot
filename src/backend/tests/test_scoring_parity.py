@@ -106,6 +106,18 @@ def test_retrieval_quality_marks_unsupported_context_as_poor():
     ) == "poor"
 
 
+def test_retrieval_quality_marks_empty_index_as_unavailable():
+    assert _retrieval_quality(
+        {
+            "selected_count": 0,
+            "source_diversity": 0,
+            "expected_domains": ["ops"],
+            "domain_match_ratio": 0.0,
+            "index_status": "empty",
+        }
+    ) == "unavailable"
+
+
 def test_requested_abbreviation_definitions_are_consolidated_from_chunks():
     selected = [
         (

@@ -177,3 +177,26 @@ def test_get_indexed_sources_deduplicates_by_source():
             }
 
     assert get_indexed_sources(FakeCollection()) == {"a.pdf": "111", "b.pdf": "222"}
+
+
+def test_search_documents_detailed_marks_empty_index_after_failed_sync():
+    class EmptyCollection:
+        def count(self):
+            return 0
+
+    with (
+        mock.patch.object(rag_service, "_embedding_fn", new=object()),
+        mock.patch.object(rag_service, "collection", new=EmptyCollection()),
+        mock.patch.object(rag_service, "_ensure_active_chroma_collections", return_value=None),
+        mock.patch.object(rag_service, "sync_documents", side_effect=RuntimeError("sync failed")),
+    ):
+        context, sources, stats = rag_service._search_documents_detailed_chroma(
+            "Que es OPS?",
+            hint_domains=["ops"],
+        )
+
+    assert context == ""
+    assert sources == []
+    assert stats["index_status"] == "sync_failed"
+    assert stats["backend"] == "chroma"
+    assert stats["expected_domains"] == ["ops"]

@@ -688,7 +688,12 @@ def search_documents_detailed_azure(
 ) -> Tuple[str, List[str], Dict[str, object]]:
     _require_azure_config()
     if not question.strip():
-        return "", [], {"selected_count": 0, "source_diversity": 0, "backend": "azure_search"}
+        return "", [], {
+            "selected_count": 0,
+            "source_diversity": 0,
+            "backend": "azure_search",
+            "index_status": "not_queried",
+        }
 
     n_results = max(n_results, 6)
     vector = _encode_query(question)
@@ -914,6 +919,7 @@ def search_documents_detailed_azure(
     )
     retrieval_stats = {
         "backend": "azure_search",
+        "index_status": "ready",
         "selected_count": len(selected),
         "source_diversity": len(source_counts),
         "top_sources": sorted(source_counts)[:5],
