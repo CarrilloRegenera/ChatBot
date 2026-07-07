@@ -822,6 +822,7 @@ def send_message(data: MessageRequest, request: Request):
             "response": response,
             "confidence": confidence,
             "from_memory": from_memory,
+            "rag_unavailable": trace.get("retrieval_quality") == "unavailable",
             "sources": sources,
             "route": "knowledge",
             "trace": trace,

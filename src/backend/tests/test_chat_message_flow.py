@@ -150,6 +150,7 @@ class TestChatMessageFlow(unittest.TestCase):
         data = resp.json()
         self.assertIn("Reglamento Electrotecnico para Baja Tension", data["response"])
         self.assertGreaterEqual(data["confidence"], 0.9)
+        self.assertTrue(data["rag_unavailable"])
         self.assertEqual(data["trace"]["retrieval_quality"], "unavailable")
         self.assertEqual(data["trace"]["retrieval_backend"], "chroma")
         self.assertEqual(data["trace"]["retrieval_index_status"], "empty")
