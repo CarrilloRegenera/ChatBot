@@ -23,6 +23,7 @@ from rag_service import (  # noqa: E402
     _EF_VERSION,
     _expected_document_variants,
     _expected_domains,
+    _extract_text_blocks,
     _extract_article_refs,
     _extract_exact_refs,
     _extract_it_section_refs,
@@ -528,6 +529,42 @@ def test_chunk_profile_metadata_extracts_structural_refs():
         "text",
     )
     assert "it 3.4" in profile_it["it_section_refs"]
+
+
+def test_extract_text_blocks_splits_inline_article_heading_from_body():
+    blocks = _extract_text_blocks(
+        "Artículo 2. Ámbito de aplicación. El presente reglamento establece las exigencias técnicas."
+    )
+    assert blocks == [
+        {
+            "text": "Artículo 2. Ámbito de aplicación. El presente reglamento establece las exigencias técnicas.",
+            "section": "Artículo 2. Ámbito de aplicación.",
+        }
+    ]
+
+
+def test_extract_text_blocks_splits_inline_it_heading_from_body():
+    blocks = _extract_text_blocks(
+        "IT 3.3. Programa de mantenimiento preventivo. Las instalaciones se mantendrán según la tabla 3.1."
+    )
+    assert blocks == [
+        {
+            "text": "IT 3.3. Programa de mantenimiento preventivo. Las instalaciones se mantendrán según la tabla 3.1.",
+            "section": "IT 3.3. Programa de mantenimiento preventivo.",
+        }
+    ]
+
+
+def test_extract_text_blocks_does_not_split_toc_like_article_lines():
+    blocks = _extract_text_blocks(
+        "Artículo 2. Ámbito de aplicación. . . . . 8 Artículo 3. Responsabilidad de su aplicación. . . . . 9"
+    )
+    assert blocks == [
+        {
+            "text": "Artículo 2. Ámbito de aplicación. . . . . 8 Artículo 3. Responsabilidad de su aplicación. . . . . 9",
+            "section": "",
+        }
+    ]
 
 
 def test_rebt_contact_voltage_phrase_queries_cover_grounding_questions():

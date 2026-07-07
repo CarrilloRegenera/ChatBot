@@ -243,6 +243,7 @@ HEADING_PATTERN = re.compile(r"^(?:\d+(?:\.\d+)*[\.\)]?\s+)?[A-ZÁÉÍÓÚÜÑ][
 NORMATIVE_HEADING_PATTERN = re.compile(
     r"^(?:"
     r"art(?:iculo|[ií]culo|\.?)\s+\d+[.\s-]+.+|"
+    r"it\s+\d+(?:\.\d+){0,2}[.\s-]+.+|"
     r"itc[-\s]*(?:bt|lat|rat)[-\s]*\d+.*|"
     r"\d+(?:\.\d+){0,4}[.)]?\s+[A-Z].+|"
     r"(?:disposicion|disposición|anexo|capitulo|capítulo|titulo|título|instruccion|instrucción)\s+.+"
@@ -800,7 +801,7 @@ def _is_heading(line: str) -> bool:
     if not cleaned:
         return False
     if _is_normative_heading(cleaned):
-        return True
+        return len(cleaned) <= SECTION_LABEL_MAX_LENGTH
     if len(cleaned.split()) > HEADING_LINE_MAX_WORDS:
         return False
     if len(cleaned) > SECTION_LABEL_MAX_LENGTH:
@@ -835,6 +836,35 @@ def _sanitize_section_label(section: str) -> str:
     return cleaned
 
 
+def _split_inline_normative_heading(line: str) -> Tuple[str, str]:
+    cleaned = _clean_line(line)
+    if not cleaned or _is_heading(cleaned):
+        return "", cleaned
+
+    normalized = _normalize_text(cleaned)
+    if re.search(r"\.\s*\.\s*\.\s*\.", cleaned):
+        return "", cleaned
+    if len(re.findall(r"\bart(?:iculo|[ií]culo|\.?)\s+\d+\b", normalized)) >= 2:
+        return "", cleaned
+
+    for match in re.finditer(r"[.:;]\s+", cleaned):
+        boundary = match.start() + 1
+        candidate = cleaned[:boundary].strip()
+        remainder = cleaned[boundary:].lstrip(" .;:")
+        normalized_candidate = _normalize_text(candidate)
+        if not remainder or re.fullmatch(r"[\W\d_]+", remainder):
+            continue
+        if len(candidate) > SECTION_LABEL_MAX_LENGTH:
+            continue
+        if re.fullmatch(r"it\s+\d+(?:\.\d+){0,2}\.?", normalized_candidate):
+            continue
+        if _is_normative_heading(candidate):
+            heading = _sanitize_section_label(candidate[:SECTION_LABEL_MAX_LENGTH])
+            if heading:
+                return heading, remainder
+    return "", cleaned
+
+
 def _extract_text_blocks(text: str) -> List[Dict[str, str]]:
     lines = [line.rstrip() for line in text.splitlines()]
     blocks = []
@@ -864,6 +894,14 @@ def _extract_text_blocks(text: str) -> List[Dict[str, str]]:
             if current_lines:
                 flush_block()
             current_section = _sanitize_section_label(line[:SECTION_LABEL_MAX_LENGTH])
+            continue
+
+        inline_heading, inline_remainder = _split_inline_normative_heading(line)
+        if inline_heading:
+            if current_lines:
+                flush_block()
+            current_section = inline_heading
+            current_lines.append(inline_remainder)
             continue
 
         current_lines.append(line)
