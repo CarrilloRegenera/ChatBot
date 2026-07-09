@@ -49,6 +49,7 @@ from rag_service import (
     RERANK_MODEL,
     _bm25_score,
     _clean_question,
+    _clean_structural_chunk_score,
     _embedding_fn,
     _encode_passage,
     _encode_query,
@@ -867,7 +868,14 @@ def search_documents_detailed_azure(
             variant = _azure_document_variant(item)
             variant_hit = 1 if expected_document_variants and variant in expected_document_variants else 0
             phrase_hits = sum(1 for phrase in phrase_queries if _normalize_text(phrase) in content_norm)
-            return variant_hit, phrase_hits
+            structural_clean = _clean_structural_chunk_score(
+                item,
+                str(item.get("content", "") or ""),
+                exact_refs=query_exact_refs,
+                article_refs=query_article_refs,
+                it_section_refs=query_it_section_refs,
+            )
+            return variant_hit, structural_clean, phrase_hits
 
         candidates = sorted(candidates, key=_candidate_sort_key, reverse=True)
 
@@ -902,6 +910,18 @@ def search_documents_detailed_azure(
             layer_counts[layer] = layer_counts.get(layer, 0) + 1
         if len(selected) >= n_results:
             break
+
+    if (query_exact_refs or query_article_refs or query_it_section_refs) and selected:
+        selected.sort(
+            key=lambda item: _clean_structural_chunk_score(
+                item,
+                str(item.get("content", "") or ""),
+                exact_refs=query_exact_refs,
+                article_refs=query_article_refs,
+                it_section_refs=query_it_section_refs,
+            ),
+            reverse=True,
+        )
 
     context_parts = []
     sources = []

@@ -16,6 +16,7 @@ from rag_service import (
     _extract_circuit_definitions,
     _extract_requested_abbreviation_definitions,
     _clean_context_document,
+    _clean_structural_chunk_score,
     _looks_like_toc_chunk,
     _matches_structural_focus,
     _query_support_metrics,
@@ -103,6 +104,29 @@ def test_structural_anchor_score_does_not_reward_indirect_mention():
         article_refs=["articulo 12"],
     )
     assert score == 0
+
+
+def test_clean_structural_chunk_score_prioritizes_real_structural_chunk_over_toc():
+    good_metadata = {
+        "page": 8,
+        "section": "Artículo 2. Ámbito de aplicación.",
+        "section_type": "article",
+    }
+    toc_metadata = {
+        "page": 2,
+        "section": "Artículo 2. Ámbito de aplicación. . . . . . . . . . .",
+        "section_type": "article",
+    }
+    good_doc = (
+        "Artículo 2. Ámbito de aplicación. El RITE se aplicará a las instalaciones térmicas "
+        "en los edificios de nueva construcción."
+    )
+    toc_doc = (
+        "Artículo 2. Ámbito de aplicación. . . . . 8 Artículo 3. Responsabilidad de su aplicación. . . . . 9"
+    )
+    assert _clean_structural_chunk_score(good_metadata, good_doc, article_refs=["articulo 2"]) > (
+        _clean_structural_chunk_score(toc_metadata, toc_doc, article_refs=["articulo 2"])
+    )
 
 
 def test_structured_search_terms_expand_article_reference_variants():

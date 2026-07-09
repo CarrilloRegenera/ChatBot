@@ -1792,6 +1792,34 @@ def _structural_anchor_score(
     return score
 
 
+def _clean_structural_chunk_score(
+    metadata: Dict[str, object],
+    document: str,
+    *,
+    exact_refs: List[str] | None = None,
+    article_refs: List[str] | None = None,
+    it_section_refs: List[str] | None = None,
+) -> int:
+    score = _structural_anchor_score(
+        metadata,
+        document,
+        exact_refs=exact_refs,
+        article_refs=article_refs,
+        it_section_refs=it_section_refs,
+    )
+    if score <= 0:
+        return 0
+
+    section_type = _normalize_text(str(metadata.get("section_type", "") or ""))
+    if section_type in {"article", "technical_instruction", "itc", "chapter", "disposition", "numbered_section"}:
+        score += 8
+    if re.search(r"\.\s*\.\s*\.\s*\.", str(metadata.get("section", "") or "")):
+        score -= 24
+    if _looks_like_toc_chunk(document, metadata):
+        score -= 40
+    return score
+
+
 def _structured_search_terms(query_profile: Dict[str, object]) -> List[str]:
     terms: List[str] = []
     for article_ref in list(query_profile.get("article_refs", []))[:3]:
@@ -4061,6 +4089,19 @@ def _search_documents_detailed_chroma(
         structural_selection_items = [item for item in selection_items if _matches_item_structural_focus(item)]
         if structural_selection_items:
             selection_items = structural_selection_items
+            selection_items.sort(
+                key=lambda item: (
+                    _clean_structural_chunk_score(
+                        item[3],
+                        item[2],
+                        exact_refs=query_profile["exact_refs"],
+                        article_refs=query_profile["article_refs"],
+                        it_section_refs=query_profile["it_section_refs"],
+                    ),
+                    item[0],
+                ),
+                reverse=True,
+            )
     layer_counts: Dict[str, int] = {}
     max_per_layer = max(n_results - 1, 3)
     for item in selection_items:
@@ -4316,6 +4357,21 @@ def _search_documents_detailed_chroma(
             or len(variant_only) >= max(2, min(n_results, max(1, n_results // 2)))
         ):
             selected = variant_only[:n_results]
+
+    if (query_profile["exact_refs"] or query_profile["article_refs"] or query_profile["it_section_refs"]) and selected:
+        selected.sort(
+            key=lambda item: (
+                _clean_structural_chunk_score(
+                    item[3],
+                    item[2],
+                    exact_refs=query_profile["exact_refs"],
+                    article_refs=query_profile["article_refs"],
+                    it_section_refs=query_profile["it_section_refs"],
+                ),
+                item[0],
+            ),
+            reverse=True,
+        )
 
     if query_profile["page_refs"] and selected:
         requested_pages = {str(page) for page in query_profile["page_refs"]}
