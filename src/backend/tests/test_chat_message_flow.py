@@ -105,7 +105,11 @@ class TestChatMessageFlow(unittest.TestCase):
         fake_memory.search_validated_memory.return_value = None
         fake_memory.record_interaction_pending.return_value = 555
         fake_rag = mock.Mock()
-        fake_rag.search_documents_detailed.return_value = ("", [], {})
+        fake_rag.search_documents_detailed.return_value = (
+            "",
+            [],
+            {"backend": "chroma", "index_status": "empty"},
+        )
 
         with (
             mock.patch("routes.auth_helpers.load_user_by_id", return_value=_make_user_row()),
@@ -129,6 +133,7 @@ class TestChatMessageFlow(unittest.TestCase):
                     "final_confidence": 0.18,
                     "escalated": False,
                     "escalation_reason": "",
+                    "retrieval_quality": "unavailable",
                     "usage_breakdown": {},
                 },
             ),
@@ -145,6 +150,10 @@ class TestChatMessageFlow(unittest.TestCase):
         data = resp.json()
         self.assertIn("Reglamento Electrotecnico para Baja Tension", data["response"])
         self.assertGreaterEqual(data["confidence"], 0.9)
+        self.assertTrue(data["rag_unavailable"])
+        self.assertEqual(data["trace"]["retrieval_quality"], "unavailable")
+        self.assertEqual(data["trace"]["retrieval_backend"], "chroma")
+        self.assertEqual(data["trace"]["retrieval_index_status"], "empty")
 
     def test_cancelled_request_is_not_saved(self):
         client = self._make_client()

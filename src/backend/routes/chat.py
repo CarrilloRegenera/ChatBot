@@ -720,6 +720,9 @@ def send_message(data: MessageRequest, request: Request):
                     "final_confidence": generated.get("final_confidence", confidence),
                     "escalated": bool(generated.get("escalated", False)),
                     "escalation_reason": generated.get("escalation_reason", ""),
+                    "retrieval_quality": generated.get("retrieval_quality", "unknown"),
+                    "retrieval_backend": str(retrieval_stats.get("backend", "") or ""),
+                    "retrieval_index_status": str(retrieval_stats.get("index_status", "") or ""),
                     "usage_breakdown": generated.get("usage_breakdown", {}),
                 }
                 response = format_answer_for_user(response, sources, question=data.question)
@@ -819,6 +822,7 @@ def send_message(data: MessageRequest, request: Request):
             "response": response,
             "confidence": confidence,
             "from_memory": from_memory,
+            "rag_unavailable": trace.get("retrieval_quality") == "unavailable",
             "sources": sources,
             "route": "knowledge",
             "trace": trace,

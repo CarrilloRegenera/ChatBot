@@ -16,8 +16,14 @@ from rag_service import (
     _extract_circuit_definitions,
     _extract_requested_abbreviation_definitions,
     _clean_context_document,
+    _clean_structural_chunk_score,
+    _looks_like_toc_chunk,
     _matches_structural_focus,
     _query_support_metrics,
+    _reference_matches_text,
+    _split_structured_blocks,
+    _structural_anchor_score,
+    _structured_search_terms,
 )
 from ai_service import _retrieval_quality, postprocess_answer
 
@@ -80,6 +86,74 @@ def test_structural_focus_accepts_exact_references():
     )
 
 
+def test_structural_anchor_score_prioritizes_exact_section_start():
+    metadata = {"section": "Artículo 12. Inspecciones periódicas"}
+    score = _structural_anchor_score(
+        metadata,
+        "Las instalaciones se inspeccionarán periódicamente.",
+        article_refs=["articulo 12"],
+    )
+    assert score >= 24
+
+
+def test_structural_anchor_score_does_not_reward_indirect_mention():
+    metadata = {"section": "Condiciones generales"}
+    score = _structural_anchor_score(
+        metadata,
+        "Este apartado remite al artículo 12 para las inspecciones periódicas.",
+        article_refs=["articulo 12"],
+    )
+    assert score == 0
+
+
+def test_clean_structural_chunk_score_prioritizes_real_structural_chunk_over_toc():
+    good_metadata = {
+        "page": 8,
+        "section": "Artículo 2. Ámbito de aplicación.",
+        "section_type": "article",
+    }
+    toc_metadata = {
+        "page": 2,
+        "section": "Artículo 2. Ámbito de aplicación. . . . . . . . . . .",
+        "section_type": "article",
+    }
+    good_doc = (
+        "Artículo 2. Ámbito de aplicación. El RITE se aplicará a las instalaciones térmicas "
+        "en los edificios de nueva construcción."
+    )
+    toc_doc = (
+        "Artículo 2. Ámbito de aplicación. . . . . 8 Artículo 3. Responsabilidad de su aplicación. . . . . 9"
+    )
+    assert _clean_structural_chunk_score(good_metadata, good_doc, article_refs=["articulo 2"]) > (
+        _clean_structural_chunk_score(toc_metadata, toc_doc, article_refs=["articulo 2"])
+    )
+
+
+def test_structured_search_terms_expand_article_reference_variants():
+    terms = _structured_search_terms({"article_refs": ["articulo 2"], "it_section_refs": []})
+    assert "articulo 2" in terms
+    assert "artículo 2" in terms
+    assert "art. 2" in terms
+    assert "Artículo 2" in terms
+
+
+def test_split_structured_blocks_preserves_section_per_chunk():
+    blocks = [
+        {
+            "text": "Artículo 2. Ámbito de aplicación. " + ("alpha " * 80),
+            "section": "Artículo 2. Ámbito de aplicación",
+        },
+        {
+            "text": "Artículo 3. Responsabilidad de su aplicación. " + ("beta " * 80),
+            "section": "Artículo 3. Responsabilidad de su aplicación",
+        },
+    ]
+    chunks = _split_structured_blocks(blocks, chunk_size=180, overlap=20)
+    assert len(chunks) >= 2
+    assert chunks[0][1] == "Artículo 2. Ámbito de aplicación"
+    assert any(section == "Artículo 3. Responsabilidad de su aplicación" for _text, section in chunks)
+
+
 def test_query_support_metrics_detect_unrelated_context():
     selected = [
         (1.0, "1", "Reglamento de instalaciones electricas.", {"source": "rebt.pdf"}),
@@ -104,6 +178,18 @@ def test_retrieval_quality_marks_unsupported_context_as_poor():
             "max_query_term_coverage": 0.2,
         }
     ) == "poor"
+
+
+def test_retrieval_quality_marks_empty_index_as_unavailable():
+    assert _retrieval_quality(
+        {
+            "selected_count": 0,
+            "source_diversity": 0,
+            "expected_domains": ["ops"],
+            "domain_match_ratio": 0.0,
+            "index_status": "empty",
+        }
+    ) == "unavailable"
 
 
 def test_requested_abbreviation_definitions_are_consolidated_from_chunks():
@@ -214,6 +300,16 @@ def test_hint_boosts_article_ref():
     assert candidates[1]["_hint_boost"] == 0
 
 
+def test_hint_boosts_article_ref_do_not_match_subsections():
+    candidates = [
+        {"document_variant": "", "article_refs": "articulo 2.3", "it_section_refs": ""},
+        {"document_variant": "", "article_refs": "articulo 2", "it_section_refs": ""},
+    ]
+    _apply_hint_boosts(candidates, [], ["articulo 2"], None)
+    assert candidates[0]["_hint_boost"] == 0
+    assert candidates[1]["_hint_boost"] > 0
+
+
 def test_hint_boosts_it_section_ref():
     candidates = [
         {"document_variant": "", "article_refs": "", "it_section_refs": "it 3.3"},
@@ -281,6 +377,38 @@ def test_source_mention_works_for_future_pdfs():
 def test_source_mention_electrotecnico():
     qt = _q_tokens("segun el reglamento electrotecnico que dice la itc-bt-25")
     assert _source_mention_score(qt, "baja_tension/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf") == SOURCE_MENTION_BOOST
+
+
+def test_toc_chunk_detection_flags_early_index_like_article_listing():
+    metadata = {
+        "page": 2,
+        "section": "Artículo 2. Ámbito de aplicación. . . . . . . . . . . . . . . . . . . . . . . .",
+    }
+    document = (
+        "Artículo 2. Ámbito de aplicación. . . . . . . . . . . . . . . . . . . . . . . . 8 "
+        "Artículo 3. Responsabilidad de su aplicación. . . . . . . . . . . . . . . . . . 9 "
+        "Artículo 4. Contenido del RITE. . . . . . . . . . . . . . . . . . . . . . . . . 9 "
+        "CAPÍTULO II. Exigencias técnicas . . . . . . . . . . . . . . . . . . . . . . . . 10"
+    )
+    assert _looks_like_toc_chunk(document, metadata) is True
+
+
+def test_toc_chunk_detection_keeps_real_article_body():
+    metadata = {
+        "page": 8,
+        "section": "Artículo 2. Ámbito de aplicación",
+    }
+    document = (
+        "Artículo 2. Ámbito de aplicación. El presente reglamento tiene por objeto "
+        "establecer las exigencias de eficiencia energética y seguridad que deben cumplir "
+        "las instalaciones térmicas en los edificios."
+    )
+    assert _looks_like_toc_chunk(document, metadata) is False
+
+
+def test_article_reference_match_is_not_confused_with_subsections():
+    assert _reference_matches_text("articulo 2 ambito de aplicacion", "articulo 2") is True
+    assert _reference_matches_text("articulo 2.3 requerira proyecto tecnico", "articulo 2") is False
 
 
 # --- domain_exclusion_penalty tests ---

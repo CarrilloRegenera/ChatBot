@@ -49,6 +49,7 @@ from rag_service import (
     RERANK_MODEL,
     _bm25_score,
     _clean_question,
+    _clean_structural_chunk_score,
     _embedding_fn,
     _encode_passage,
     _encode_query,
@@ -65,13 +66,19 @@ from rag_service import (
     _normalize_text,
     _ocr_page_text,
     _page_structure_context,
+    _extract_article_refs,
+    _extract_exact_refs,
+    _extract_it_section_refs,
     _query_phrase_queries,
     _query_intent,
+    _reference_matches_text,
     _sanitize_section_label,
     _query_support_metrics,
     _source_domain_key,
     _source_mention_score,
-    _split_text,
+    _split_structured_blocks,
+    _structural_anchor_score,
+    _structured_search_terms,
     _inherit_active_structure,
     _st_model,
     _tokenize,
@@ -90,6 +97,15 @@ _index_schema_checked = False
 def _compose_search_text(question: str, clean_question: str, domains: List[str]) -> str:
     parts: List[str] = [question]
     parts.extend(_query_phrase_queries(clean_question)[:6])
+    parts.extend(
+        _structured_search_terms(
+            {
+                "article_refs": _extract_article_refs(clean_question),
+                "it_section_refs": _extract_it_section_refs(clean_question),
+            }
+        )[:6]
+    )
+    parts.extend(_extract_exact_refs(clean_question)[:3])
     variants = _expected_document_variants(clean_question, domains)
     if "normativa_base" in variants:
         parts.extend(
@@ -112,10 +128,10 @@ def _compose_search_text(question: str, clean_question: str, domains: List[str])
     seen = set()
     merged: List[str] = []
     for part in parts:
-        normalized = _normalize_text(str(part or ""))
-        if not normalized or normalized in seen:
+        marker = str(part or "").strip().casefold()
+        if not marker or marker in seen:
             continue
-        seen.add(normalized)
+        seen.add(marker)
         merged.append(str(part))
     return " ".join(merged)
 
@@ -398,12 +414,7 @@ def _iter_pdf_chunks(
                 active_itc_heading,
                 active_itc_section,
             )
-            for chunk_index, chunk in enumerate(_split_text(text), start=1):
-                section_name = ""
-                for block in page_blocks:
-                    if block["text"][:60] in chunk:
-                        section_name = block["section"]
-                        break
+            for chunk_index, (chunk, section_name) in enumerate(_split_structured_blocks(page_blocks), start=1):
                 if _looks_like_table_block(chunk):
                     chunk_kind = "table"
                 elif re.search(r"\b\d+(?:[.,]\d+)?\b", chunk):
@@ -657,11 +668,11 @@ def _apply_hint_boosts(
                 boost += _VARIANT_BOOST
         if article_set:
             item_articles = _normalize_text(str(item.get("article_refs", "") or ""))
-            if item_articles and any(ref in item_articles for ref in article_set):
+            if item_articles and any(_reference_matches_text(item_articles, ref) for ref in article_set):
                 boost += _ARTICLE_REF_BOOST
         if it_set:
             item_it = _normalize_text(str(item.get("it_section_refs", "") or ""))
-            if item_it and any(ref in item_it for ref in it_set):
+            if item_it and any(_reference_matches_text(item_it, ref) for ref in it_set):
                 boost += _IT_SECTION_REF_BOOST
         item["_hint_boost"] = boost
 
@@ -688,7 +699,12 @@ def search_documents_detailed_azure(
 ) -> Tuple[str, List[str], Dict[str, object]]:
     _require_azure_config()
     if not question.strip():
-        return "", [], {"selected_count": 0, "source_diversity": 0, "backend": "azure_search"}
+        return "", [], {
+            "selected_count": 0,
+            "source_diversity": 0,
+            "backend": "azure_search",
+            "index_status": "not_queried",
+        }
 
     n_results = max(n_results, 6)
     vector = _encode_query(question)
@@ -784,6 +800,9 @@ def search_documents_detailed_azure(
     _apply_hint_boosts(candidates, expected_document_variants, hint_article_refs, hint_it_section_refs)
 
     query_tokens = {t for t in _tokenize(clean_question) if t not in STOPWORDS and len(t) >= 4}
+    query_exact_refs = _extract_exact_refs(clean_question)
+    query_article_refs = _extract_article_refs(clean_question)
+    query_it_section_refs = _extract_it_section_refs(clean_question)
     candidate_texts = [
         _decode_chunk_corruption(item.get("content", ""), item.get("source_path", ""))
         for item in candidates
@@ -806,7 +825,14 @@ def search_documents_detailed_azure(
                 procedure_intent=procedure_intent,
             )
             src_mention = _SOURCE_MENTION_BOOST if _source_mention_score(query_tokens, str(item.get("source_path") or item.get("blob_path") or "")) else 0.0
-            final = (float(sem_scores[i]) * RERANK_WEIGHT) + (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost + src_mention
+            structural_anchor = _structural_anchor_score(
+                item,
+                candidate_texts[i],
+                exact_refs=query_exact_refs,
+                article_refs=query_article_refs,
+                it_section_refs=query_it_section_refs,
+            )
+            final = (float(sem_scores[i]) * RERANK_WEIGHT) + (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost + src_mention + structural_anchor
             scored.append((final, item))
         candidates = [item for _, item in sorted(scored, key=lambda x: x[0], reverse=True)]
     elif candidates:
@@ -821,7 +847,14 @@ def search_documents_detailed_azure(
                 procedure_intent=procedure_intent,
             )
             src_mention = _SOURCE_MENTION_BOOST if _source_mention_score(query_tokens, str(item.get("source_path") or item.get("blob_path") or "")) else 0.0
-            final = (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost + src_mention
+            structural_anchor = _structural_anchor_score(
+                item,
+                candidate_texts[i],
+                exact_refs=query_exact_refs,
+                article_refs=query_article_refs,
+                it_section_refs=query_it_section_refs,
+            )
+            final = (bm25 * RERANK_BM25_WEIGHT) + hint_boost + domain_boost + src_mention + structural_anchor
             scored.append((final, item))
         candidates = [item for _, item in sorted(scored, key=lambda x: x[0], reverse=True)]
 
@@ -835,7 +868,14 @@ def search_documents_detailed_azure(
             variant = _azure_document_variant(item)
             variant_hit = 1 if expected_document_variants and variant in expected_document_variants else 0
             phrase_hits = sum(1 for phrase in phrase_queries if _normalize_text(phrase) in content_norm)
-            return variant_hit, phrase_hits
+            structural_clean = _clean_structural_chunk_score(
+                item,
+                str(item.get("content", "") or ""),
+                exact_refs=query_exact_refs,
+                article_refs=query_article_refs,
+                it_section_refs=query_it_section_refs,
+            )
+            return variant_hit, structural_clean, phrase_hits
 
         candidates = sorted(candidates, key=_candidate_sort_key, reverse=True)
 
@@ -870,6 +910,18 @@ def search_documents_detailed_azure(
             layer_counts[layer] = layer_counts.get(layer, 0) + 1
         if len(selected) >= n_results:
             break
+
+    if (query_exact_refs or query_article_refs or query_it_section_refs) and selected:
+        selected.sort(
+            key=lambda item: _clean_structural_chunk_score(
+                item,
+                str(item.get("content", "") or ""),
+                exact_refs=query_exact_refs,
+                article_refs=query_article_refs,
+                it_section_refs=query_it_section_refs,
+            ),
+            reverse=True,
+        )
 
     context_parts = []
     sources = []
@@ -914,6 +966,7 @@ def search_documents_detailed_azure(
     )
     retrieval_stats = {
         "backend": "azure_search",
+        "index_status": "ready",
         "selected_count": len(selected),
         "source_diversity": len(source_counts),
         "top_sources": sorted(source_counts)[:5],

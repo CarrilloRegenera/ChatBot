@@ -59,6 +59,17 @@ def test_compose_search_text_enriches_ops_monitoring_queries():
     assert "SCADA" in text
 
 
+def test_compose_search_text_adds_structural_reference_variants():
+    text = _compose_search_text(
+        "Segun el RITE consolidado, que dice el articulo 2?",
+        "segun el rite consolidado que dice el articulo 2",
+        ["rite"],
+    )
+    assert "articulo 2" in text
+    assert "artículo 2" in text
+    assert "art. 2" in text
+
+
 def test_build_semantic_config_uses_supported_title_field_shape():
     config = _build_semantic_config()
     prioritized = config.prioritized_fields
@@ -136,14 +147,18 @@ def test_iter_pdf_chunks_refreshes_progress_while_processing_pages(monkeypatch):
         "_extract_text_blocks",
         lambda text: [{"text": text, "section": f"Seccion {text[-1]}"}],
     )
-    monkeypatch.setattr(azure_rag_service, "_split_text", lambda text: [text])
+    monkeypatch.setattr(
+        azure_rag_service,
+        "_split_structured_blocks",
+        lambda blocks: [(blocks[0]["text"], blocks[0]["section"])],
+    )
     monkeypatch.setattr(azure_rag_service, "_looks_like_table_block", lambda chunk: False)
     monkeypatch.setattr(azure_rag_service, "_encode_passage", lambda chunk: [0.1, 0.2])
     monkeypatch.setattr(azure_rag_service, "_document_profile_metadata", lambda *args: {"domain": "ops"})
     monkeypatch.setattr(
         azure_rag_service,
         "_chunk_profile_metadata",
-        lambda *args: {"section": "Seccion", "article_refs": "", "it_section_refs": ""},
+        lambda _blob_name, section, _chunk, _chunk_kind: {"section": section, "article_refs": "", "it_section_refs": ""},
     )
 
     docs = _iter_pdf_chunks(
@@ -161,3 +176,5 @@ def test_iter_pdf_chunks_refreshes_progress_while_processing_pages(monkeypatch):
     assert all(update["processed_files"] == 14 for update in progress_updates)
     assert all(update["total_files"] == 26 for update in progress_updates)
     assert all(update["current_file"].endswith("EMSA Guidance on SSE_PART1.pdf") for update in progress_updates)
+    assert docs[0]["section"] == "Seccion 1"
+    assert docs[1]["section"] == "Seccion 2"

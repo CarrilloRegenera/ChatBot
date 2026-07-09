@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import logging
 import os
+import sqlite3
 from threading import Lock, Thread
 import uuid
 from pathlib import Path
@@ -13,7 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from routes.admin_deployments import router as admin_deployments_router
 from routes.auth import router as auth_router
 from routes.deployments_webhook import router as deployments_webhook_router
-from config import ALLOWED_ORIGINS, CHATBOT_FRONTEND_URL, LOG_LEVEL, SYNC_DOCUMENTS_ON_STARTUP
+from config import (
+    ALLOWED_ORIGINS,
+    CHATBOT_FRONTEND_URL,
+    CHROMA_DB_PATH,
+    LOG_LEVEL,
+    RAG_BACKEND,
+    SYNC_DOCUMENTS_ON_STARTUP,
+)
 from entra_auth import warm_entra_jwks
 from observability import RequestIdFilter, reset_request_id, set_request_id
 
@@ -152,6 +160,45 @@ def _startup_background_init():
     app.state.runtime_ready = True
 
 
+def _rag_health_snapshot() -> dict:
+    snapshot = {
+        "rag_backend": RAG_BACKEND,
+        "rag_ready": None,
+        "rag_index_status": "not_checked",
+        "rag_indexed_chunks": None,
+    }
+    if RAG_BACKEND != "chroma":
+        return snapshot
+
+    db_path = Path(CHROMA_DB_PATH) / "chroma.sqlite3"
+    snapshot["rag_indexed_chunks"] = 0
+    if not db_path.exists():
+        snapshot["rag_ready"] = False
+        snapshot["rag_index_status"] = "missing"
+        return snapshot
+
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM embeddings")
+        indexed_chunks = int(cursor.fetchone()[0] or 0)
+        cursor.close()
+    except Exception as exc:
+        snapshot["rag_ready"] = False
+        snapshot["rag_index_status"] = "error"
+        snapshot["rag_error"] = str(exc)
+        return snapshot
+    finally:
+        if conn is not None:
+            conn.close()
+
+    snapshot["rag_indexed_chunks"] = indexed_chunks
+    snapshot["rag_ready"] = indexed_chunks > 0
+    snapshot["rag_index_status"] = "ready" if indexed_chunks > 0 else "empty"
+    return snapshot
+
+
 @app.get("/")
 def root():
     if FRONTEND_DIR.is_dir() and not os.getenv("WEBSITE_HOSTNAME", "").strip():
@@ -165,7 +212,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {
+    payload = {
         "status": "ok",
         "database": "deferred",
         "runtime_ready": bool(getattr(app.state, "runtime_ready", False)),
@@ -174,6 +221,8 @@ def health():
         "chat_router_error": getattr(app.state, "chat_router_error", ""),
         "deployment_image_tag": os.getenv("DEPLOY_IMAGE_TAG", "").strip(),
     }
+    payload.update(_rag_health_snapshot())
+    return payload
 
 
 @app.get("/api")

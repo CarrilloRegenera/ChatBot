@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -26,12 +27,25 @@ class MainRuntimeTests(unittest.TestCase):
     def test_health_stays_lightweight_without_loading_chat_router(self):
         app, client = self._make_client()
 
-        with mock.patch("main.warm_entra_jwks", return_value=None):
+        with (
+            mock.patch("main.warm_entra_jwks", return_value=None),
+            mock.patch(
+                "main._rag_health_snapshot",
+                return_value={
+                    "rag_backend": "chroma",
+                    "rag_ready": False,
+                    "rag_index_status": "empty",
+                    "rag_indexed_chunks": 0,
+                },
+            ),
+        ):
             response = client.get("/health")
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(app.state.chat_router_ready)
         self.assertEqual(response.json()["chat_router_ready"], False)
+        self.assertEqual(response.json()["rag_index_status"], "empty")
+        self.assertEqual(response.json()["rag_indexed_chunks"], 0)
 
     def test_admin_deployments_route_does_not_force_chat_router(self):
         app, client = self._make_client()
@@ -63,6 +77,48 @@ class MainRuntimeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(app.state.chat_router_ready)
         self.assertEqual(response.json()["pending"], [])
+
+    def test_rag_health_snapshot_reports_missing_chroma_index(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(main, "RAG_BACKEND", "chroma"),
+                mock.patch.object(main, "CHROMA_DB_PATH", tmpdir),
+            ):
+                snapshot = main._rag_health_snapshot()
+
+        self.assertEqual(snapshot["rag_backend"], "chroma")
+        self.assertFalse(snapshot["rag_ready"])
+        self.assertEqual(snapshot["rag_index_status"], "missing")
+        self.assertEqual(snapshot["rag_indexed_chunks"], 0)
+
+    def test_rag_health_snapshot_reports_ready_chroma_index(self):
+        import main
+
+        fake_cursor = mock.Mock()
+        fake_cursor.fetchone.return_value = (2,)
+        fake_conn = mock.Mock()
+        fake_conn.cursor.return_value = fake_cursor
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "chroma.sqlite3"
+            db_path.touch()
+
+            with (
+                mock.patch.object(main, "RAG_BACKEND", "chroma"),
+                mock.patch.object(main, "CHROMA_DB_PATH", tmpdir),
+                mock.patch("main.sqlite3.connect", return_value=fake_conn),
+            ):
+                snapshot = main._rag_health_snapshot()
+
+        self.assertEqual(snapshot["rag_backend"], "chroma")
+        self.assertTrue(snapshot["rag_ready"])
+        self.assertEqual(snapshot["rag_index_status"], "ready")
+        self.assertEqual(snapshot["rag_indexed_chunks"], 2)
+        fake_cursor.execute.assert_called_once_with("SELECT COUNT(*) FROM embeddings")
+        fake_cursor.close.assert_called_once_with()
+        fake_conn.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

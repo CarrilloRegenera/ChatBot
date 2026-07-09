@@ -881,6 +881,9 @@ def _effective_confidence_threshold(question: str) -> float:
 def _retrieval_quality(retrieval_stats: Optional[Dict[str, object]]) -> str:
     if not retrieval_stats:
         return "unknown"
+    index_status = str(retrieval_stats.get("index_status", "") or "").strip().lower()
+    if index_status in {"missing", "empty", "error", "unavailable", "sync_failed"}:
+        return "unavailable"
     domain_match_ratio = float(retrieval_stats.get("domain_match_ratio", 1.0) or 0.0)
     source_diversity = int(retrieval_stats.get("source_diversity", 0) or 0)
     selected_count = int(retrieval_stats.get("selected_count", 0) or 0)

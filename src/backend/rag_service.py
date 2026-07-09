@@ -243,6 +243,7 @@ HEADING_PATTERN = re.compile(r"^(?:\d+(?:\.\d+)*[\.\)]?\s+)?[A-ZÁÉÍÓÚÜÑ][
 NORMATIVE_HEADING_PATTERN = re.compile(
     r"^(?:"
     r"art(?:iculo|[ií]culo|\.?)\s+\d+[.\s-]+.+|"
+    r"it\s+\d+(?:\.\d+){0,2}[.\s-]+.+|"
     r"itc[-\s]*(?:bt|lat|rat)[-\s]*\d+.*|"
     r"\d+(?:\.\d+){0,4}[.)]?\s+[A-Z].+|"
     r"(?:disposicion|disposición|anexo|capitulo|capítulo|titulo|título|instruccion|instrucción)\s+.+"
@@ -800,7 +801,7 @@ def _is_heading(line: str) -> bool:
     if not cleaned:
         return False
     if _is_normative_heading(cleaned):
-        return True
+        return len(cleaned) <= SECTION_LABEL_MAX_LENGTH
     if len(cleaned.split()) > HEADING_LINE_MAX_WORDS:
         return False
     if len(cleaned) > SECTION_LABEL_MAX_LENGTH:
@@ -835,6 +836,35 @@ def _sanitize_section_label(section: str) -> str:
     return cleaned
 
 
+def _split_inline_normative_heading(line: str) -> Tuple[str, str]:
+    cleaned = _clean_line(line)
+    if not cleaned or _is_heading(cleaned):
+        return "", cleaned
+
+    normalized = _normalize_text(cleaned)
+    if re.search(r"\.\s*\.\s*\.\s*\.", cleaned):
+        return "", cleaned
+    if len(re.findall(r"\bart(?:iculo|[ií]culo|\.?)\s+\d+\b", normalized)) >= 2:
+        return "", cleaned
+
+    for match in re.finditer(r"[.:;]\s+", cleaned):
+        boundary = match.start() + 1
+        candidate = cleaned[:boundary].strip()
+        remainder = cleaned[boundary:].lstrip(" .;:")
+        normalized_candidate = _normalize_text(candidate)
+        if not remainder or re.fullmatch(r"[\W\d_]+", remainder):
+            continue
+        if len(candidate) > SECTION_LABEL_MAX_LENGTH:
+            continue
+        if re.fullmatch(r"it\s+\d+(?:\.\d+){0,2}\.?", normalized_candidate):
+            continue
+        if _is_normative_heading(candidate):
+            heading = _sanitize_section_label(candidate[:SECTION_LABEL_MAX_LENGTH])
+            if heading:
+                return heading, remainder
+    return "", cleaned
+
+
 def _extract_text_blocks(text: str) -> List[Dict[str, str]]:
     lines = [line.rstrip() for line in text.splitlines()]
     blocks = []
@@ -866,6 +896,14 @@ def _extract_text_blocks(text: str) -> List[Dict[str, str]]:
             current_section = _sanitize_section_label(line[:SECTION_LABEL_MAX_LENGTH])
             continue
 
+        inline_heading, inline_remainder = _split_inline_normative_heading(line)
+        if inline_heading:
+            if current_lines:
+                flush_block()
+            current_section = inline_heading
+            current_lines.append(inline_remainder)
+            continue
+
         current_lines.append(line)
 
     if current_lines:
@@ -877,6 +915,56 @@ def _extract_text_blocks(text: str) -> List[Dict[str, str]]:
             blocks.append({"text": clean_text, "section": ""})
 
     return blocks
+
+
+def _split_structured_blocks(
+    blocks: List[Dict[str, str]],
+    chunk_size: int = CHUNK_SIZE,
+    overlap: int = CHUNK_OVERLAP,
+) -> List[Tuple[str, str]]:
+    if not blocks:
+        return []
+
+    chunks: List[Tuple[str, str]] = []
+    current = ""
+    current_section = ""
+
+    for block in blocks:
+        block_text = str(block.get("text", "") or "").strip()
+        block_section = str(block.get("section", "") or "").strip()
+        if not block_text:
+            continue
+
+        candidate = f"{current} {block_text}".strip() if current else block_text
+        if len(candidate) <= chunk_size:
+            current = candidate
+            current_section = current_section or block_section
+            continue
+
+        if current and len(current) >= MIN_CHUNK_LENGTH:
+            chunks.append((current, current_section))
+
+        overlap_tail = current[-overlap:].strip() if current else ""
+        current = f"{overlap_tail} {block_text}".strip() if overlap_tail else block_text
+        current_section = block_section
+
+        while len(current) > chunk_size:
+            boundary = _find_chunk_boundary_impl(
+                current,
+                chunk_size=chunk_size,
+                grace=CHUNK_SENTENCE_GRACE,
+                min_chunk_length=MIN_CHUNK_LENGTH,
+            )
+            partial = current[:boundary].strip()
+            if len(partial) >= MIN_CHUNK_LENGTH:
+                chunks.append((partial, current_section))
+            next_start = max(boundary - overlap, 1)
+            current = current[next_start:].strip()
+
+    if current and len(current) >= MIN_CHUNK_LENGTH:
+        chunks.append((current, current_section))
+
+    return chunks
 
 
 def _looks_like_table_block(text: str) -> bool:
@@ -1654,7 +1742,109 @@ def _matches_structural_focus(
     if not refs:
         return False
     text = _normalize_text(f"{metadata.get('section', '')} {document} {_metadata_text(metadata)}")
-    return any(_normalize_text(ref) in text for ref in refs if ref)
+    return any(_reference_matches_text(text, ref) for ref in refs if ref)
+
+
+def _reference_matches_text(text: str, ref: str) -> bool:
+    normalized_text = _normalize_text(text or "")
+    normalized_ref = _normalize_text(ref or "")
+    if not normalized_text or not normalized_ref:
+        return False
+    if normalized_ref.startswith("articulo "):
+        return re.search(rf"(?<![a-z0-9]){re.escape(normalized_ref)}(?!\.\d)(?![a-z0-9])", normalized_text) is not None
+    return normalized_ref in normalized_text
+
+
+def _reference_starts_text(text: str, ref: str) -> bool:
+    normalized_text = _normalize_text(text or "").strip()
+    normalized_ref = _normalize_text(ref or "").strip()
+    if not normalized_text or not normalized_ref:
+        return False
+    if normalized_ref.startswith("articulo "):
+        return re.search(rf"^{re.escape(normalized_ref)}(?!\.\d)(?![a-z0-9])", normalized_text) is not None
+    return re.search(rf"^{re.escape(normalized_ref)}(?![a-z0-9])", normalized_text) is not None
+
+
+def _structural_anchor_score(
+    metadata: Dict[str, object],
+    document: str,
+    *,
+    exact_refs: List[str] | None = None,
+    article_refs: List[str] | None = None,
+    it_section_refs: List[str] | None = None,
+) -> int:
+    refs = [
+        *list(exact_refs or []),
+        *list(article_refs or []),
+        *list(it_section_refs or []),
+    ]
+    if not refs:
+        return 0
+
+    section_title = _normalize_text(str(metadata.get("section", "") or "")).strip()
+    document_start = _normalize_text((document or "")[:240]).strip()
+    score = 0
+    for ref in refs:
+        if _reference_starts_text(section_title, ref):
+            score += 24
+        elif _reference_starts_text(document_start, ref):
+            score += 16
+    return score
+
+
+def _clean_structural_chunk_score(
+    metadata: Dict[str, object],
+    document: str,
+    *,
+    exact_refs: List[str] | None = None,
+    article_refs: List[str] | None = None,
+    it_section_refs: List[str] | None = None,
+) -> int:
+    score = _structural_anchor_score(
+        metadata,
+        document,
+        exact_refs=exact_refs,
+        article_refs=article_refs,
+        it_section_refs=it_section_refs,
+    )
+    if score <= 0:
+        return 0
+
+    section_type = _normalize_text(str(metadata.get("section_type", "") or ""))
+    if section_type in {"article", "technical_instruction", "itc", "chapter", "disposition", "numbered_section"}:
+        score += 8
+    if re.search(r"\.\s*\.\s*\.\s*\.", str(metadata.get("section", "") or "")):
+        score -= 24
+    if _looks_like_toc_chunk(document, metadata):
+        score -= 40
+    return score
+
+
+def _structured_search_terms(query_profile: Dict[str, object]) -> List[str]:
+    terms: List[str] = []
+    for article_ref in list(query_profile.get("article_refs", []))[:3]:
+        article_number = str(article_ref).split()[-1]
+        terms.extend((
+            str(article_ref),
+            str(article_ref).replace("articulo ", "artículo "),
+            f"art. {article_number}",
+            f"Artículo {article_number}",
+        ))
+    for it_ref in list(query_profile.get("it_section_refs", []))[:3]:
+        terms.extend((str(it_ref), str(it_ref).upper()))
+
+    seen: set[str] = set()
+    deduped: List[str] = []
+    for term in terms:
+        clean = str(term or "").strip()
+        if not clean:
+            continue
+        marker = clean
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(clean)
+    return deduped
 
 
 def _domain_from_filename_override(source_name: str) -> str:
@@ -1734,6 +1924,26 @@ def _source_mention_score(question_tokens: set, source_name: str) -> int:
     if len(hits) == 1 and min_token_len < 5:
         return 0
     return SOURCE_MENTION_BOOST
+
+
+def _looks_like_toc_chunk(document: str, metadata: Dict[str, object]) -> bool:
+    try:
+        page = int(str(metadata.get("page", "") or "0"))
+    except ValueError:
+        page = 0
+    if page <= 0 or page > 4:
+        return False
+
+    section = str(metadata.get("section", "") or "")
+    raw_text = f"{section} {document or ''}"
+    normalized = _normalize_text(raw_text)
+    if not normalized:
+        return False
+
+    article_mentions = len(re.findall(r"articulo\s+\d+(?:\.\d+)?", normalized))
+    chapter_mentions = len(re.findall(r"capitulo\s+[ivxlcdm]+", normalized))
+    dot_leaders = bool(re.search(r"\.\s*\.\s*\.\s*\.", raw_text))
+    return article_mentions >= 4 and (dot_leaders or chapter_mentions >= 1)
 
 
 def _source_pdf_path(source_name: str) -> str:
@@ -2330,6 +2540,21 @@ def list_indexed_sources() -> Dict[str, str]:
     return _get_indexed_sources()
 
 
+def _empty_retrieval_stats(
+    *,
+    expected_domains: List[str] | None = None,
+    index_status: str = "ready",
+) -> Dict[str, object]:
+    return {
+        "selected_count": 0,
+        "source_diversity": 0,
+        "expected_domains": expected_domains or [],
+        "domain_match_ratio": 0.0,
+        "index_status": index_status,
+        "backend": "chroma",
+    }
+
+
 def _delete_source_chunks(source_name: str) -> None:
     delete_source_chunks(source_name, collections=(collection, table_collection))
 
@@ -2456,15 +2681,9 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                 active_itc_heading,
                 active_itc_section,
             )
-            for chunk_index, chunk in enumerate(_split_text(text), start=1):
+            for chunk_index, (chunk, clean_section_name) in enumerate(_split_structured_blocks(page_blocks), start=1):
                 if _is_noise_chunk(chunk):
                     continue
-                section_name = ""
-                for block in page_blocks:
-                    if block["text"][:60] in chunk:
-                        section_name = block["section"]
-                        break
-                clean_section_name = _sanitize_section_label(section_name[:SECTION_LABEL_MAX_LENGTH])
                 if _looks_like_table_block(chunk):
                     chunk_kind = "table"
                 elif _extract_numeric_terms(chunk):
@@ -2727,10 +2946,10 @@ def _search_documents_detailed_chroma(
     hint_it_section_refs: List[str] | None = None,
 ) -> Tuple[str, List[str], Dict[str, object]]:
     if not question.strip():
-        return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+        return "", [], _empty_retrieval_stats(index_status="not_queried")
     if _embedding_fn is None:
         logger.error("Busqueda RAG deshabilitada: embedding model '%s' no disponible", RERANK_MODEL)
-        return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+        return "", [], _empty_retrieval_stats(index_status="unavailable")
     _ensure_active_chroma_collections()
 
     clean_question = _clean_question(question)
@@ -2738,13 +2957,17 @@ def _search_documents_detailed_chroma(
     mentions_bt_generators = _query_mentions_bt_generators(clean_question)
     mentions_rebt_regulation = _query_mentions_rebt_regulation(clean_question)
     question_specific_scopes = _question_mentions_specific_scope(_normalize_text(clean_question))
+    expected_domains = [domain] if domain else _expected_domains(clean_question)
+    if not expected_domains and hint_domains:
+        expected_domains = [d for d in hint_domains if d]
+        logger.debug("hint_domains aplicados como fallback: %s", expected_domains)
     if collection.count() == 0:
         try:
             sync_documents()
         except Exception:
-            return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+            return "", [], _empty_retrieval_stats(expected_domains=expected_domains, index_status="sync_failed")
         if collection.count() == 0:
-            return "", [], {"selected_count": 0, "source_diversity": 0, "expected_domains": [], "domain_match_ratio": 0.0}
+            return "", [], _empty_retrieval_stats(expected_domains=expected_domains, index_status="empty")
 
     n_results = max(n_results, 6)
     question_tokens = set(_tokenize(clean_question))
@@ -2776,10 +2999,6 @@ def _search_documents_detailed_chroma(
         for t in ("generadoras", "aisladas", "asistidas", "interconectadas", "clasificacion", "condiciones"):
             if t not in core_terms:
                 core_terms.append(t)
-    expected_domains = [domain] if domain else _expected_domains(clean_question)
-    if not expected_domains and hint_domains:
-        expected_domains = [d for d in hint_domains if d]
-        logger.debug("hint_domains aplicados como fallback: %s", expected_domains)
     if mentions_bt40 and "guias_tecnicas" not in expected_domains:
         expected_domains.append("guias_tecnicas")
     if target_itc_refs and "baja_tension" not in expected_domains:
@@ -2914,12 +3133,7 @@ def _search_documents_detailed_chroma(
                 except Exception as exc:
                     logger.warning("ITC-forced retrieval failed for %s: %s", search_term, exc)
 
-    structured_search_terms: List[str] = []
-    for article_ref in query_profile["article_refs"][:3]:
-        article_number = article_ref.split()[-1]
-        structured_search_terms.extend((article_ref, f"art. {article_number}"))
-    for it_ref in query_profile["it_section_refs"][:3]:
-        structured_search_terms.extend((it_ref, it_ref.upper()))
+    structured_search_terms = _structured_search_terms(query_profile)
     if structured_search_terms:
         existing_ids = set(ids)
         for search_term in structured_search_terms[:8]:
@@ -3318,6 +3532,13 @@ def _search_documents_detailed_chroma(
             exact_hits = sum(1 for ref in query_profile["exact_refs"] if ref in doc_norm or ref in metadata_norm)
             if exact_hits:
                 score += exact_hits * 28
+        score += _structural_anchor_score(
+            metadata,
+            document,
+            exact_refs=query_profile["exact_refs"],
+            article_refs=query_profile["article_refs"],
+            it_section_refs=query_profile["it_section_refs"],
+        )
         if query_profile["intent"] in {"numeric_value", "table_lookup"}:
             if str(metadata.get("chunk_kind", "")) == "table_row":
                 score += 30
@@ -3485,17 +3706,21 @@ def _search_documents_detailed_chroma(
         if query_profile["it_section_refs"]:
             it_ref_hits = sum(
                 1 for ref in query_profile["it_section_refs"]
-                if ref in section_title or ref in doc_norm
+                if _reference_matches_text(section_title, ref) or _reference_matches_text(doc_norm, ref)
             )
             if it_ref_hits:
                 score += it_ref_hits * IT_SECTION_BOOST
         if query_profile["article_refs"]:
             article_ref_hits = sum(
                 1 for ref in query_profile["article_refs"]
-                if ref in section_title or ref in doc_norm or ref in metadata_norm
+                if _reference_matches_text(section_title, ref)
+                or _reference_matches_text(doc_norm, ref)
+                or _reference_matches_text(metadata_norm, ref)
             )
             if article_ref_hits:
                 score += article_ref_hits * ARTICLE_REF_BOOST
+            if _looks_like_toc_chunk(document, metadata):
+                score -= 90
         if query_profile["comparison"] and len(doc_tokens.intersection(question_tokens)) >= 2:
             score += COMPARISON_PRIORITY_BOOST
         if core_terms and core_hits == 0:
@@ -3584,6 +3809,13 @@ def _search_documents_detailed_chroma(
             if query_profile["exact_refs"]:
                 exact_hits = sum(1 for ref in query_profile["exact_refs"] if ref in doc_norm or ref in metadata_norm)
                 lexical_score += exact_hits * 24
+            lexical_score += _structural_anchor_score(
+                metadata,
+                document,
+                exact_refs=query_profile["exact_refs"],
+                article_refs=query_profile["article_refs"],
+                it_section_refs=query_profile["it_section_refs"],
+            )
             if query_profile["intent"] in {"numeric_value", "table_lookup"} and str(metadata.get("chunk_kind", "")) == "table_row":
                 lexical_score += 25
             if query_profile["numeric_variants"]:
@@ -3675,17 +3907,21 @@ def _search_documents_detailed_chroma(
             if query_profile["it_section_refs"]:
                 it_ref_hits_lex = sum(
                     1 for ref in query_profile["it_section_refs"]
-                    if ref in section_title or ref in doc_norm
+                    if _reference_matches_text(section_title, ref) or _reference_matches_text(doc_norm, ref)
                 )
                 if it_ref_hits_lex:
                     lexical_score += it_ref_hits_lex * IT_SECTION_BOOST
             if query_profile["article_refs"]:
                 article_ref_hits_lex = sum(
                     1 for ref in query_profile["article_refs"]
-                    if ref in section_title or ref in doc_norm or ref in metadata_norm
+                    if _reference_matches_text(section_title, ref)
+                    or _reference_matches_text(doc_norm, ref)
+                    or _reference_matches_text(metadata_norm, ref)
                 )
                 if article_ref_hits_lex:
                     lexical_score += article_ref_hits_lex * ARTICLE_REF_BOOST
+                if _looks_like_toc_chunk(document, metadata):
+                    lexical_score -= 90
             document_labeled_terms = _extract_labeled_terms(f"{metadata.get('section', '')} {document}")
             doc_norm = _normalize_text(document)
             labeled_match_hits = 0
@@ -3715,6 +3951,8 @@ def _search_documents_detailed_chroma(
             "source_diversity": 0,
             "expected_domains": expected_domains,
             "domain_match_ratio": 0.0,
+            "index_status": "ready",
+            "backend": "chroma",
         }
 
     # --- Reranking: embedding similarity + BM25 léxico complementario ---
@@ -3851,6 +4089,19 @@ def _search_documents_detailed_chroma(
         structural_selection_items = [item for item in selection_items if _matches_item_structural_focus(item)]
         if structural_selection_items:
             selection_items = structural_selection_items
+            selection_items.sort(
+                key=lambda item: (
+                    _clean_structural_chunk_score(
+                        item[3],
+                        item[2],
+                        exact_refs=query_profile["exact_refs"],
+                        article_refs=query_profile["article_refs"],
+                        it_section_refs=query_profile["it_section_refs"],
+                    ),
+                    item[0],
+                ),
+                reverse=True,
+            )
     layer_counts: Dict[str, int] = {}
     max_per_layer = max(n_results - 1, 3)
     for item in selection_items:
@@ -4107,6 +4358,21 @@ def _search_documents_detailed_chroma(
         ):
             selected = variant_only[:n_results]
 
+    if (query_profile["exact_refs"] or query_profile["article_refs"] or query_profile["it_section_refs"]) and selected:
+        selected.sort(
+            key=lambda item: (
+                _clean_structural_chunk_score(
+                    item[3],
+                    item[2],
+                    exact_refs=query_profile["exact_refs"],
+                    article_refs=query_profile["article_refs"],
+                    it_section_refs=query_profile["it_section_refs"],
+                ),
+                item[0],
+            ),
+            reverse=True,
+        )
+
     if query_profile["page_refs"] and selected:
         requested_pages = {str(page) for page in query_profile["page_refs"]}
 
@@ -4289,6 +4555,8 @@ def _search_documents_detailed_chroma(
         "expected_domains": expected_domains,
         "expected_document_variants": expected_document_variants,
         "domain_match_ratio": round(matched_domains / max(len(selected), 1), 4) if expected_domains else 1.0,
+        "index_status": "ready",
+        "backend": "chroma",
         "selected_departments": selected_departments,
         "expected_departments": expected_departments,
         "department_match_ratio": round(matched_departments / max(len(selected), 1), 4) if expected_departments else 1.0,
