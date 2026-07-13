@@ -1,5 +1,4 @@
 import re
-import unicodedata
 from typing import Dict
 
 from config import MIN_QUERY_LENGTH
@@ -17,6 +16,7 @@ from routing_signals import (
     has_explicit_technical_reference,
     is_mixed_scope_query,
 )
+from text_normalization import normalize_for_matching
 
 
 GREETING_PATTERNS = (
@@ -141,6 +141,7 @@ def _token_resembles_inventory_noun(token: str) -> bool:
     return False
 
 def _normalize(text: str) -> str:
+    return normalize_for_matching(text, r"[Â¿?Â¡!.,;:()]+")
     normalized = unicodedata.normalize("NFD", text or "")
     normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
     normalized = normalized.lower().strip()

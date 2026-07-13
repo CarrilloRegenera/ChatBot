@@ -1,6 +1,5 @@
 import logging
 import re
-import unicodedata
 from datetime import date, datetime
 from typing import Any, Dict, List
 
@@ -35,6 +34,7 @@ from routing_taxonomy import (
     STRONG_BUSINESS_ROUTE_HINTS,
 )
 from routing_signals import has_concrete_business_reference, has_explicit_technical_reference, is_mixed_scope_query
+from text_normalization import normalize_for_matching
 from business_query_schema import (
     BUSINESS_SCHEMA,
     CLOSURE_FIELD_HINTS,
@@ -142,6 +142,18 @@ _OPS_SPECIALIZED_DOCUMENTARY_HINTS = OPS_SPECIALIZED_DOCUMENTARY_HINTS
 
 
 def _normalize(text: str) -> str:
+    normalized = normalize_for_matching(text, r"[^\w\s/-]")
+    typo_replacements = {
+        "imorte": "importe",
+        "impote": "importe",
+        "liictacion": "licitacion",
+        "liictaciones": "licitaciones",
+        "liciitacion": "licitacion",
+        "liciitaciones": "licitaciones",
+    }
+    typo_replacements.update({str(key): str(value) for key, value in (BUSINESS_SCHEMA.get("typos") or {}).items()})
+    normalized = " ".join(typo_replacements.get(token, token) for token in normalized.split())
+    return normalized
     normalized = unicodedata.normalize("NFD", text or "")
     normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
     normalized = normalized.lower().strip()
