@@ -29,6 +29,11 @@ from appregenera_sql_service import (
 )
 from config import APPREGENERA_DEV_BYPASS_KEY
 from ops_domain import OPS_DOCUMENTARY_HINTS, is_ops_standard_reference
+from routing_taxonomy import (
+    COMMON_DOCUMENTARY_HINTS,
+    OPS_SPECIALIZED_DOCUMENTARY_HINTS,
+    STRONG_BUSINESS_ROUTE_HINTS,
+)
 from routing_signals import has_concrete_business_reference, has_explicit_technical_reference, is_mixed_scope_query
 from business_query_schema import (
     BUSINESS_SCHEMA,
@@ -60,20 +65,7 @@ from business_query_schema import (
 logger = logging.getLogger(__name__)
 
 _DOCUMENTARY_HINTS = (
-    "manual",
-    "pdf",
-    "documentacion",
-    "documento",
-    "normativa",
-    "reglamento",
-    "norma",
-    "apartado",
-    "seccion",
-    "capitulo",
-    "pagina",
-    "pag ",
-    "segun el manual",
-    "segun el pdf",
+    *COMMON_DOCUMENTARY_HINTS,
     "grupo electrogeno",
     "grupos electrogenos",
     "electrogeno",
@@ -92,41 +84,7 @@ _DOCUMENTARY_HINTS = (
     *OPS_DOCUMENTARY_HINTS,
 )
 
-_STRONG_BUSINESS_ROUTE_HINTS = (
-    "control de produccion",
-    "cierre",
-    "cartera",
-    "rentabilidad",
-    "produccion estimada",
-    "produccion marzo",
-    "produccion abril",
-    "pipeline",
-    "backlog",
-    "licitacion",
-    "licitaciones",
-    "estudio",
-    "estudios",
-    "oferta",
-    "ofertas",
-    "adjudicacion",
-    "adjudicado",
-    "adjudicada",
-    "adjudicados",
-    "adjudicadas",
-    "plan ",
-    "importe medio",
-    "importe promedio",
-    "importe contratado",
-    "importe adjudicado",
-    "probabilidad de adjudicacion",
-    "situacion oferta",
-    "periodo de ejecucion",
-    "tipologia de obra",
-    "codigo de obra",
-    "codigo obra",
-    "numero proyecto",
-    "numero oferta",
-)
+_STRONG_BUSINESS_ROUTE_HINTS = STRONG_BUSINESS_ROUTE_HINTS
 
 _PRODUCCION_ENTITY_HINTS = (
     "proyecto",
@@ -180,41 +138,7 @@ _BUSINESS_ESTUDIOS_LISTING_HINTS = (
     "ranking",
 )
 
-_OPS_SPECIALIZED_DOCUMENTARY_HINTS = (
-    "estudio de viabilidad",
-    "viabilidad ops",
-    "estudio de malaga",
-    "estudio malaga",
-    "estudio tecnico economico",
-    "estudio tecnico-economico",
-    "guia eopsa",
-    "guia ops completa",
-    "guia completa de eopsa",
-    "guia para una licitacion ops completa y exitosa",
-    "lista de verificacion",
-    "demanda energetica",
-    "solucion recomendada",
-    "muelle objetivo",
-    "buques objetivo",
-    "potencia instalada necesaria",
-    "anteproyecto",
-    "anteproyecto ops",
-    "infraestructura electrica",
-    "memoria de infraestructura",
-    "puerto de malaga",
-    "terminal de cruceros",
-    "puerto de bilbao",
-    "santurtzi",
-    "modulo ops",
-    "subestacion de conversion",
-    "sistema de gestion de cables",
-    "comunicacion de interes",
-    "conformidad de estado miembro",
-    "subvencion afif",
-    "ayudas afif",
-    "cef-t",
-    "funding tender opportunities",
-)
+_OPS_SPECIALIZED_DOCUMENTARY_HINTS = OPS_SPECIALIZED_DOCUMENTARY_HINTS
 
 
 def _normalize(text: str) -> str:

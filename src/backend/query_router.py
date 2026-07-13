@@ -4,6 +4,12 @@ from typing import Dict
 
 from config import MIN_QUERY_LENGTH
 from ops_domain import OPS_DOCUMENTARY_HINTS, OPS_TECHNICAL_HINTS, is_ops_standard_reference
+from routing_taxonomy import (
+    BUSINESS_COMMON_HINTS,
+    BUSINESS_LICITACIONES_HINTS,
+    BUSINESS_PRODUCCION_HINTS,
+    COMMON_DOCUMENTARY_HINTS,
+)
 from routing_signals import (
     LICITACION_REFERENCE_PATTERN,
     PRODUCCION_CODE_PATTERN,
@@ -54,9 +60,7 @@ OUT_OF_SCOPE_HINTS = {
 }
 
 DOCUMENTARY_HINTS = {
-    "manual", "pdf", "documentacion", "documento", "normativa", "normativo",
-    "norma", "reglamento", "apartado", "seccion", "capitulo", "pagina",
-    "pag.", "segun el manual", "segun el documento", "segun el pdf",
+    *COMMON_DOCUMENTARY_HINTS,
     *OPS_DOCUMENTARY_HINTS,
 }
 
@@ -78,21 +82,11 @@ TECHNICAL_HINTS = {
     *OPS_TECHNICAL_HINTS,
 }
 
-BUSINESS_LICITACIONES_HINTS = {
-    "licitacion", "licitaciones", "oferta", "adjudicacion", "adjudicada",
-    "fecha de adjudicacion", "fecha de presentacion", "fecha de apertura",
-}
+BUSINESS_LICITACIONES_HINTS = set(BUSINESS_LICITACIONES_HINTS)
 
-BUSINESS_PRODUCCION_HINTS = {
-    "produccion", "control de obras", "cartera", "responsable",
-    "cuatrimestre", "rentabilidad", "codigo obra",
-}
+BUSINESS_PRODUCCION_HINTS = set(BUSINESS_PRODUCCION_HINTS)
 
-BUSINESS_COMMON_HINTS = {
-    "importe contratado", "cliente", "estado", "comentarios",
-    "numero proyecto", "numero oferta", "tipo obra",
-    "en curso", "recientes", "mas recientes", "vinculadas", "vinculados", "relacionadas", "relacionados", "top", "ranking",
-}
+BUSINESS_COMMON_HINTS = set(BUSINESS_COMMON_HINTS)
 
 DOCUMENT_INVENTORY_HINTS = {
     "que documentos hay",
