@@ -24,6 +24,7 @@ from chat_document_sync_service import (
     start_document_sync_background as _start_document_sync_background_impl,
     update_document_sync_status as _update_document_sync_status_impl,
 )
+from chat_business_response_service import finalize_business_chat_reply
 from chat_interaction_recording_service import (
     record_pending_interaction_safe as _record_pending_interaction_safe_impl,
 )
@@ -472,7 +473,6 @@ def send_message(data: MessageRequest, request: Request):
         if route in {"business_licitaciones", "business_produccion"}:
             auth_header = (request.headers.get("authorization") or "").strip()
             user_token = auth_header.split(" ", 1)[1].strip() if auth_header.lower().startswith("bearer ") else None
-            interaction_id = None
             raise_if_request_cancelled(request_id)
             business_result = answer_business_question(
                 data.question,
@@ -481,63 +481,20 @@ def send_message(data: MessageRequest, request: Request):
                 history=route_history,
             )
             raise_if_request_cancelled(request_id)
-            business_route = business_result.get("route", route)
-            response = business_result["response"]
             elapsed = int((time.time() - start) * 1000)
-            db_ms = 0
-            try:
-                stage_metrics_db_start = time.time()
-                business_trace = business_result.get("trace", {}) or {}
-                business_sources = business_result.get("sources", []) or []
-                business_path = str(business_trace.get("path") or "").strip().lower()
-                business_model = "appregenera_sql" if business_path == "sql" else ("appregenera_http" if business_path == "http" else "appregenera")
-                interaction_id = _memory_service().record_interaction_pending(
-                    conversation_id=data.conversation_id,
-                    question=data.question,
-                    answer=response,
-                    sources=business_sources,
-                    context="",
-                    confidence=float(business_result.get("confidence", 1.0)),
-                    prompt_tokens=0,
-                    completion_tokens=0,
-                    total_tokens=0,
-                    model=business_model,
-                    base_model=business_model,
-                    final_model=business_model,
-                    base_confidence=float(business_result.get("confidence", 1.0)),
-                    final_confidence=float(business_result.get("confidence", 1.0)),
-                    escalated=False,
-                    escalation_reason="",
-                    route=business_route,
-                    from_memory=False,
-                    elapsed_ms=elapsed,
-                )
-                db_ms += int((time.time() - stage_metrics_db_start) * 1000)
-            except Exception:
-                logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo registrar InteraccionesRAG de negocio")
             raise_if_request_cancelled(request_id)
-            db_ms += _save_chat_message(data.conversation_id, data.question, response, elapsed)
-            _log_chat_event(
-                event="CHAT",
+            return finalize_business_chat_reply(
                 conversation_id=data.conversation_id,
-                route=business_route,
-                from_memory=False,
-                confidence=float(business_result.get("confidence", 1.0)),
-                sources_count=len(business_result.get("sources", [])),
-                elapsed_ms=elapsed,
                 question=data.question,
-                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+                business_result=business_result,
+                fallback_route=route,
+                elapsed_ms=elapsed,
+                memory_service=_memory_service(),
+                save_chat_message=_save_chat_message,
+                log_chat_event=_log_chat_event,
+                logger=logger,
+                router_ms=router_ms,
             )
-            return {
-                "question": data.question,
-                "response": response,
-                "confidence": float(business_result.get("confidence", 1.0)),
-                "from_memory": False,
-                "sources": business_result.get("sources", []),
-                "route": business_route,
-                "trace": business_result.get("trace", {}),
-                "interaction_id": interaction_id,
-            }
 
         context = ""
         sources = []
