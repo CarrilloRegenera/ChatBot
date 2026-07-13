@@ -27,6 +27,7 @@ from chat_document_sync_service import (
 from chat_interaction_recording_service import (
     record_pending_interaction_safe as _record_pending_interaction_safe_impl,
 )
+from chat_static_response_service import finalize_static_chat_reply
 from chat_technical_response_service import (
     apply_known_technical_answer_overrides as _apply_known_technical_answer_overrides_impl,
     augment_retrieval_question as _augment_retrieval_question_impl,
@@ -369,139 +370,79 @@ def send_message(data: MessageRequest, request: Request):
             if route not in {"business_licitaciones", "business_produccion"}:
                 response = _build_cross_mode_message(chat_mode, route)
                 elapsed = int((time.time() - start) * 1000)
-                interaction_id = _record_pending_interaction_safe(
-                    conversation_id=data.conversation_id,
-                    question=data.question,
-                    answer=response,
-                    confidence=1.0,
-                    route="business_scope_mismatch",
-                    model="router_scope_guard",
-                    elapsed_ms=elapsed,
-                )
                 raise_if_request_cancelled(request_id)
-                db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
-                _log_chat_event(
-                    event="CHAT",
+                return finalize_static_chat_reply(
                     conversation_id=data.conversation_id,
-                    route="business_scope_mismatch",
-                    from_memory=False,
-                    confidence=1.0,
-                    sources_count=0,
-                    elapsed_ms=elapsed,
                     question=data.question,
-                    extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+                    response=response,
+                    confidence=1.0,
+                    route="business_scope_mismatch",
+                    elapsed_ms=elapsed,
+                    model="router_scope_guard",
+                    from_memory=False,
+                    record_pending_interaction_safe=_record_pending_interaction_safe,
+                    save_chat_message=_save_chat_message,
+                    log_chat_event=_log_chat_event,
+                    router_ms=router_ms,
                 )
-                return {
-                    "question": data.question,
-                    "response": response,
-                    "confidence": 1.0,
-                    "from_memory": False,
-                    "route": "business_scope_mismatch",
-                    "interaction_id": interaction_id,
-                }
         else:
             if route in {"business_licitaciones", "business_produccion"}:
                 response = _build_cross_mode_message(chat_mode, route)
                 elapsed = int((time.time() - start) * 1000)
-                interaction_id = _record_pending_interaction_safe(
-                    conversation_id=data.conversation_id,
-                    question=data.question,
-                    answer=response,
-                    confidence=1.0,
-                    route="technical_scope_mismatch",
-                    model="router_scope_guard",
-                    elapsed_ms=elapsed,
-                )
                 raise_if_request_cancelled(request_id)
-                db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
-                _log_chat_event(
-                    event="CHAT",
+                return finalize_static_chat_reply(
                     conversation_id=data.conversation_id,
-                    route="technical_scope_mismatch",
-                    from_memory=False,
-                    confidence=1.0,
-                    sources_count=0,
-                    elapsed_ms=elapsed,
                     question=data.question,
-                    extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+                    response=response,
+                    confidence=1.0,
+                    route="technical_scope_mismatch",
+                    elapsed_ms=elapsed,
+                    model="router_scope_guard",
+                    from_memory=False,
+                    record_pending_interaction_safe=_record_pending_interaction_safe,
+                    save_chat_message=_save_chat_message,
+                    log_chat_event=_log_chat_event,
+                    router_ms=router_ms,
                 )
-                return {
-                    "question": data.question,
-                    "response": response,
-                    "confidence": 1.0,
-                    "from_memory": False,
-                    "route": "technical_scope_mismatch",
-                    "interaction_id": interaction_id,
-                }
 
         if route in {"invalid", "smalltalk", "out_of_scope"}:
             response = route_info["message"]
             elapsed = int((time.time() - start) * 1000)
             confidence = 1.0 if route in {"invalid", "smalltalk"} else 0.9
-            interaction_id = _record_pending_interaction_safe(
-                conversation_id=data.conversation_id,
-                question=data.question,
-                answer=response,
-                confidence=confidence,
-                route=route,
-                model="router_static",
-                elapsed_ms=elapsed,
-            )
             raise_if_request_cancelled(request_id)
-            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
-            _log_chat_event(
-                event="CHAT",
+            return finalize_static_chat_reply(
                 conversation_id=data.conversation_id,
-                route=route,
-                from_memory=False,
-                confidence=confidence,
-                sources_count=0,
-                elapsed_ms=elapsed,
                 question=data.question,
-                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+                response=response,
+                confidence=confidence,
+                route=route,
+                elapsed_ms=elapsed,
+                model="router_static",
+                from_memory=False,
+                record_pending_interaction_safe=_record_pending_interaction_safe,
+                save_chat_message=_save_chat_message,
+                log_chat_event=_log_chat_event,
+                router_ms=router_ms,
             )
-            return {
-                "question": data.question,
-                "response": response,
-                "confidence": confidence,
-                "from_memory": False,
-                "route": route,
-                "interaction_id": interaction_id,
-            }
 
         if route == "mixed_scope":
             response = route_info["message"]
             elapsed = int((time.time() - start) * 1000)
-            interaction_id = _record_pending_interaction_safe(
-                conversation_id=data.conversation_id,
-                question=data.question,
-                answer=response,
-                confidence=1.0,
-                route=route,
-                model="router_static",
-                elapsed_ms=elapsed,
-            )
             raise_if_request_cancelled(request_id)
-            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
-            _log_chat_event(
-                event="CHAT",
+            return finalize_static_chat_reply(
                 conversation_id=data.conversation_id,
-                route=route,
-                from_memory=False,
-                confidence=1.0,
-                sources_count=0,
-                elapsed_ms=elapsed,
                 question=data.question,
-                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+                response=response,
+                confidence=1.0,
+                route=route,
+                elapsed_ms=elapsed,
+                model="router_static",
+                from_memory=False,
+                record_pending_interaction_safe=_record_pending_interaction_safe,
+                save_chat_message=_save_chat_message,
+                log_chat_event=_log_chat_event,
+                router_ms=router_ms,
             )
-            return {
-                "question": data.question,
-                "response": response,
-                "confidence": 1.0,
-                "from_memory": False,
-                "route": route,
-                "interaction_id": interaction_id,
-            }
 
         if route == "document_inventory":
             indexed_sources = _rag_service().list_indexed_sources()
@@ -511,38 +452,22 @@ def send_message(data: MessageRequest, request: Request):
                 detect_hint_domains=_rag_service().detect_hint_domains,
             )
             elapsed = int((time.time() - start) * 1000)
-            interaction_id = _record_pending_interaction_safe(
+            raise_if_request_cancelled(request_id)
+            return finalize_static_chat_reply(
                 conversation_id=data.conversation_id,
                 question=data.question,
-                answer=response,
+                response=response,
                 confidence=1.0,
                 route=route,
+                elapsed_ms=elapsed,
                 sources=sorted(indexed_sources)[:20],
                 model="inventory_formatter",
-                elapsed_ms=elapsed,
-            )
-            raise_if_request_cancelled(request_id)
-            db_ms = _save_chat_message(data.conversation_id, data.question, response, elapsed)
-            _log_chat_event(
-                event="CHAT",
-                conversation_id=data.conversation_id,
-                route=route,
                 from_memory=False,
-                confidence=1.0,
-                sources_count=len(indexed_sources),
-                elapsed_ms=elapsed,
-                question=data.question,
-                extra=f"router_ms={router_ms} rag_ms=0 llm_ms=0 db_ms={db_ms}",
+                record_pending_interaction_safe=_record_pending_interaction_safe,
+                save_chat_message=_save_chat_message,
+                log_chat_event=_log_chat_event,
+                router_ms=router_ms,
             )
-            return {
-                "question": data.question,
-                "response": response,
-                "confidence": 1.0,
-                "from_memory": False,
-                "sources": sorted(indexed_sources)[:20],
-                "route": route,
-                "interaction_id": interaction_id,
-            }
 
         if route in {"business_licitaciones", "business_produccion"}:
             auth_header = (request.headers.get("authorization") or "").strip()
