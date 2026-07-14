@@ -835,7 +835,6 @@ def test_decode_corruption_uses_config_not_hardcode():
 def test_adding_new_shift31_domain_in_config_applies_decoder(tmp_path, monkeypatch):
     """Añadir un nuevo dominio con encoding shift31 en domains.json aplica el decoder sin cambios de código."""
     import json
-    import importlib
     import rag_service
 
     # Clonar config actual y añadir dominio ficticio con shift31

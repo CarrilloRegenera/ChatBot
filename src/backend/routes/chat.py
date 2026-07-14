@@ -1,6 +1,6 @@
 import logging
 import time
-from threading import Lock, Thread
+from threading import Lock
 from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException, Request

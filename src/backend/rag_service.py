@@ -205,9 +205,6 @@ def _decode_chunk_corruption(text: str, source: str = "") -> str:
     )
 
 
-import math as _math
-
-
 def _bm25_score(query_tokens: set, doc_text: str, avg_doc_len: float, k1: float = 1.5, b: float = 0.75) -> float:
     doc_norm = _normalize_text(doc_text)
     doc_tokens_list = doc_norm.split()
@@ -2329,7 +2326,6 @@ def _expected_document_variants(question: str, expected_domains: List[str]) -> L
             "scada",
             "control remoto",
         )
-        explicit_part_1 = any(term in normalized for term in ("80005-1", "iec 80005-1", "ieee 80005-1", "iso 80005-1"))
         explicit_part_2 = any(term in normalized for term in ("80005-2", "iec 80005-2", "ieee 80005-2", "iso 80005-2"))
         if not variants:
             if any(term in normalized for term in monitoring_terms):
@@ -4074,10 +4070,6 @@ def _search_documents_detailed_chroma(
         preferred_selection_items = [
             item for item in ranked_items
             if _source_domain_key(str(item[3].get("source", "")), item[3]) in expected_domains
-        ]
-        other_selection_items = [
-            item for item in ranked_items
-            if _source_domain_key(str(item[3].get("source", "")), item[3]) not in expected_domains
         ]
         if preferred_selection_items:
             selection_items = preferred_selection_items

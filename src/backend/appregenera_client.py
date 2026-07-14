@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict
+from typing import Any
 from urllib import error, parse, request
 
 from config import APPREGENERA_API_BASE_URL, APPREGENERA_DEV_BYPASS_KEY, APPREGENERA_TIMEOUT_SECS

@@ -71,8 +71,6 @@ def should_apply_history_hints(
 
     # Preguntas de resolución de símbolo/abreviatura heredan contexto aunque sean largas
     # ("indaga en el archivo y busca lo que significa la t y la m" > 6 tokens)
-    definition_query = is_symbol_definition_query(question)
-
     if _EXPLICIT_TECHNICAL_ANCHOR_RE.search(normalized):
         return False
 

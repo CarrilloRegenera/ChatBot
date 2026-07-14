@@ -75,7 +75,7 @@ def start_document_sync_background(
         global _document_sync_inflight
         try:
             def _progress_callback(payload: Dict[str, object]) -> None:
-                status = update_document_sync_status(**payload)
+                update_document_sync_status(**payload)
                 if state_callback is not None:
                     _status, _inflight = export_state()
                     state_callback(_status, _inflight)
