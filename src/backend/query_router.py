@@ -142,12 +142,6 @@ def _token_resembles_inventory_noun(token: str) -> bool:
 
 def _normalize(text: str) -> str:
     return normalize_for_matching(text, r"[Â¿?Â¡!.,;:()]+")
-    normalized = unicodedata.normalize("NFD", text or "")
-    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
-    normalized = normalized.lower().strip()
-    normalized = re.sub(r"[¿?¡!.,;:()]+", " ", normalized)
-    normalized = re.sub(r"\s+", " ", normalized)
-    return normalized
 
 
 def _is_smalltalk(text: str) -> bool:

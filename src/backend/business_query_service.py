@@ -154,22 +154,6 @@ def _normalize(text: str) -> str:
     typo_replacements.update({str(key): str(value) for key, value in (BUSINESS_SCHEMA.get("typos") or {}).items()})
     normalized = " ".join(typo_replacements.get(token, token) for token in normalized.split())
     return normalized
-    normalized = unicodedata.normalize("NFD", text or "")
-    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
-    normalized = normalized.lower().strip()
-    normalized = re.sub(r"[^\w\s/-]", " ", normalized)
-    normalized = re.sub(r"\s+", " ", normalized)
-    typo_replacements = {
-        "imorte": "importe",
-        "impote": "importe",
-        "liictacion": "licitacion",
-        "liictaciones": "licitaciones",
-        "liciitacion": "licitacion",
-        "liciitaciones": "licitaciones",
-    }
-    typo_replacements.update({str(key): str(value) for key, value in (BUSINESS_SCHEMA.get("typos") or {}).items()})
-    normalized = " ".join(typo_replacements.get(token, token) for token in normalized.split())
-    return normalized
 
 
 def _business_trace(
