@@ -7,5 +7,5 @@ def normalize_for_matching(text: str, punctuation_pattern: str) -> str:
     normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
     normalized = normalized.lower().strip()
     normalized = re.sub(punctuation_pattern, " ", normalized)
-    normalized = re.sub(r"\s+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized
