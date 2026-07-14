@@ -199,6 +199,20 @@ def _rag_health_snapshot() -> dict:
     return snapshot
 
 
+def _health_payload() -> dict:
+    payload = {
+        "status": "ok",
+        "database": "deferred",
+        "runtime_ready": bool(getattr(app.state, "runtime_ready", False)),
+        "startup_error": getattr(app.state, "startup_error", ""),
+        "chat_router_ready": bool(getattr(app.state, "chat_router_ready", False)),
+        "chat_router_error": getattr(app.state, "chat_router_error", ""),
+        "deployment_image_tag": os.getenv("DEPLOY_IMAGE_TAG", "").strip(),
+    }
+    payload.update(_rag_health_snapshot())
+    return payload
+
+
 @app.get("/")
 def root():
     if FRONTEND_DIR.is_dir() and not os.getenv("WEBSITE_HOSTNAME", "").strip():
@@ -212,17 +226,7 @@ def root():
 
 @app.get("/health")
 def health():
-    payload = {
-        "status": "ok",
-        "database": "deferred",
-        "runtime_ready": bool(getattr(app.state, "runtime_ready", False)),
-        "startup_error": getattr(app.state, "startup_error", ""),
-        "chat_router_ready": bool(getattr(app.state, "chat_router_ready", False)),
-        "chat_router_error": getattr(app.state, "chat_router_error", ""),
-        "deployment_image_tag": os.getenv("DEPLOY_IMAGE_TAG", "").strip(),
-    }
-    payload.update(_rag_health_snapshot())
-    return payload
+    return _health_payload()
 
 
 @app.get("/api")

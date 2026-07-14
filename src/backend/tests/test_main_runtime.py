@@ -120,6 +120,28 @@ class MainRuntimeTests(unittest.TestCase):
         fake_cursor.close.assert_called_once_with()
         fake_conn.close.assert_called_once_with()
 
+    def test_health_payload_merges_runtime_and_rag_snapshot(self):
+        import main
+
+        main.app.state.runtime_ready = True
+        main.app.state.startup_error = "none"
+        main.app.state.chat_router_ready = True
+        main.app.state.chat_router_error = ""
+
+        with (
+            mock.patch("main._rag_health_snapshot", return_value={"rag_backend": "azure_search", "rag_index_status": "not_checked"}),
+            mock.patch("main.os.getenv", return_value="deploy-tag-123"),
+        ):
+            payload = main._health_payload()
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["database"], "deferred")
+        self.assertTrue(payload["runtime_ready"])
+        self.assertTrue(payload["chat_router_ready"])
+        self.assertEqual(payload["deployment_image_tag"], "deploy-tag-123")
+        self.assertEqual(payload["rag_backend"], "azure_search")
+        self.assertEqual(payload["rag_index_status"], "not_checked")
+
 
 if __name__ == "__main__":
     unittest.main()
