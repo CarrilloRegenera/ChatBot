@@ -214,7 +214,7 @@ def print_report(report: Dict[str, Any], baseline_comparison: Optional[Dict[str,
         print(f"  Errores:         {report['errors']}")
 
     if baseline_comparison:
-        print(f"\n  --- Delta vs baseline ---")
+        print("\n  --- Delta vs baseline ---")
         for metric, delta in baseline_comparison["deltas"].items():
             sign = "+" if delta >= 0 else ""
             print(f"  {metric}: {sign}{delta:.4f}")
@@ -223,7 +223,7 @@ def print_report(report: Dict[str, Any], baseline_comparison: Optional[Dict[str,
             for reg in baseline_comparison["regressions"]:
                 print(f"    id={reg['id']}: recall {reg['recall_before']:.2f} -> {reg['recall_after']:.2f}  |  {reg['question'][:60]}")
         else:
-            print(f"\n  Sin regresiones.")
+            print("\n  Sin regresiones.")
 
     print(f"{'='*60}\n")
 

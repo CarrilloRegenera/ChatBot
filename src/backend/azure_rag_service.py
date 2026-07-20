@@ -61,7 +61,6 @@ from rag_service import (
     _chunk_profile_metadata,
     _document_profile_metadata,
     _document_layer_boost,
-    _expected_document_variants,
     _is_normative_intent_query,
     _normalize_text,
     _ocr_page_text,

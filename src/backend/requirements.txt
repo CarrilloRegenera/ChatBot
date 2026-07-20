@@ -2,16 +2,16 @@ fastapi==0.135.3
 uvicorn==0.44.0
 pyodbc==5.3.0
 python-dotenv==1.2.2
-openai>=1.0.0
+openai==2.32.0
 PyMuPDF==1.27.2.2
 chromadb==1.5.7
 sentence-transformers==5.4.1
 transformers==4.45.2
-azure-core>=1.30.0
-azure-storage-blob>=12.19.0
-azure-search-documents>=11.6.0
-PyJWT[crypto]>=2.10.1
+azure-core==1.41.0
+azure-storage-blob==12.29.0
+azure-search-documents==12.0.0
+PyJWT[crypto]==2.13.0
 # OCR opcional para PDFs escaneados. Solo se carga si RAG_OCR_ENABLED=1.
 # Tesseract binario debe instalarse aparte: https://github.com/UB-Mannheim/tesseract/wiki
 pytesseract==0.3.13
-Pillow>=10.0.0
+Pillow==12.2.0

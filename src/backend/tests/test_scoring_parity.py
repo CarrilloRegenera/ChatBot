@@ -13,6 +13,7 @@ from azure_rag_service import (
 )
 from rag_service import (
     _document_layer_boost,
+    _domain_exclusion_penalty,
     _extract_circuit_definitions,
     _extract_requested_abbreviation_definitions,
     _clean_context_document,
@@ -24,6 +25,10 @@ from rag_service import (
     _split_structured_blocks,
     _structural_anchor_score,
     _structured_search_terms,
+    _source_mention_score,
+    _tokenize,
+    SOURCE_MENTION_BOOST,
+    STOPWORDS,
 )
 from ai_service import _retrieval_quality, postprocess_answer
 
@@ -342,9 +347,6 @@ def test_azure_document_variant_falls_back_to_source_path():
 # Source mention boost — _source_mention_score
 # ---------------------------------------------------------------------------
 
-from rag_service import _source_mention_score, _tokenize, STOPWORDS, SOURCE_MENTION_BOOST
-
-
 def _q_tokens(question: str) -> set:
     return {t for t in _tokenize(question.lower()) if t not in STOPWORDS and len(t) >= 4}
 
@@ -412,9 +414,6 @@ def test_article_reference_match_is_not_confused_with_subsections():
 
 
 # --- domain_exclusion_penalty tests ---
-
-from rag_service import _domain_exclusion_penalty
-
 
 def test_domain_exclusion_ops_penalizes_alta_tension_when_anchored():
     penalty = _domain_exclusion_penalty(["ops"], "alta_tension", "en ops que norma base manda sobre conexion buque tierra")
