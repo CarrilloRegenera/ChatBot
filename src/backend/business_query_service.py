@@ -35,6 +35,13 @@ from business_query_client_filters import (
     is_exact_client_target_query as _is_exact_client_target_query_impl,
     is_explicit_client_field_filter as _is_explicit_client_field_filter_impl,
 )
+from business_query_listing import (
+    looks_like_active_production_listing_query as _looks_like_active_production_listing_query_impl,
+    looks_like_ranked_listing_query as _looks_like_ranked_listing_query_impl,
+    looks_like_recent_listing_query as _looks_like_recent_listing_query_impl,
+    sort_estudios_listing_matches as _sort_estudios_listing_matches_impl,
+    sort_produccion_listing_matches as _sort_produccion_listing_matches_impl,
+)
 from appregenera_client import AppRegeneraClientError, get_json, post_json
 from appregenera_sql_service import (
     first_non_null,
@@ -1669,72 +1676,28 @@ def _apply_client_filter(
 
 
 def _looks_like_recent_listing_query(question_text: str) -> bool:
-    return any(token in question_text for token in ("recientes", "mas recientes", "ultimas", "ultimos"))
+    return _looks_like_recent_listing_query_impl(question_text)
 
 
 def _looks_like_ranked_listing_query(question_text: str) -> bool:
-    return any(token in question_text for token in ("top", "ranking"))
+    return _looks_like_ranked_listing_query_impl(question_text)
 
 
 def _looks_like_active_production_listing_query(question_text: str) -> bool:
-    return any(token in question_text for token in ("en curso", "actualmente", "activa", "activas"))
+    return _looks_like_active_production_listing_query_impl(question_text)
 
 
 def _sort_estudios_listing_matches(matches: List[Dict[str, Any]], *, question_text: str) -> List[Dict[str, Any]]:
-    if _looks_like_recent_listing_query(question_text):
-        return sorted(
-            matches,
-            key=lambda item: (
-                item.get("FechaAdjudicacion")
-                or item.get("FechaPresentacion")
-                or item.get("UpdatedDate")
-                or item.get("CreatedDate")
-                or datetime.min
-            ),
-            reverse=True,
-        )
-
-    if _looks_like_ranked_listing_query(question_text):
-        return sorted(
-            matches,
-            key=lambda item: (
-                parse_decimal(item.get("ImporteContratado")) or 0.0,
-                parse_decimal(item.get("Produccion")) or 0.0,
-                parse_decimal(item.get("Plan2026")) or 0.0,
-            ),
-            reverse=True,
-        )
-
-    return matches
+    return _sort_estudios_listing_matches_impl(matches, question_text=question_text, parse_decimal=parse_decimal)
 
 
 def _sort_produccion_listing_matches(matches: List[Dict[str, Any]], *, question_text: str) -> List[Dict[str, Any]]:
-    ordered = matches
-    if _looks_like_active_production_listing_query(question_text):
-        ordered = [
-            item for item in ordered
-            if item.get("Finalizada") in (False, 0, None)
-            and _normalize(str(item.get("Estado") or "")).strip() not in {"completada", "finalizada"}
-        ]
-
-    if _looks_like_ranked_listing_query(question_text):
-        ordered = sorted(
-            ordered,
-            key=lambda item: (
-                parse_decimal(item.get("ImporteContratado")) or 0.0,
-                parse_decimal(item.get("Cartera2026")) or 0.0,
-                parse_decimal(item.get("Pendiente2026")) or 0.0,
-            ),
-            reverse=True,
-        )
-    elif _looks_like_recent_listing_query(question_text):
-        ordered = sorted(
-            ordered,
-            key=lambda item: item.get("UpdatedDate") or item.get("CreatedDate") or datetime.min,
-            reverse=True,
-        )
-
-    return ordered
+    return _sort_produccion_listing_matches_impl(
+        matches,
+        question_text=question_text,
+        normalize=_normalize,
+        parse_decimal=parse_decimal,
+    )
 
 
 def _infer_source_module_from_history(history: List[Dict[str, Any]], fallback: str) -> str:
