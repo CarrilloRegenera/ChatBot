@@ -315,7 +315,7 @@ def _ensure_index_schema_for_search() -> bool:
 
 
 def _file_hash(content: bytes) -> str:
-    return hashlib.md5(content).hexdigest()
+    return hashlib.md5(content, usedforsecurity=False).hexdigest()
 
 
 def _indexed_hash(content_hash: str) -> str:
@@ -323,12 +323,12 @@ def _indexed_hash(content_hash: str) -> str:
 
 
 def _document_id(source_path: str) -> str:
-    return hashlib.md5(source_path.encode("utf-8")).hexdigest()
+    return hashlib.md5(source_path.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _chunk_id(source_path: str, page_number: int, chunk_number: int) -> str:
     raw = f"{source_path}:{page_number}:{chunk_number}"
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+    return hashlib.md5(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _extract_page_text(page) -> str:

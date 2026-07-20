@@ -4,7 +4,7 @@ from typing import Callable, Dict, Iterable, List
 
 
 def file_hash(filepath: str) -> str:
-    digest = hashlib.md5()
+    digest = hashlib.md5(usedforsecurity=False)
     with open(filepath, "rb") as fh:
         for block in iter(lambda: fh.read(8192), b""):
             digest.update(block)

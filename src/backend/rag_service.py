@@ -676,7 +676,8 @@ def _encode_query(text: str) -> List[float]:
 
 _model_tag = RERANK_MODEL.split("/")[-1].lower().replace("-", "")
 _prefix_tag = hashlib.md5(
-    f"{EMBEDDING_QUERY_PREFIX}|{EMBEDDING_PASSAGE_PREFIX}".encode("utf-8")
+    f"{EMBEDDING_QUERY_PREFIX}|{EMBEDDING_PASSAGE_PREFIX}".encode("utf-8"),
+    usedforsecurity=False,
 ).hexdigest()[:8]
 
 
