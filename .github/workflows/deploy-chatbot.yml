@@ -182,8 +182,8 @@ jobs:
             --build-arg "RERANK_MODEL=$env:RERANK_MODEL" `
             --build-arg "RERANK_MODEL_REVISION=$env:RERANK_MODEL_REVISION" `
             --build-arg "RAG_INDEX_VERSION=$env:RAG_INDEX_VERSION" `
-            --build-arg "HF_TOKEN=$env:HF_TOKEN" `
-            --build-arg "HUGGINGFACE_HUB_TOKEN=$env:HUGGINGFACE_HUB_TOKEN" `
+            --secret-build-arg "HF_TOKEN=$env:HF_TOKEN" `
+            --secret-build-arg "HUGGINGFACE_HUB_TOKEN=$env:HUGGINGFACE_HUB_TOKEN" `
             --file src/backend/Dockerfile `
             src
 
