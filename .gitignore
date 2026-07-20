@@ -13,6 +13,7 @@
 # Python cache artifacts
 __pycache__/
 *.py[cod]
+.ruff_cache/
 
 # Local environment config
 src/backend/.env
