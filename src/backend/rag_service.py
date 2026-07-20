@@ -4,10 +4,7 @@ import json
 import logging
 import os
 import re
-import threading
-import time
 import unicodedata
-from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
@@ -63,6 +60,7 @@ from rag_query_helpers import (
     extract_reference_terms as _extract_reference_terms_impl,
     extract_topic_terms as _extract_topic_terms_impl,
 )
+from rag_query_cache import QueryCache
 from rag_scoring_service import (
     bm25_score as _bm25_score_impl,
     document_layer_boost as _document_layer_boost_impl,
@@ -475,94 +473,11 @@ _QUERY_CACHE_MAX = int(os.getenv("RAG_QUERY_CACHE_MAX", "64"))
 _QUERY_CACHE_TTL = float(os.getenv("RAG_QUERY_CACHE_TTL", "300"))  # 5 min
 
 
-class _QueryCache:
-    """Cache LRU thread-safe con TTL por entrada."""
-
-    def __init__(self, max_size: int = _QUERY_CACHE_MAX, ttl: float = _QUERY_CACHE_TTL):
-        self._cache: OrderedDict[str, Tuple[float, object]] = OrderedDict()
-        self._max_size = max_size
-        self._ttl = ttl
-        self._lock = threading.Lock()
-
-    def _key(
-        self,
-        question: str,
-        n_results: int,
-        domain: str = "",
-        hint_domains: List[str] | None = None,
-        hint_document_variants: List[str] | None = None,
-        hint_article_refs: List[str] | None = None,
-        hint_it_section_refs: List[str] | None = None,
-    ) -> str:
-        normalized = _normalize_text(question.strip())
-        hints = ",".join(sorted(hint_domains)) if hint_domains else ""
-        variant_hints = ",".join(sorted(hint_document_variants)) if hint_document_variants else ""
-        article_hints = ",".join(sorted(hint_article_refs)) if hint_article_refs else ""
-        it_hints = ",".join(sorted(hint_it_section_refs)) if hint_it_section_refs else ""
-        return f"{normalized}::{n_results}::{_normalize_text(domain)}::{hints}::{variant_hints}::{article_hints}::{it_hints}"
-
-    def get(
-        self,
-        question: str,
-        n_results: int,
-        domain: str = "",
-        hint_domains: List[str] | None = None,
-        hint_document_variants: List[str] | None = None,
-        hint_article_refs: List[str] | None = None,
-        hint_it_section_refs: List[str] | None = None,
-    ):
-        key = self._key(
-            question,
-            n_results,
-            domain,
-            hint_domains,
-            hint_document_variants,
-            hint_article_refs,
-            hint_it_section_refs,
-        )
-        with self._lock:
-            entry = self._cache.get(key)
-            if entry is None:
-                return None
-            ts, value = entry
-            if time.monotonic() - ts > self._ttl:
-                self._cache.pop(key, None)
-                return None
-            self._cache.move_to_end(key)
-            return value
-
-    def put(
-        self,
-        question: str,
-        n_results: int,
-        value: object,
-        domain: str = "",
-        hint_domains: List[str] | None = None,
-        hint_document_variants: List[str] | None = None,
-        hint_article_refs: List[str] | None = None,
-        hint_it_section_refs: List[str] | None = None,
-    ) -> None:
-        key = self._key(
-            question,
-            n_results,
-            domain,
-            hint_domains,
-            hint_document_variants,
-            hint_article_refs,
-            hint_it_section_refs,
-        )
-        with self._lock:
-            self._cache[key] = (time.monotonic(), value)
-            self._cache.move_to_end(key)
-            while len(self._cache) > self._max_size:
-                self._cache.popitem(last=False)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._cache.clear()
-
-
-_query_cache = _QueryCache()
+_query_cache = QueryCache(
+    normalize_text=_normalize_text_impl,
+    max_size=_QUERY_CACHE_MAX,
+    ttl=_QUERY_CACHE_TTL,
+)
 
 
 def _load_sentence_transformer(local_files_only: bool) -> SentenceTransformer:
