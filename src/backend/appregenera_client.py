@@ -22,8 +22,18 @@ def _build_headers(user_token: str | None = None) -> dict[str, str]:
     return headers
 
 
+def _build_url(path: str) -> str:
+    base_url = APPREGENERA_API_BASE_URL.rstrip("/")
+    parsed = parse.urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise AppRegeneraClientError("APPREGENERA_API_BASE_URL debe usar HTTP o HTTPS")
+    if not path.startswith("/"):
+        raise AppRegeneraClientError("La ruta de AppRegenera debe ser relativa a la API")
+    return f"{base_url}{path}"
+
+
 def get_json(path: str, *, params: dict[str, Any] | None = None, user_token: str | None = None) -> Any:
-    url = f"{APPREGENERA_API_BASE_URL}{path}"
+    url = _build_url(path)
     if params:
         clean_params = {key: value for key, value in params.items() if value is not None and value != ""}
         if clean_params:
@@ -34,7 +44,7 @@ def get_json(path: str, *, params: dict[str, Any] | None = None, user_token: str
 
 
 def post_json(path: str, payload: dict[str, Any], *, user_token: str | None = None) -> Any:
-    url = f"{APPREGENERA_API_BASE_URL}{path}"
+    url = _build_url(path)
     data = json.dumps(payload).encode("utf-8")
     headers = _build_headers(user_token)
     headers["Content-Type"] = "application/json"
@@ -44,7 +54,8 @@ def post_json(path: str, payload: dict[str, Any], *, user_token: str | None = No
 
 def _execute(req: request.Request) -> Any:
     try:
-        with request.urlopen(req, timeout=APPREGENERA_TIMEOUT_SECS) as response:
+        # The request URL is built by _build_url, which only accepts HTTP(S) endpoints.
+        with request.urlopen(req, timeout=APPREGENERA_TIMEOUT_SECS) as response:  # nosec B310
             raw = response.read().decode("utf-8")
             return json.loads(raw) if raw else None
     except error.HTTPError as exc:
