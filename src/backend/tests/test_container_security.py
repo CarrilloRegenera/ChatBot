@@ -18,3 +18,12 @@ def test_deployment_uses_secret_build_arguments_for_hugging_face_tokens():
     assert '--secret-build-arg "HUGGINGFACE_HUB_TOKEN=$env:HUGGINGFACE_HUB_TOKEN"' in workflow
     assert '--build-arg "HF_TOKEN=$env:HF_TOKEN"' not in workflow
     assert '--build-arg "HUGGINGFACE_HUB_TOKEN=$env:HUGGINGFACE_HUB_TOKEN"' not in workflow
+
+
+def test_deployment_requires_a_successful_validation_check():
+    workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "deploy-chatbot.yml").read_text(encoding="utf-8")
+
+    assert "checks: read" in workflow
+    assert "name: Require successful validation" in workflow
+    assert '$_.name -eq "validate-backend"' in workflow
+    assert 'conclusion -ne "success"' in workflow
