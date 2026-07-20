@@ -687,7 +687,7 @@ def _rag_index_version_tag(value: str) -> str:
 _index_version_tag = _rag_index_version_tag(RAG_INDEX_VERSION)
 _EF_VERSION = f"{_model_tag}-v2-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}-i{_index_version_tag}"
 
-_EMBEDDING_CACHE_FILE = Path(CHROMA_DB_PATH) / "_embedding_cache.pkl"
+_EMBEDDING_CACHE_FILE = Path(CHROMA_DB_PATH) / "_embedding_cache.json"
 _embedding_cache = EmbeddingCache(
     _EMBEDDING_CACHE_FILE,
     ef_version=_EF_VERSION,

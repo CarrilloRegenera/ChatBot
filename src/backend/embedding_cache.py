@@ -1,7 +1,7 @@
 import hashlib
+import json
 import logging
 import os
-import pickle
 from collections import OrderedDict
 from pathlib import Path
 from typing import Iterable
@@ -53,13 +53,13 @@ class EmbeddingCache:
             self._loaded = True
             return
         try:
-            with self.cache_file.open("rb") as fh:
-                data = pickle.load(fh)
+            with self.cache_file.open(encoding="utf-8") as fh:
+                data = json.load(fh)
             if isinstance(data, dict):
                 ordered = OrderedDict()
                 for key, value in data.items():
-                    if isinstance(key, str) and isinstance(value, list):
-                        ordered[key] = value
+                    if isinstance(key, str) and isinstance(value, list) and all(isinstance(item, (int, float)) for item in value):
+                        ordered[key] = [float(item) for item in value]
                 self._cache = ordered
                 self._prune_if_needed()
                 logger.debug("Cache de embeddings cargada: %d entradas", len(self._cache))
@@ -75,8 +75,8 @@ class EmbeddingCache:
         try:
             self.cache_file.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = self.cache_file.with_suffix(f"{self.cache_file.suffix}.tmp")
-            with tmp_path.open("wb") as fh:
-                pickle.dump(dict(self._cache), fh, protocol=pickle.HIGHEST_PROTOCOL)
+            with tmp_path.open("w", encoding="utf-8") as fh:
+                json.dump(dict(self._cache), fh, separators=(",", ":"))
             os.replace(tmp_path, self.cache_file)
             self._dirty = False
             logger.debug("Cache de embeddings guardada: %d entradas", len(self._cache))
