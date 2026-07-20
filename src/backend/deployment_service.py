@@ -110,7 +110,11 @@ def _github_request(method: str, path: str, payload: dict[str, Any] | None = Non
 
 
 def trigger_full_deploy(*, requested_by_email: str | None, requested_by_name: str | None, branch: str | None = None) -> dict[str, Any]:
-    target_branch = (branch or GITHUB_DEPLOY_BRANCH or "sandbox").strip()
+    configured_branch = (GITHUB_DEPLOY_BRANCH or "sandbox").strip()
+    target_branch = (branch or configured_branch).strip()
+    if target_branch != configured_branch:
+        raise DeploymentConfigurationError(f"Solo se permite desplegar la rama configurada: {configured_branch}")
+
     payload = {
         "ref": target_branch,
         "inputs": {
