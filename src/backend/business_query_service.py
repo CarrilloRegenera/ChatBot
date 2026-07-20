@@ -28,6 +28,13 @@ from business_query_aggregation import (
     detect_count_metric as _detect_count_metric_impl,
     is_count_request as _is_count_request_impl,
 )
+from business_query_client_filters import (
+    apply_client_filter as _apply_client_filter_impl,
+    canonicalize_client_name as _canonicalize_client_name_impl,
+    is_client_contains_query as _is_client_contains_query_impl,
+    is_exact_client_target_query as _is_exact_client_target_query_impl,
+    is_explicit_client_field_filter as _is_explicit_client_field_filter_impl,
+)
 from appregenera_client import AppRegeneraClientError, get_json, post_json
 from appregenera_sql_service import (
     first_non_null,
@@ -1632,54 +1639,19 @@ def _build_source_info_response(parsed: Dict[str, Any], *, module: str, route: s
 
 
 def _is_explicit_client_field_filter(question_text: str) -> bool:
-    return any(
-        phrase in question_text
-        for phrase in (
-            "en su cliente",
-            "en cliente",
-            "cliente contiene",
-            "cliente contenga",
-            "del cliente ",
-            "para el cliente ",
-            "para cliente ",
-        )
-    )
+    return _is_explicit_client_field_filter_impl(question_text)
 
 
 def _is_client_contains_query(question_text: str) -> bool:
-    return _is_explicit_client_field_filter(question_text) and any(
-        token in question_text
-        for token in ("contiene", "contienen", "incluye", "incluyen", "palabra", "texto", "cadena")
-    )
+    return _is_client_contains_query_impl(question_text)
 
 
 def _is_exact_client_target_query(question_text: str) -> bool:
-    normalized = f" {question_text.strip()} "
-    if any(
-        phrase in normalized
-        for phrase in (
-            " del cliente ",
-            " para el cliente ",
-            " para la cliente ",
-            " para cliente ",
-            " cliente es ",
-            " cliente sea ",
-        )
-    ):
-        return True
-    return bool(re.search(r"(?:^|\s)(?:y\s+)?para\s+[a-z][a-z0-9 .&/-]{1,40}\??\s*$", question_text))
+    return _is_exact_client_target_query_impl(question_text)
 
 
 def _canonicalize_client_name(text: str) -> str:
-    canonical = _normalize(text)
-    canonical = canonical.replace(".", " ")
-    canonical = re.sub(
-        r"\b(s a|sa|s l|sl|s l u|slu|s a u|sau|sociedad anonima|sociedad limitada|sociedad limitada unipersonal)\b",
-        " ",
-        canonical,
-    )
-    canonical = re.sub(r"\s+", " ", canonical).strip()
-    return canonical
+    return _canonicalize_client_name_impl(text, normalize=_normalize)
 
 
 def _apply_client_filter(
@@ -1688,35 +1660,12 @@ def _apply_client_filter(
     *,
     exact_client_target: bool,
 ) -> List[Dict[str, Any]]:
-    if not matches:
-        return []
-    needle = _normalize(filter_text)
-    if not needle:
-        return matches
-    if not exact_client_target:
-        return [
-            item
-            for item in matches
-            if needle in _normalize(str(item.get("Cliente") or ""))
-        ]
-
-    canonical_needle = _canonicalize_client_name(filter_text)
-    exact_matches = [
-        item
-        for item in matches
-        if _canonicalize_client_name(str(item.get("Cliente") or "")) == canonical_needle
-    ]
-    if exact_matches:
-        return exact_matches
-
-    return [
-        item
-        for item in matches
-        if canonical_needle and re.search(
-            rf"(?<!\w){re.escape(canonical_needle)}(?!\w)",
-            _canonicalize_client_name(str(item.get("Cliente") or "")),
-        )
-    ]
+    return _apply_client_filter_impl(
+        matches,
+        filter_text,
+        exact_client_target=exact_client_target,
+        normalize=_normalize,
+    )
 
 
 def _looks_like_recent_listing_query(question_text: str) -> bool:
