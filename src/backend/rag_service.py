@@ -63,6 +63,11 @@ from rag_query_helpers import (
     extract_reference_terms as _extract_reference_terms_impl,
     extract_topic_terms as _extract_topic_terms_impl,
 )
+from rag_scoring_service import (
+    bm25_score as _bm25_score_impl,
+    document_layer_boost as _document_layer_boost_impl,
+    domain_exclusion_penalty as _domain_exclusion_penalty_impl,
+)
 from rag_chunking_service import (
     find_chunk_boundary as _find_chunk_boundary_impl,
     split_text as _split_text_impl,
@@ -161,29 +166,18 @@ GENERATORS_TERM_BOOST   = _gt_scoring.get("generators_term_boost", 8)
 GENERATORS_LEXICAL_DOMAIN = _gt_scoring.get("generators_lexical_domain", 10)
 GENERATORS_LEXICAL_TERM   = _gt_scoring.get("generators_lexical_term", 16)
 
-_DOCUMENT_LAYER_BOOSTS = {
-    "normativa_oficial": 8.0,
-    "guia_oficial": 4.0,
-    "manual_fabricante": 0.0,
-    "pendiente": -5.0,
-}
-
-
 def _document_layer_boost(
     layer: str,
     *,
     normative_intent: bool = False,
     procedure_intent: bool = False,
 ) -> float:
-    normalized = _normalize_text(layer or "")
-    if procedure_intent and not normative_intent:
-        return {
-            "normativa_oficial": 0.0,
-            "guia_oficial": 4.0,
-            "manual_fabricante": 6.0,
-            "pendiente": -5.0,
-        }.get(normalized, 0.0)
-    return _DOCUMENT_LAYER_BOOSTS.get(normalized, 0.0)
+    return _document_layer_boost_impl(
+        layer,
+        normalize_text=_normalize_text,
+        normative_intent=normative_intent,
+        procedure_intent=procedure_intent,
+    )
 
 
 def _is_noise_chunk(text: str) -> bool:
@@ -206,24 +200,14 @@ def _decode_chunk_corruption(text: str, source: str = "") -> str:
 
 
 def _bm25_score(query_tokens: set, doc_text: str, avg_doc_len: float, k1: float = 1.5, b: float = 0.75) -> float:
-    doc_norm = _normalize_text(doc_text)
-    doc_tokens_list = doc_norm.split()
-    doc_len = len(doc_tokens_list)
-    if doc_len == 0 or avg_doc_len == 0:
-        return 0.0
-    tf_map: Dict[str, int] = {}
-    for t in doc_tokens_list:
-        tf_map[t] = tf_map.get(t, 0) + 1
-    score = 0.0
-    for qt in query_tokens:
-        qt_norm = _normalize_text(qt)
-        tf = tf_map.get(qt_norm, 0)
-        if tf == 0:
-            continue
-        numerator = tf * (k1 + 1)
-        denominator = tf + k1 * (1 - b + b * (doc_len / avg_doc_len))
-        score += numerator / denominator
-    return score
+    return _bm25_score_impl(
+        query_tokens,
+        doc_text,
+        avg_doc_len,
+        normalize_text=_normalize_text,
+        k1=k1,
+        b=b,
+    )
 
 
 MAX_TOPIC_TOKENS = 6
@@ -376,14 +360,12 @@ DOCUMENT_VARIANT_ORDER_BOOST = int(os.getenv("RAG_DOCUMENT_VARIANT_ORDER_BOOST",
 
 
 def _domain_exclusion_penalty(expected_domains: list, source_domain: str, question_lower: str) -> int:
-    """Extra penalty when source_domain is excluded by a strongly-anchored primary domain."""
-    if not expected_domains or not _DOMAIN_EXCLUSIONS:
-        return 0
-    for rule in _DOMAIN_EXCLUSIONS:
-        if rule["primary"] in expected_domains and rule["excluded"] == source_domain:
-            if any(tok in question_lower for tok in rule.get("condition_tokens", [])):
-                return rule.get("extra_penalty", -20)
-    return 0
+    return _domain_exclusion_penalty_impl(
+        expected_domains,
+        source_domain,
+        question_lower,
+        exclusions=_DOMAIN_EXCLUSIONS,
+    )
 IT_SECTION_BOOST = 20
 ARTICLE_REF_BOOST = int(os.getenv("RAG_ARTICLE_REF_BOOST", "26"))
 LABELED_CONTEXT_PENALTY = 10
