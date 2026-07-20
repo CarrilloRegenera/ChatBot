@@ -18,6 +18,11 @@ def _admin_panel_allowed_name_keys() -> set[str]:
 
 def assert_admin(request: Request) -> None:
     auth_header = (request.headers.get("authorization") or "").strip()
+    admin_key = (request.headers.get("x-admin-key") or "").strip()
+
+    if admin_key and cfg.ADMIN_API_KEY and admin_key == cfg.ADMIN_API_KEY:
+        return
+
     if cfg.ENTRA_ENABLED and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
         try:
@@ -34,9 +39,8 @@ def assert_admin(request: Request) -> None:
             return
         raise HTTPException(status_code=403, detail="Acceso solo para administradores de Entra")
 
-    admin_key = (request.headers.get("x-admin-key") or "").strip()
-    if admin_key and cfg.ADMIN_API_KEY and admin_key == cfg.ADMIN_API_KEY:
-        return
+    if cfg.ENTRA_ENABLED:
+        raise HTTPException(status_code=401, detail="Authorization Bearer requerida")
 
     user_name = (request.headers.get("x-user-name") or "").strip().lower()
     user_email = (request.headers.get("x-user-email") or "").strip().lower()
