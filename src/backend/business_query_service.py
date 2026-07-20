@@ -11,6 +11,18 @@ from business_query_result_builders import (
     build_source_info_response as _build_source_info_response_impl,
     summarize_cierre as _summarize_cierre_impl,
 )
+from business_query_parsing import (
+    can_inherit_reference_from_context as _can_inherit_reference_from_context_impl,
+    extract_cuatrimestre as _extract_cuatrimestre_impl,
+    extract_explicit_years as _extract_explicit_years_impl,
+    extract_month as _extract_month_impl,
+    extract_reference as _extract_reference_impl,
+    is_per_month_request as _is_per_month_request_impl,
+    is_per_year_request as _is_per_year_request_impl,
+    looks_like_follow_up as _looks_like_follow_up_impl,
+    mentions_previous_reference as _mentions_previous_reference_impl,
+    strip_reference_for_year_detection as _strip_reference_for_year_detection_impl,
+)
 from appregenera_client import AppRegeneraClientError, get_json, post_json
 from appregenera_sql_service import (
     first_non_null,
@@ -1248,7 +1260,7 @@ def _looks_like_listing_refinement(text: str, *, module: str) -> bool:
 
 
 def _looks_like_follow_up(text: str) -> bool:
-    return any(text.startswith(prefix) for prefix in _FOLLOW_UP_PREFIXES) or len(text.split()) <= 4
+    return _looks_like_follow_up_impl(text, follow_up_prefixes=_FOLLOW_UP_PREFIXES)
 
 
 def _resolve_reference(original_question: str, normalized: str, history: List[Dict[str, Any]]) -> str | None:
@@ -1273,103 +1285,23 @@ def _resolve_reference(original_question: str, normalized: str, history: List[Di
 
 
 def _mentions_previous_reference(text: str) -> bool:
-    return any(
-        marker in text
-        for marker in (
-            " este proyecto",
-            " esta licitacion",
-            " este estudio",
-            " esta obra",
-            "este proyecto ",
-            "esta licitacion ",
-            "esta obra ",
-            " su ",
-            " sus ",
-            "este ",
-            "esta ",
-        )
-    )
+    return _mentions_previous_reference_impl(text)
 
 
 def _can_inherit_reference_from_context(text: str) -> bool:
-    if any(
-        token in text
-        for token in (
-            "top ",
-            "ranking",
-            "con mas",
-            "con mayor",
-            "media de ",
-            "promedio de ",
-            "numero de ",
-            "cuantas ",
-            "cuantos ",
-            "total de ",
-            "suma de ",
-        )
-    ):
-        return False
-    if any(token in text for token in ("licitaciones", "obras", "proyectos", "estudios", "cierres")):
-        return False
-    return any(
-        token in text
-        for token in (
-            " importe ",
-            " importe contratado",
-            " produccion",
-            " backlog",
-            " pipeline",
-            " cliente",
-            " concurso",
-            " fecha ",
-            " tipologia",
-            " tipo ",
-            " n oferta",
-            " numero oferta",
-            " numero de oferta",
-            " estado",
-            " apertura",
-            " adjudicacion",
-            " presentacion",
-            " tiene ",
-        )
-    )
+    return _can_inherit_reference_from_context_impl(text)
 
 
 def _extract_reference(original_question: str, normalized: str) -> str | None:
-    reference_patterns = (
-        r"\b(est[-\s]?\d{1,4}[-\s]?20\d{2})\b",
-        r"\b([a-z]{2,6}-\d{1,5}-20\d{2})\b",
-        r"\b(?:proyecto|obra|licitacion|licitacion|oferta|estudio)\s+([a-z0-9-]*\d[a-z0-9-]{3,29})\b",
-    )
-    for pattern in reference_patterns:
-        match = re.search(pattern, normalized, flags=re.IGNORECASE)
-        if match:
-            return match.group(1).upper().replace(" ", "-")
-
-    numeric_tokens = re.findall(r"\b\d{4,8}\b", normalized)
-    non_year_tokens = [token for token in numeric_tokens if not re.fullmatch(r"20\d{2}", token)]
-    if non_year_tokens:
-        return non_year_tokens[0]
-
-    quoted = re.search(r'"([^"]+)"|\'([^\']+)\'', original_question)
-    if quoted:
-        value = (quoted.group(1) or quoted.group(2) or "").strip()
-        return value or None
-    return None
+    return _extract_reference_impl(original_question, normalized)
 
 
 def _strip_reference_for_year_detection(normalized: str, reference: str | None) -> str:
-    if not reference:
-        return normalized
-    ref = _normalize(reference).replace(" ", "-")
-    return re.sub(rf"\b{re.escape(ref)}\b", " ", normalized)
+    return _strip_reference_for_year_detection_impl(normalized, reference, normalize=_normalize)
 
 
 def _extract_explicit_years(text: str, reference: str | None) -> List[int]:
-    text_without_reference = _strip_reference_for_year_detection(text, reference)
-    years = [int(match) for match in re.findall(r"\b(20\d{2})\b", text_without_reference)]
-    return list(dict.fromkeys(years))
+    return _extract_explicit_years_impl(text, reference, normalize=_normalize)
 
 
 def _inherit_follow_up_fields(
@@ -1476,30 +1408,19 @@ def _narrow_fields_to_period(
 
 
 def _extract_cuatrimestre(text: str) -> int | None:
-    patterns = (
-        (r"\b(c1|primer cuatrimestre|1er cuatrimestre|cuatrimestre 1|cuatrimestre uno)\b", 1),
-        (r"\b(c2|segundo cuatrimestre|2do cuatrimestre|cuatrimestre 2|cuatrimestre dos)\b", 2),
-        (r"\b(c3|tercer cuatrimestre|3er cuatrimestre|cuatrimestre 3|cuatrimestre tres)\b", 3),
-    )
-    for pattern, value in patterns:
-        if re.search(pattern, text):
-            return value
-    return None
+    return _extract_cuatrimestre_impl(text)
 
 
 def _extract_month(text: str) -> int | None:
-    for name, month in MONTH_ALIASES.items():
-        if re.search(rf"\b{name}\b", text):
-            return month
-    return None
+    return _extract_month_impl(text, month_aliases=MONTH_ALIASES)
 
 
 def _is_per_month_request(text: str) -> bool:
-    return any(token in text for token in ("cada mes", "por mes", "mes a mes", "en cada mes", "todos los meses"))
+    return _is_per_month_request_impl(text)
 
 
 def _is_per_year_request(text: str) -> bool:
-    return any(token in text for token in ("cada ano", "por ano", "anual", "en cada ano", "todos los anos"))
+    return _is_per_year_request_impl(text)
 
 
 def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str], year: int | None, reference: str | None) -> Dict[str, Any] | None:
