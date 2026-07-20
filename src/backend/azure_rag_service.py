@@ -44,10 +44,10 @@ from config import (
     STOPWORDS,
     TOP_K_RESULTS,
 )
+from rag_scoring_service import bm25_score, document_layer_boost
 from rag_service import (
     OCR_MIN_TEXT_CHARS_PER_PAGE,
     RERANK_MODEL,
-    _bm25_score,
     _clean_question,
     _clean_structural_chunk_score,
     _embedding_fn,
@@ -60,7 +60,6 @@ from rag_service import (
     _extract_text_blocks,
     _chunk_profile_metadata,
     _document_profile_metadata,
-    _document_layer_boost,
     _is_normative_intent_query,
     _normalize_text,
     _ocr_page_text,
@@ -640,8 +639,9 @@ def _domain_boost(
             boost += _DOMAIN_MATCH_BOOST if item_domain in expected_domains else _DOMAIN_MISMATCH_PENALTY
     layer = _normalize_text(str(item.get("document_layer", "") or ""))
     if layer:
-        boost += _document_layer_boost(
+        boost += document_layer_boost(
             layer,
+            normalize_text=_normalize_text,
             normative_intent=normative_intent,
             procedure_intent=procedure_intent,
         )
@@ -815,7 +815,12 @@ def search_documents_detailed_azure(
         sem_scores = cos_sim(query_emb, candidate_embs)[0].tolist()
         scored = []
         for i, item in enumerate(candidates):
-            bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
+            bm25 = bm25_score(
+                query_tokens,
+                candidate_texts[i],
+                avg_doc_len,
+                normalize_text=_normalize_text,
+            )
             hint_boost = item.get("_hint_boost", 0.0)
             domain_boost = _domain_boost(
                 item,
@@ -837,7 +842,12 @@ def search_documents_detailed_azure(
     elif candidates:
         scored = []
         for i, item in enumerate(candidates):
-            bm25 = _bm25_score(query_tokens, candidate_texts[i], avg_doc_len)
+            bm25 = bm25_score(
+                query_tokens,
+                candidate_texts[i],
+                avg_doc_len,
+                normalize_text=_normalize_text,
+            )
             hint_boost = item.get("_hint_boost", 0.0)
             domain_boost = _domain_boost(
                 item,
