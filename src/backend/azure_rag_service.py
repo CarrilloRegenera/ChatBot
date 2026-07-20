@@ -45,6 +45,7 @@ from config import (
     TOP_K_RESULTS,
 )
 from rag_scoring_service import bm25_score, document_layer_boost
+from rag_text_utils import normalize_text as _normalize_text, tokenize as _tokenize
 from rag_service import (
     OCR_MIN_TEXT_CHARS_PER_PAGE,
     RERANK_MODEL,
@@ -61,7 +62,6 @@ from rag_service import (
     _chunk_profile_metadata,
     _document_profile_metadata,
     _is_normative_intent_query,
-    _normalize_text,
     _ocr_page_text,
     _page_structure_context,
     _extract_article_refs,
@@ -79,7 +79,6 @@ from rag_service import (
     _structured_search_terms,
     _inherit_active_structure,
     _st_model,
-    _tokenize,
     _looks_like_table_block,
 )
 

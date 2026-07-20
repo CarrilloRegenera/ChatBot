@@ -68,6 +68,7 @@ from rag_scoring_service import (
     document_layer_boost as _document_layer_boost_impl,
     domain_exclusion_penalty as _domain_exclusion_penalty_impl,
 )
+from rag_text_utils import normalize_text as _normalize_text_impl, tokenize as _tokenize_impl
 from rag_chunking_service import (
     find_chunk_boundary as _find_chunk_boundary_impl,
     split_text as _split_text_impl,
@@ -764,12 +765,11 @@ def _split_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
 
 
 def _tokenize(text: str) -> List[str]:
-    return re.findall(r"[^\W\d_]{4,}", text.lower(), flags=re.UNICODE)
+    return _tokenize_impl(text)
 
 
 def _normalize_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFD", text)
-    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn").lower()
+    return _normalize_text_impl(text)
 
 
 def _clean_line(line: str) -> str:
