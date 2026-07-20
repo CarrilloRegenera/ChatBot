@@ -13,9 +13,11 @@ from business_query_result_builders import (
 )
 from business_query_parsing import (
     can_inherit_reference_from_context as _can_inherit_reference_from_context_impl,
+    extract_area as _extract_area_impl,
     extract_cuatrimestre as _extract_cuatrimestre_impl,
     extract_explicit_years as _extract_explicit_years_impl,
     extract_month as _extract_month_impl,
+    extract_periodo as _extract_periodo_impl,
     extract_reference as _extract_reference_impl,
     is_per_month_request as _is_per_month_request_impl,
     is_per_year_request as _is_per_year_request_impl,
@@ -1545,21 +1547,11 @@ def _detect_count_metric(text: str, module: str) -> str:
 
 
 def _extract_periodo(text: str) -> str | None:
-    match = re.search(r"\b(20\d{2}-\d{2})\b", text)
-    return match.group(1) if match else None
+    return _extract_periodo_impl(text)
 
 
 def _extract_area(text: str) -> str | None:
-    area_patterns = {
-        "OI": (r"\bo\s*i\b", r"\boi\b"),
-        "MAN": (r"\bman\b",),
-        "MT": (r"\bmt\b",),
-        "BT": (r"\bbt\b",),
-    }
-    for area, patterns in area_patterns.items():
-        if any(re.search(pattern, text) for pattern in patterns):
-            return area
-    return None
+    return _extract_area_impl(text)
 
 
 def _extract_filter_text(original_question: str, normalized: str) -> str | None:

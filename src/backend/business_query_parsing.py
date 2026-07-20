@@ -131,3 +131,21 @@ def is_per_month_request(text: str) -> bool:
 
 def is_per_year_request(text: str) -> bool:
     return any(token in text for token in ("cada ano", "por ano", "anual", "en cada ano", "todos los anos"))
+
+
+def extract_periodo(text: str) -> str | None:
+    match = re.search(r"\b(20\d{2}-\d{2})\b", text)
+    return match.group(1) if match else None
+
+
+def extract_area(text: str) -> str | None:
+    area_patterns = {
+        "OI": (r"\bo\s*i\b", r"\boi\b"),
+        "MAN": (r"\bman\b",),
+        "MT": (r"\bmt\b",),
+        "BT": (r"\bbt\b",),
+    }
+    for area, patterns in area_patterns.items():
+        if any(re.search(pattern, text) for pattern in patterns):
+            return area
+    return None

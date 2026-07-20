@@ -5,9 +5,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from business_query_parsing import (
+    extract_area,
     extract_cuatrimestre,
     extract_explicit_years,
     extract_month,
+    extract_periodo,
     extract_reference,
     looks_like_follow_up,
 )
@@ -24,6 +26,11 @@ def test_extract_explicit_years_does_not_treat_reference_year_as_a_query_year():
 def test_extract_periods_detects_month_and_cuatrimestre():
     assert extract_month("produccion de marzo", month_aliases={"marzo": 3}) == 3
     assert extract_cuatrimestre("segundo cuatrimestre") == 2
+
+
+def test_extract_periodo_and_area():
+    assert extract_periodo("importe de 2026-04") == "2026-04"
+    assert extract_area("proyectos oi") == "OI"
 
 
 def test_short_question_is_a_follow_up():
