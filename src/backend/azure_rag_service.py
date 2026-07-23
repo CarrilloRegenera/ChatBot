@@ -3,6 +3,7 @@ import logging
 import unicodedata
 import re
 import threading
+import time
 from typing import Callable, Dict, List, Tuple
 
 import fitz
@@ -89,6 +90,10 @@ _SEMANTIC_CONFIG_NAME = "semantic-config"
 logger = logging.getLogger(__name__)
 _index_schema_lock = threading.Lock()
 _index_schema_checked = False
+_azure_health_lock = threading.Lock()
+_azure_health_cached_at = 0.0
+_azure_health_cached_snapshot: Dict[str, object] | None = None
+_AZURE_HEALTH_CACHE_TTL_SECONDS = 30.0
 
 
 def _compose_search_text(question: str, clean_question: str, domains: List[str]) -> str:
@@ -166,6 +171,15 @@ def azure_index_health() -> Dict[str, object]:
     than merely reporting that the web process is running.  It does not expose
     endpoint details, credentials, or service error bodies to callers.
     """
+    global _azure_health_cached_at, _azure_health_cached_snapshot
+    now = time.monotonic()
+    with _azure_health_lock:
+        if (
+            _azure_health_cached_snapshot is not None
+            and now - _azure_health_cached_at < _AZURE_HEALTH_CACHE_TTL_SECONDS
+        ):
+            return dict(_azure_health_cached_snapshot)
+
     if not AZURE_SEARCH_ENDPOINT or not AZURE_SEARCH_KEY or not AZURE_SEARCH_INDEX_NAME:
         return {"rag_ready": False, "rag_index_status": "config_missing", "rag_indexed_chunks": None}
 
@@ -190,14 +204,19 @@ def azure_index_health() -> Dict[str, object]:
         )
         results = _search_client().search(search_text="*", top=0, include_total_count=True)
         chunk_count = int(results.get_count() or 0)
-        return {
+        snapshot = {
             "rag_ready": schema_valid and chunk_count > 0,
             "rag_index_status": "ready" if schema_valid and chunk_count > 0 else ("empty" if schema_valid else "schema_mismatch"),
             "rag_indexed_chunks": chunk_count,
         }
     except Exception:
         logger.exception("Azure Search health check failed for configured index")
-        return {"rag_ready": False, "rag_index_status": "unavailable", "rag_indexed_chunks": None}
+        snapshot = {"rag_ready": False, "rag_index_status": "unavailable", "rag_indexed_chunks": None}
+
+    with _azure_health_lock:
+        _azure_health_cached_at = time.monotonic()
+        _azure_health_cached_snapshot = snapshot
+    return dict(snapshot)
 
 
 def _container_client():

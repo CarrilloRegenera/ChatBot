@@ -216,6 +216,34 @@ def test_azure_index_health_reports_ready_index(monkeypatch):
     }
 
 
+def test_azure_index_health_reuses_short_lived_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(azure_rag_service, "_azure_health_cached_snapshot", None)
+    monkeypatch.setattr(azure_rag_service, "_azure_health_cached_at", 0.0)
+    monkeypatch.setattr(azure_rag_service, "AZURE_SEARCH_ENDPOINT", "https://search.example")
+    monkeypatch.setattr(azure_rag_service, "AZURE_SEARCH_KEY", "test-key")
+    monkeypatch.setattr(
+        azure_rag_service,
+        "SearchIndexClient",
+        lambda **_kwargs: SimpleNamespace(
+            get_index=lambda _name: SimpleNamespace(
+                fields=[SimpleNamespace(name=azure_rag_service.AZURE_SEARCH_VECTOR_FIELD, vector_search_dimensions=384, vector_search_profile_name="hnsw-profile")],
+                vector_search=SimpleNamespace(profiles=[SimpleNamespace(name="hnsw-profile")]),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        azure_rag_service,
+        "_search_client",
+        lambda: SimpleNamespace(search=lambda **_kwargs: calls.append(1) or SimpleNamespace(get_count=lambda: 1)),
+    )
+
+    azure_index_health()
+    azure_index_health()
+
+    assert calls == [1]
+
+
 def test_delete_source_chunks_preserves_uploaded_chunk_ids():
     class FakeClient:
         def __init__(self):
