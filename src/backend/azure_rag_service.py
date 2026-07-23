@@ -38,6 +38,8 @@ from config import (
     BLOB_CONTAINER_NAME,
     BLOB_PREFIX,
     BLOB_STORAGE_CONNECTION_STRING,
+    EMBEDDING_PASSAGE_PREFIX,
+    EMBEDDING_QUERY_PREFIX,
     ENABLE_RERANK,
     MAX_CHUNKS_PER_SOURCE,
     RERANK_BM25_WEIGHT,
@@ -50,6 +52,7 @@ from rag_text_utils import normalize_text as _normalize_text, tokenize as _token
 from rag_service import (
     OCR_MIN_TEXT_CHARS_PER_PAGE,
     RERANK_MODEL,
+    _apply_embedding_prefix,
     _clean_question,
     _clean_structural_chunk_score,
     _embedding_fn,
@@ -891,8 +894,15 @@ def search_documents_detailed_azure(
     domain_set = set(domains) if domains else set()
 
     if ENABLE_RERANK and _st_model is not None and candidates:
-        query_emb = _st_model.encode(clean_question, convert_to_tensor=True)
-        candidate_embs = _st_model.encode(candidate_texts, convert_to_tensor=True)
+        # Keep the E5 query/passage instructions aligned with indexing.
+        query_emb = _st_model.encode(
+            _apply_embedding_prefix(EMBEDDING_QUERY_PREFIX, clean_question),
+            convert_to_tensor=True,
+        )
+        candidate_embs = _st_model.encode(
+            [_apply_embedding_prefix(EMBEDDING_PASSAGE_PREFIX, text) for text in candidate_texts],
+            convert_to_tensor=True,
+        )
         sem_scores = cos_sim(query_emb, candidate_embs)[0].tolist()
         scored = []
         for i, item in enumerate(candidates):

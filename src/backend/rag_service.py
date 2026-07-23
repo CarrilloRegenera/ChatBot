@@ -3854,9 +3854,17 @@ def _search_documents_detailed_chroma(
     query_tokens_for_bm25 = question_keywords or question_tokens
 
     if rerank_model:
-        query_embedding = rerank_model.encode(clean_question, convert_to_tensor=True)
+        # E5 is instruction-tuned: use the same query/passage representation
+        # as indexing so rerank scores remain semantically comparable.
+        query_embedding = rerank_model.encode(
+            _apply_embedding_prefix(EMBEDDING_QUERY_PREFIX, clean_question),
+            convert_to_tensor=True,
+        )
         candidate_texts = [item[2] for item in ranked_items]
-        candidate_embeddings = rerank_model.encode(candidate_texts, convert_to_tensor=True)
+        candidate_embeddings = rerank_model.encode(
+            [_apply_embedding_prefix(EMBEDDING_PASSAGE_PREFIX, text) for text in candidate_texts],
+            convert_to_tensor=True,
+        )
         similarities = cos_sim(query_embedding, candidate_embeddings)[0].tolist()
 
         reranked = []

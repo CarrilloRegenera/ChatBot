@@ -13,6 +13,7 @@ from azure_rag_service import (
 )
 from rag_service import (
     _document_layer_boost,
+    _apply_embedding_prefix,
     _domain_exclusion_penalty,
     _extract_circuit_definitions,
     _extract_requested_abbreviation_definitions,
@@ -62,6 +63,11 @@ def test_layer_boost_values_match_chroma():
     assert _LAYER_BOOSTS["guia_oficial"] == 4.0
     assert _LAYER_BOOSTS["manual_fabricante"] == 0.0
     assert _LAYER_BOOSTS["pendiente"] == -5.0
+
+
+def test_e5_prefix_contract_matches_dense_retrieval():
+    assert _apply_embedding_prefix("query:", "consulta tecnica") == "query: consulta tecnica"
+    assert _apply_embedding_prefix("passage:", "texto indexado") == "passage: texto indexado"
 
 
 def test_procedure_intent_prioritizes_practical_documents():
