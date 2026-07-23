@@ -167,6 +167,14 @@ def _rag_health_snapshot() -> dict:
         "rag_index_status": "not_checked",
         "rag_indexed_chunks": None,
     }
+    if RAG_BACKEND == "azure_search":
+        # Keep Azure validation read-only and avoid leaking provider errors in a
+        # public health response.  The detailed failure remains in application logs.
+        from azure_rag_service import azure_index_health
+
+        snapshot.update(azure_index_health())
+        return snapshot
+
     if RAG_BACKEND != "chroma":
         return snapshot
 

@@ -159,6 +159,47 @@ def _search_client() -> SearchClient:
     )
 
 
+def azure_index_health() -> Dict[str, object]:
+    """Return a read-only health snapshot for the configured Azure Search index.
+
+    This deliberately validates the index selected by application settings rather
+    than merely reporting that the web process is running.  It does not expose
+    endpoint details, credentials, or service error bodies to callers.
+    """
+    if not AZURE_SEARCH_ENDPOINT or not AZURE_SEARCH_KEY or not AZURE_SEARCH_INDEX_NAME:
+        return {"rag_ready": False, "rag_index_status": "config_missing", "rag_indexed_chunks": None}
+
+    try:
+        index_client = SearchIndexClient(
+            endpoint=AZURE_SEARCH_ENDPOINT,
+            credential=AzureKeyCredential(AZURE_SEARCH_KEY),
+        )
+        index = index_client.get_index(AZURE_SEARCH_INDEX_NAME)
+        vector_field = next((field for field in index.fields if field.name == AZURE_SEARCH_VECTOR_FIELD), None)
+        vector_dimensions = getattr(vector_field, "vector_search_dimensions", None)
+        profile_name = getattr(vector_field, "vector_search_profile_name", None)
+        profile_names = {
+            profile.name
+            for profile in ((getattr(index, "vector_search", None) and index.vector_search.profiles) or [])
+        }
+        schema_valid = bool(
+            vector_field
+            and vector_dimensions == _VECTOR_DIMS
+            and profile_name
+            and profile_name in profile_names
+        )
+        results = _search_client().search(search_text="*", top=0, include_total_count=True)
+        chunk_count = int(results.get_count() or 0)
+        return {
+            "rag_ready": schema_valid and chunk_count > 0,
+            "rag_index_status": "ready" if schema_valid and chunk_count > 0 else ("empty" if schema_valid else "schema_mismatch"),
+            "rag_indexed_chunks": chunk_count,
+        }
+    except Exception:
+        logger.exception("Azure Search health check failed for configured index")
+        return {"rag_ready": False, "rag_index_status": "unavailable", "rag_indexed_chunks": None}
+
+
 def _container_client():
     blob_service = BlobServiceClient.from_connection_string(BLOB_STORAGE_CONNECTION_STRING)
     return blob_service.get_container_client(BLOB_CONTAINER_NAME)

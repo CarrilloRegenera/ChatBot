@@ -12,6 +12,7 @@ from azure_rag_service import (
     _compose_search_text,
     _iter_pdf_chunks,
     _search_all_indexed_sources,
+    azure_index_health,
 )
 from rag_service import _chunk_profile_metadata, _document_profile_metadata
 
@@ -178,3 +179,37 @@ def test_iter_pdf_chunks_refreshes_progress_while_processing_pages(monkeypatch):
     assert all(update["current_file"].endswith("EMSA Guidance on SSE_PART1.pdf") for update in progress_updates)
     assert docs[0]["section"] == "Seccion 1"
     assert docs[1]["section"] == "Seccion 2"
+
+
+def test_azure_index_health_reports_ready_index(monkeypatch):
+    vector_field = SimpleNamespace(
+        name=azure_rag_service.AZURE_SEARCH_VECTOR_FIELD,
+        vector_search_dimensions=384,
+        vector_search_profile_name="hnsw-profile",
+    )
+    index = SimpleNamespace(
+        fields=[vector_field],
+        vector_search=SimpleNamespace(profiles=[SimpleNamespace(name="hnsw-profile")]),
+    )
+
+    class FakeIndexClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def get_index(self, _name):
+            return index
+
+    class FakeResults:
+        def get_count(self):
+            return 12
+
+    monkeypatch.setattr(azure_rag_service, "AZURE_SEARCH_ENDPOINT", "https://search.example")
+    monkeypatch.setattr(azure_rag_service, "AZURE_SEARCH_KEY", "test-key")
+    monkeypatch.setattr(azure_rag_service, "SearchIndexClient", FakeIndexClient)
+    monkeypatch.setattr(azure_rag_service, "_search_client", lambda: SimpleNamespace(search=lambda **_kwargs: FakeResults()))
+
+    assert azure_index_health() == {
+        "rag_ready": True,
+        "rag_index_status": "ready",
+        "rag_indexed_chunks": 12,
+    }
