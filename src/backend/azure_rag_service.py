@@ -525,8 +525,20 @@ def _odata_escape(value: str) -> str:
     return value.replace("'", "''")
 
 
-def _delete_source_chunks(client: SearchClient, source_path: str) -> int:
+def _delete_source_chunks(
+    client: SearchClient,
+    source_path: str,
+    *,
+    keep_chunk_ids: set[str] | None = None,
+) -> int:
+    """Delete source chunks, optionally preserving IDs already uploaded.
+
+    During an update, uploading first leaves the previous version queryable if
+    extraction or upload fails.  Stable chunk IDs are overwritten by upload and
+    only obsolete IDs are removed afterwards.
+    """
     deleted = 0
+    keep_chunk_ids = keep_chunk_ids or set()
     while True:
         results = client.search(
             search_text="*",
@@ -534,7 +546,11 @@ def _delete_source_chunks(client: SearchClient, source_path: str) -> int:
             select=["chunk_id"],
             top=1000,
         )
-        docs = [{"chunk_id": item["chunk_id"]} for item in results if item.get("chunk_id")]
+        docs = [
+            {"chunk_id": item["chunk_id"]}
+            for item in results
+            if item.get("chunk_id") and item["chunk_id"] not in keep_chunk_ids
+        ]
         if not docs:
             return deleted
         client.delete_documents(documents=docs)
@@ -612,10 +628,10 @@ def sync_documents_from_blob(
 
         if indexed.get(blob.name) == current_indexed_hash:
             continue
-        if blob.name in indexed:
+        is_update = blob.name in indexed
+        if is_update:
             updated += 1
-            _delete_source_chunks(search_client, blob.name)
-            logger.info("Actualizando Azure AI Search: %s", blob.name)
+            logger.info("Actualizando Azure AI Search sin retirar chunks previos: %s", blob.name)
         else:
             added += 1
             logger.info("Indexando en Azure AI Search: %s category=%s", blob.name, category)
@@ -638,6 +654,12 @@ def sync_documents_from_blob(
                     raise RuntimeError(
                         f"Fallaron {len(failed)} chunks al subir a Azure AI Search para {blob.name}"
                     )
+        if is_update:
+            _delete_source_chunks(
+                search_client,
+                blob.name,
+                keep_chunk_ids={str(doc["chunk_id"]) for doc in docs},
+            )
         chunks_indexed += len(docs)
 
     logger.info(

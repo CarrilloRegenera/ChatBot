@@ -12,6 +12,7 @@ from azure_rag_service import (
     _compose_search_text,
     _iter_pdf_chunks,
     _search_all_indexed_sources,
+    _delete_source_chunks,
     azure_index_health,
 )
 from rag_service import _chunk_profile_metadata, _document_profile_metadata
@@ -213,3 +214,24 @@ def test_azure_index_health_reports_ready_index(monkeypatch):
         "rag_index_status": "ready",
         "rag_indexed_chunks": 12,
     }
+
+
+def test_delete_source_chunks_preserves_uploaded_chunk_ids():
+    class FakeClient:
+        def __init__(self):
+            self.remaining = [{"chunk_id": "current"}, {"chunk_id": "obsolete"}]
+            self.deleted = []
+
+        def search(self, **_kwargs):
+            return list(self.remaining)
+
+        def delete_documents(self, *, documents):
+            self.deleted.extend(documents)
+            deleted_ids = {doc["chunk_id"] for doc in documents}
+            self.remaining = [item for item in self.remaining if item["chunk_id"] not in deleted_ids]
+
+    client = FakeClient()
+
+    assert _delete_source_chunks(client, "ops/manual.pdf", keep_chunk_ids={"current"}) == 1
+    assert client.deleted == [{"chunk_id": "obsolete"}]
+    assert client.remaining == [{"chunk_id": "current"}]
