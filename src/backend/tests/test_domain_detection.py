@@ -479,6 +479,18 @@ def test_exact_refs_preserve_itc_family_prefix():
     assert "itc-bt-09" not in _extract_exact_refs("Resumen de la ITC LAT 09")
 
 
+def test_exact_refs_extract_royal_decree_variants():
+    assert _extract_exact_refs("Que establece el RD 244/2019?") == [
+        "rd 244/2019",
+        "real decreto 244/2019",
+    ]
+    assert _extract_exact_refs("Que establece el Real Decreto 178 / 2021?") == [
+        "rd 178/2021",
+        "real decreto 178/2021",
+    ]
+    assert _extract_exact_refs("Que establece el RD 244?") == []
+
+
 def test_document_profile_metadata_is_backend_neutral():
     profile = _document_profile_metadata("fotovoltaica_om/Manual_OM_FV.pdf")
     assert profile == {

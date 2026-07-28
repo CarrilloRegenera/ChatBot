@@ -39,6 +39,7 @@ def extract_exact_refs(
     *,
     itc_reference_pattern,
     table_reference_pattern,
+    royal_decree_reference_pattern,
 ) -> List[str]:
     refs = set()
     raw = text or ""
@@ -51,6 +52,10 @@ def extract_exact_refs(
     for value in table_reference_pattern.findall(raw):
         normalized_value = value.lstrip("0") or "0"
         refs.add(f"tabla {normalized_value}")
+    for number, year in royal_decree_reference_pattern.findall(raw):
+        normalized_number = str(int(number))
+        refs.add(f"rd {normalized_number}/{year}")
+        refs.add(f"real decreto {normalized_number}/{year}")
     return sorted(refs)
 
 

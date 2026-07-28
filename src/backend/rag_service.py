@@ -230,7 +230,7 @@ NORMATIVE_HEADING_PATTERN = re.compile(
     r")$",
     re.IGNORECASE,
 )
-REFERENCE_PATTERN = re.compile(r"\b(?:itc[-\s]*(?:bt|lat|rat)[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+)\b", re.IGNORECASE)
+REFERENCE_PATTERN = re.compile(r"\b(?:itc[-\s]*(?:bt|lat|rat)[-\s]*\d+|art(?:iculo)?\.?\s*\d+|tabla\s*\d+|(?:rd|real\s+decreto)[-\s]*\d{1,4}\s*/\s*\d{4})\b", re.IGNORECASE)
 NUMERIC_PATTERN = re.compile(
     r"\b\d+(?:[.,]\d+)?\s*(?:a/mm2|a/mm²|mm2|mm²|m2|m²|kva|kw|ma|kv|cm|mm|m|bar|hz|ohmios?|ohm|w|v|a|%)?\b",
     re.IGNORECASE,
@@ -266,6 +266,10 @@ ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[ií]a)[-\s]*(bt|lat|rat)?[
 # Refs a instrucciones técnicas numeradas del RITE: "IT 3", "IT 3.3", "IT 1.1.1"
 IT_SECTION_REFERENCE_PATTERN = re.compile(r"\bit\s+(\d+(?:\.\d+){0,2})\b", re.IGNORECASE)
 TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3}(?:\.\d+)?)\b", re.IGNORECASE)
+ROYAL_DECREE_REFERENCE_PATTERN = re.compile(
+    r"\b(?:rd|real\s+decreto)[-\s]*(\d{1,4})\s*/\s*(\d{4})\b",
+    re.IGNORECASE,
+)
 ARTICLE_REFERENCE_PATTERN = re.compile(
     r"\bart(?:(?:iculo)|(?:[^\da-z\s]{1,4}culo)|(?:\.))?\s*(\d{1,3})\b",
     re.IGNORECASE,
@@ -1338,6 +1342,7 @@ def _extract_exact_refs(text: str) -> List[str]:
         text,
         itc_reference_pattern=ITC_REFERENCE_PATTERN,
         table_reference_pattern=TABLE_REFERENCE_PATTERN,
+        royal_decree_reference_pattern=ROYAL_DECREE_REFERENCE_PATTERN,
     )
 
 
