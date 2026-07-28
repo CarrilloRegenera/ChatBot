@@ -36,7 +36,7 @@ def _percentile(values: list[float], percentile: float) -> float:
 def evaluate(backend: str, top_k: int) -> dict[str, Any]:
     os.environ["RAG_BACKEND"] = backend
     sys.path.insert(0, str(BACKEND_PATH))
-    from rag_service import search_documents_detailed  # pylint: disable=import-outside-toplevel
+    from rag_service import _normalize_text, search_documents_detailed  # pylint: disable=import-outside-toplevel
 
     golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
     results = []
@@ -46,11 +46,15 @@ def evaluate(backend: str, top_k: int) -> dict[str, Any]:
         context, sources, stats = search_documents_detailed(item["question"], n_results=top_k)
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         latencies.append(latency_ms)
-        context_normalized = context.casefold()
+        context_normalized = _normalize_text(context)
         selected_domains = set(stats.get("selected_domains") or [])
         expected_domains = set(item["expected_domains"])
         expected_phrases = item.get("expected_phrase_queries") or []
-        phrase_hits = [phrase for phrase in expected_phrases if phrase.casefold() in context_normalized]
+        phrase_hits = [
+            phrase
+            for phrase in expected_phrases
+            if _normalize_text(phrase) in context_normalized
+        ]
         results.append({
             "id": item["id"],
             "domain": item["domain"],
