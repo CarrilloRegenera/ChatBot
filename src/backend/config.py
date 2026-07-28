@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
-DEFAULT_RAG_INDEX_VERSION = "6"
+DEFAULT_RAG_INDEX_VERSION = "7"
 DEFAULT_EMBEDDING_CACHE_MAX_ENTRIES = 20000
 
 load_dotenv(ENV_PATH)
