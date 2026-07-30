@@ -441,7 +441,8 @@ def _answer_business_question_sql(
     history: List[Dict[str, Any]],
 ) -> Dict[str, Any] | None:
     normalized = _normalize(question)
-    if re.fullmatch(r"(?:cuanto|cuanta|que)\s+(?:tenemos|hay)", normalized):
+    explicit_reference = _extract_reference(question, normalized)
+    if not explicit_reference and re.fullmatch(r"(?:cuanto|cuanta|que)\s+(?:tenemos|hay)", normalized):
         route = preferred_route or "business_licitaciones"
         module = "estudios" if route == "business_licitaciones" else "produccion"
         parsed = _extract_business_intent(question, module=module, history=history or [])
@@ -453,7 +454,6 @@ def _answer_business_question_sql(
         }, _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="ambiguous"))
 
     explicit_scope = _detect_explicit_scope(normalized)
-    explicit_reference = _extract_reference(question, normalized)
     preferred_module = "estudios" if (preferred_route or detect_business_route(question)) == "business_licitaciones" else "produccion"
     reference_hint = _detect_reference_module(_extract_reference(question, normalized))
     if reference_hint == "estudios" and explicit_scope == "produccion":
@@ -1357,7 +1357,10 @@ def _resolve_reference(original_question: str, normalized: str, history: List[Di
     if reference:
         return reference
 
-    if re.fullmatch(r"(?:cuanto|cuanta|que)\s+(?:tenemos|hay)", normalized):
+    if (
+        re.fullmatch(r"(?:cuanto|cuanta|que)\s+(?:tenemos|hay)", normalized)
+        or re.match(r"^(?:cual|que)\s+es\b.*\b(?:importe|pipeline|backlog|produccion|cartera|pendiente|presupuesto|costes?)\b", normalized)
+    ):
         return None
 
     if not (
@@ -1472,6 +1475,11 @@ def _narrow_fields_to_period(
     month: int | None,
     cuatrimestre: int | None,
 ) -> List[str]:
+    if module == "produccion" and month and any(
+        field in {*PRODUCTION_MONTH_FIELDS.values(), "periodosMensuales"}
+        for field in fields
+    ):
+        return [PRODUCTION_MONTH_FIELDS[month]]
     if month or cuatrimestre:
         return []
     if not year:

@@ -559,6 +559,26 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertIsNone(parsed["reference"])
         self.assertIsNone(parsed["year"])
 
+    def test_global_production_aggregate_does_not_inherit_previous_reference(self):
+        parsed = business._parse_question(
+            "Cual es la cartera pendiente de produccion en 2026",
+            module="produccion",
+            history=[{"question": "Cual es el estado de la licitacion 26018"}],
+        )
+
+        self.assertIsNone(parsed["reference"])
+        self.assertEqual(parsed["aggregate"]["metric"], "cartera2026")
+
+    def test_month_follow_up_narrows_a_monthly_production_request(self):
+        parsed = business._parse_question(
+            "y abril",
+            module="produccion",
+            history=[{"question": "Dame su produccion por mes de la obra 26022"}],
+        )
+
+        self.assertEqual(parsed["reference"], "26022")
+        self.assertEqual(parsed["fields"], ["produccionAbril"])
+
     def test_recent_listing_accepts_spelled_out_quantity(self):
         self.assertTrue(business._looks_like_filtered_listing_request("cuales son las cinco licitaciones mas recientes"))
 
