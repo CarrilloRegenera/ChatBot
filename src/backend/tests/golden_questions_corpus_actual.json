@@ -1,0 +1,108 @@
+{
+  "documents": [
+    {"domain":"alta_tension","expected_domains":["alta_tension"],"expected_sources":["alta_tension/A16436-16554.pdf"],"questions":[
+      {"id":"at_01","question":"¿Qué real decreto se corrige en el BOE A16436-16554?","category":"reference","expected_evidence":["Corrección de errores"]},
+      {"id":"at_02","question":"¿Qué ley desarrolla el Real Decreto 1722/2007?","category":"reference","expected_evidence":["Ley 56/2003"]},
+      {"id":"at_03","question":"¿Sobre qué sistema trata la corrección publicada el 19 de marzo de 2008?","category":"scope","expected_evidence":["Sistema Nacional de Empleo"]}]},
+    {"domain":"baja_tension","expected_domains":["baja_tension"],"expected_sources":["baja_tension/01_normativa_oficial/BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf"],"questions":[
+      {"id":"bt_rebt_01","question":"¿Qué reglamento recoge el código electrónico BOE-326?","category":"reference","expected_evidence":["Reglamento electrotécnico para baja tensión"]},
+      {"id":"bt_rebt_02","question":"¿Qué ITC regula los circuitos mínimos de las viviendas?","category":"reference","expected_evidence":["ITC-BT-25"]},
+      {"id":"bt_rebt_03","question":"¿Cuál es la sección mínima del conductor neutro según el REBT?","category":"numeric_value","expected_evidence":["conductor neutro"]}]},
+    {"domain":"baja_tension","expected_domains":["baja_tension"],"expected_sources":["baja_tension/02_guias_fabricante/prysmian/errores_frecuentes_2023_v2.pdf"],"questions":[
+      {"id":"bt_prysmian_err_01","question":"¿De qué año es la guía de errores frecuentes de Prysmian?","category":"reference","expected_evidence":["Edición 2023"]},
+      {"id":"bt_prysmian_err_02","question":"¿Qué dos aspectos aborda la guía de errores frecuentes de cable?","category":"scope","expected_evidence":["cálculo de secciones"]},
+      {"id":"bt_prysmian_err_03","question":"¿Qué criterios debo revisar para elegir el tipo de cable?","category":"procedure","expected_evidence":["elección del tipo de cable"]}]},
+    {"domain":"baja_tension","expected_domains":["baja_tension"],"expected_sources":["baja_tension/02_guias_fabricante/prysmian/soluciones_situaciones_particulares_2023.pdf"],"questions":[
+      {"id":"bt_prysmian_sol_01","question":"¿Qué guía de Prysmian trata situaciones particulares y frecuentes en baja tensión?","category":"reference","expected_evidence":["Solución a situaciones particulares y frecuentes"]},
+      {"id":"bt_prysmian_sol_02","question":"¿Cuál es la edición de la guía de soluciones de baja tensión?","category":"reference","expected_evidence":["Edición 2023"]},
+      {"id":"bt_prysmian_sol_03","question":"¿Qué solución propone la guía para una situación frecuente de cableado?","category":"procedure","expected_evidence":["Baja Tensión"]}]},
+    {"domain":"baja_tension","expected_domains":["baja_tension"],"expected_sources":["baja_tension/03_manuales_practicos/schneider/manual-electricidad-baja-tension-1.pdf"],"questions":[
+      {"id":"bt_schneider_01","question":"¿Qué debe estudiarse antes de diseñar una instalación eléctrica de baja tensión?","category":"procedure","expected_evidence":["estudio de la reglamentación"]},
+      {"id":"bt_schneider_02","question":"¿Qué factores se consideran en el estudio de una instalación de baja tensión?","category":"scope","expected_evidence":["balance de la potencia"]},
+      {"id":"bt_schneider_03","question":"¿Qué manual práctico aborda el estudio de una instalación eléctrica BT?","category":"reference","expected_evidence":["Estudio de una instalación eléctrica BT"]}]},
+    {"domain":"fotovoltaica_om","expected_domains":["fotovoltaica_om"],"expected_sources":["fotovoltaica_om/Manual-de-Mantenimiento.pdf"],"questions":[
+      {"id":"fv_01","question":"¿Cuál es la potencia de la planta solar fotovoltaica del manual?","category":"numeric_value","expected_evidence":["500kW"]},
+      {"id":"fv_02","question":"¿En qué ciudad se ubica la cubierta de la nave industrial del proyecto fotovoltaico?","category":"reference","expected_evidence":["SEVILLA"]},
+      {"id":"fv_03","question":"¿Qué planes recoge el manual de mantenimiento de la planta fotovoltaica?","category":"procedure","expected_evidence":["Planes de mantenimiento"]}]},
+    {"domain":"grupos_electrogenos","expected_domains":["grupos_electrogenos"],"expected_sources":["grupos_electrogenos/Manual Grupos Electrogenos Diesel_ESP.pdf"],"questions":[
+      {"id":"ge_01","question":"¿Qué normas de seguridad contempla el manual de grupos electrógenos diésel?","category":"procedure","expected_evidence":["Normas de seguridad"]},
+      {"id":"ge_02","question":"¿Qué capítulo explica la utilización del grupo electrógeno?","category":"reference","expected_evidence":["Utilización del grupo electrógeno"]},
+      {"id":"ge_03","question":"¿Qué mantenimiento requiere un grupo electrógeno diésel?","category":"procedure","expected_evidence":["Mantenimiento"]}]},
+    {"domain":"guias_tecnicas","expected_domains":["guias_tecnicas"],"expected_sources":["guias_tecnicas/Guia_bt_40_sep13R1.pdf"],"questions":[
+      {"id":"gt_01","question":"¿Qué tipo de instalaciones regula la Guía-BT-40?","category":"scope","expected_evidence":["INSTALACIONES GENERADORAS DE BAJA TENSIÓN"]},
+      {"id":"gt_02","question":"¿Qué apartado de la Guía-BT-40 clasifica las instalaciones generadoras?","category":"reference","expected_evidence":["CLASIFICACION"]},
+      {"id":"gt_03","question":"¿Qué condiciones establece la guía para la conexión de instalaciones generadoras?","category":"procedure","expected_evidence":["CONDICIONES PARA LA CONEXIÓN"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/01_normativa_base/IEC-80005-1-2025.pdf"],"questions":[
+      {"id":"ops_iec1_01","question":"¿Qué tipo de conexión a tierra regula la EN IEC/IEEE 80005-1?","category":"scope","expected_evidence":["High voltage shore connection"]},
+      {"id":"ops_iec1_02","question":"¿Qué parte de la norma IEC/IEEE 80005 trata requisitos generales?","category":"reference","expected_evidence":["Part 1"]},
+      {"id":"ops_iec1_03","question":"¿Qué requisitos generales se aplican a los sistemas HVSC?","category":"procedure","expected_evidence":["General requirements"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/01_normativa_base/iecieee80005-2_2016.pdf"],"questions":[
+      {"id":"ops_iec2_01","question":"¿Qué estándar regula la comunicación de datos en sistemas OPS?","category":"reference","expected_evidence":["IEC/IEEE 80005-2"]},
+      {"id":"ops_iec2_02","question":"¿Para qué sirve la interfaz de comunicación de datos de IEC/IEEE 80005-2?","category":"scope","expected_evidence":["monitoring and control"]},
+      {"id":"ops_iec2_03","question":"¿Qué tensiones cubre la parte 2 de IEC/IEEE 80005?","category":"scope","expected_evidence":["High and low voltage"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/02_guias_implantacion/EMSA Guidance on SSE_PART1.pdf"],"questions":[
+      {"id":"ops_emsa1_01","question":"¿A quién se dirige la guía EMSA de Shore-Side Electricity?","category":"scope","expected_evidence":["Port Authorities and Administrations"]},
+      {"id":"ops_emsa1_02","question":"¿Qué cubre la parte 1 de la guía EMSA sobre SSE?","category":"scope","expected_evidence":["Equipment and Technology"]},
+      {"id":"ops_emsa1_03","question":"¿De qué fecha es la versión 1 de la guía EMSA de equipos OPS?","category":"reference","expected_evidence":["June 2022"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/02_guias_implantacion/EMSA Guidance on SSE_PART2_Version 2.pdf"],"questions":[
+      {"id":"ops_emsa2_01","question":"¿Qué cubre la parte 2 de la guía EMSA sobre Shore-Side Electricity?","category":"scope","expected_evidence":["Planning, Operations and Safety"]},
+      {"id":"ops_emsa2_02","question":"¿Qué versión de la guía EMSA trata planificación, operaciones y seguridad?","category":"reference","expected_evidence":["Version 2"]},
+      {"id":"ops_emsa2_03","question":"¿De qué mes y año es la guía EMSA de planificación OPS?","category":"reference","expected_evidence":["August 2022"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/03_checklists_operacion/EOPSA_Checklist_OPS_ES.pdf"],"questions":[
+      {"id":"ops_check_01","question":"¿Qué información de red debe comprobar una licitación OPS?","category":"procedure","expected_evidence":["Red eléctrica nacional"]},
+      {"id":"ops_check_02","question":"¿Qué significa DNO en la lista de verificación OPS?","category":"definition","expected_evidence":["Operador de Red de Distribución"]},
+      {"id":"ops_check_03","question":"¿Qué anexo contiene la lista de verificación para una licitación OPS?","category":"reference","expected_evidence":["Anexo 1"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/03_checklists_operacion/EOPSA_Guia_OPS_ES_Completa.pdf"],"questions":[
+      {"id":"ops_guia_01","question":"¿Qué organismo elaboró la guía para una licitación OPS completa y exitosa?","category":"reference","expected_evidence":["EOPSA"]},
+      {"id":"ops_guia_02","question":"¿Qué incluye la guía EOPSA para una licitación OPS?","category":"scope","expected_evidence":["Lista de verificación"]},
+      {"id":"ops_guia_03","question":"¿En qué idioma está la edición completa de la guía EOPSA incluida en el corpus?","category":"reference","expected_evidence":["Traducción al español"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/04_resumen_sectorial/On_shore_power_supply_summary-surveys_final.pdf"],"questions":[
+      {"id":"ops_summary_01","question":"¿Qué programa resume el cuestionario de Power-to-Ship y OPS?","category":"reference","expected_evidence":["WORLD PORTS CLIMATE ACTION"]},
+      {"id":"ops_summary_02","question":"¿Qué aspectos de infraestructura recoge el cuestionario OPS?","category":"scope","expected_evidence":["Port infrastructure"]},
+      {"id":"ops_summary_03","question":"¿Qué medidas ambientales considera el resumen de encuestas OPS?","category":"scope","expected_evidence":["Environment"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/05_planificacion_proyecto/OPS - Planificacion y Explotacion.pdf"],"questions":[
+      {"id":"ops_plan_01","question":"¿Qué función realiza el módulo OPS en una instalación?","category":"definition","expected_evidence":["Convierte voltaje y frecuencia"]},
+      {"id":"ops_plan_02","question":"¿Qué elemento conecta la instalación OPS con el cuadro eléctrico del barco?","category":"procedure","expected_evidence":["Conexión al cuadro eléctrico del barco"]},
+      {"id":"ops_plan_03","question":"¿Qué sistema gestiona los cables en una instalación OPS?","category":"definition","expected_evidence":["Sistema de gestión de cables"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/05_planificacion_proyecto/OPS - Redaccion de Proyectos - Presentacion.pdf"],"questions":[
+      {"id":"ops_proj_pres_01","question":"¿Qué trata la presentación de revisión de proyectos OPS?","category":"scope","expected_evidence":["Revisión de proyectos OPS"]},
+      {"id":"ops_proj_pres_02","question":"¿Qué tipo de recomendaciones contiene la presentación de proyectos OPS?","category":"procedure","expected_evidence":["Recomendaciones"]},
+      {"id":"ops_proj_pres_03","question":"¿Qué configuración se presenta como básica en una instalación OPS?","category":"scope","expected_evidence":["Configuración básica de una instalación OPS"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/05_planificacion_proyecto/OPS - Redaccion de Proyectos - Recomendaciones.pdf"],"questions":[
+      {"id":"ops_proj_rec_01","question":"¿Qué documento contiene recomendaciones para la redacción de proyectos OPS?","category":"reference","expected_evidence":["REDACCIÓN DE PROYECTOS OPS"]},
+      {"id":"ops_proj_rec_02","question":"¿Qué fecha figura en las recomendaciones de redacción de proyectos OPS?","category":"reference","expected_evidence":["09.03.2026"]},
+      {"id":"ops_proj_rec_03","question":"¿Cuál es el código del documento de recomendaciones de proyectos OPS?","category":"reference","expected_evidence":["ISMTME-261518-1LL"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/06_financiacion_afif/guia_solicitantes_cef-t-afif-2024_segundo_corte_1.0.pdf"],"questions":[
+      {"id":"ops_afif_guide_01","question":"¿Qué fases cubre la guía de solicitud CEF-T-AFIF-2024?","category":"procedure","expected_evidence":["COMUNICACIÓN DE INTERÉS"]},
+      {"id":"ops_afif_guide_02","question":"¿Qué organismo debe dar la conformidad de Estado miembro para AFIF?","category":"procedure","expected_evidence":["CONFORMIDAD DE ESTADO MIEMBRO"]},
+      {"id":"ops_afif_guide_03","question":"¿Qué convocatoria de ayudas describe la guía AFIF incluida?","category":"reference","expected_evidence":["CEF-T-AFIF-2024"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/06_financiacion_afif/Procedimiento subvención AFIF.pdf"],"questions":[
+      {"id":"ops_afif_proc_01","question":"¿Qué certificado explica el procedimiento de subvención AFIF?","category":"procedure","expected_evidence":["certificado de conformidad de Estado miembro"]},
+      {"id":"ops_afif_proc_02","question":"¿Qué validación requieren las propuestas AFIF en España?","category":"procedure","expected_evidence":["validación expresa del Estado miembro"]},
+      {"id":"ops_afif_proc_03","question":"¿Cuál era el plazo de presentación a la Comisión para AFIF?","category":"temporal","expected_evidence":["11 de junio de 2025"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/07_estudios_viabilidad/Est. Muelle Transversal y Poniente (Cruceros) - Valencia.pdf"],"questions":[
+      {"id":"ops_valencia_01","question":"¿Para qué puerto analiza OPS el estudio SEA-835?","category":"reference","expected_evidence":["PUERTO DE VALENCIA"]},
+      {"id":"ops_valencia_02","question":"¿Cuál es el código de documento del estudio OPS de Valencia?","category":"reference","expected_evidence":["GE-835-TR-001"]},
+      {"id":"ops_valencia_03","question":"¿Qué muelles de cruceros contempla el estudio OPS de Valencia?","category":"scope","expected_evidence":["Muelle Transversal y Poniente"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/07_estudios_viabilidad/Est. Terminal Cruceros - Malaga.pdf"],"questions":[
+      {"id":"ops_malaga_01","question":"¿Qué puerto cubre el estudio técnico-económico de OPS para cruceros?","category":"reference","expected_evidence":["PUERTO DE MÁLAGA"]},
+      {"id":"ops_malaga_02","question":"¿Qué tipo de estudio se realizó para implantar OPS en Málaga?","category":"scope","expected_evidence":["ESTUDIO TÉCNICO-ECONÓMICO"]},
+      {"id":"ops_malaga_03","question":"¿Qué plan europeo identifica el estudio OPS de Málaga?","category":"reference","expected_evidence":["2015-EU-TM-0417-S"]}]},
+    {"domain":"ops","expected_domains":["ops"],"expected_sources":["ops/08_anteproyectos_referencia/ANTEPROYECTO-OPS-PUERTO-BILBAO.pdf"],"questions":[
+      {"id":"ops_bilbao_01","question":"¿Qué puerto es objeto del anteproyecto de infraestructura eléctrica OPS?","category":"reference","expected_evidence":["PUERTO DE BILBAO"]},
+      {"id":"ops_bilbao_02","question":"¿Para qué se proyecta la infraestructura eléctrica del Puerto de Bilbao?","category":"scope","expected_evidence":["CONEXIÓN DE LOS BUQUES A LA RED ELECTRICA TERRESTRE"]},
+      {"id":"ops_bilbao_03","question":"¿Qué documento del anteproyecto OPS contiene la memoria?","category":"reference","expected_evidence":["DOCUMENTO Nº 1 - MEMORIA"]}]},
+    {"domain":"rite","expected_domains":["rite"],"expected_sources":["rite/RITE IT3.pdf"],"questions":[
+      {"id":"rite_it3_01","question":"¿Qué instrucción técnica del RITE trata el mantenimiento y uso?","category":"reference","expected_evidence":["INSTRUCCION TECNICA IT 3"]},
+      {"id":"rite_it3_02","question":"¿Qué objetivo de eficiencia persigue el mantenimiento de las instalaciones térmicas?","category":"scope","expected_evidence":["máxima eficiencia energética"]},
+      {"id":"rite_it3_03","question":"¿Qué exigencias deben cumplir las instalaciones térmicas durante su vida útil?","category":"procedure","expected_evidence":["seguridad, la durabilidad y la protección del medio ambiente"]}]},
+    {"domain":"rite","expected_domains":["rite"],"expected_sources":["rite/RITE-2021-BOE-A-2021-4572.pdf"],"questions":[
+      {"id":"rite_2021_01","question":"¿Qué real decreto modificó el RITE en marzo de 2021?","category":"reference","expected_evidence":["Real Decreto 178/2021"]},
+      {"id":"rite_2021_02","question":"¿Qué real decreto aprueba el Reglamento de Instalaciones Térmicas en los Edificios?","category":"reference","expected_evidence":["Real Decreto 1027/2007"]},
+      {"id":"rite_2021_03","question":"¿En qué fecha se publicó la modificación del RITE de 2021?","category":"temporal","expected_evidence":["24 de marzo de 2021"]}]},
+    {"domain":"rite","expected_domains":["rite"],"expected_sources":["rite/RITE-BOE-A-2007-15820-consolidado.pdf"],"questions":[
+      {"id":"rite_cons_01","question":"¿Qué real decreto aprueba el RITE consolidado?","category":"reference","expected_evidence":["Real Decreto 1027/2007"]},
+      {"id":"rite_cons_02","question":"¿Cuál es la referencia BOE del RITE consolidado?","category":"reference","expected_evidence":["BOE-A-2007-15820"]},
+      {"id":"rite_cons_03","question":"¿Qué disposición transitoria indica a qué edificios se aplica el RITE?","category":"reference","expected_evidence":["Disposición transitoria primera"]}]}
+  ]
+}
