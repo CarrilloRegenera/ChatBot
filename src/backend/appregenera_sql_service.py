@@ -147,6 +147,22 @@ def search_licitaciones(reference: str, take: int = 10) -> List[Dict[str, Any]]:
         return _rows_to_dicts(cursor)
 
 
+def list_recent_licitaciones(take: int = 5) -> List[Dict[str, Any]]:
+    with appregenera_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT TOP (?) NumeroProyecto, NumeroOferta, Obra, Cliente, Estado,
+                   FechaPresentacion, FechaApertura, FechaAdjudicacion, CreatedDate, UpdatedDate
+            FROM dbo.Licitaciones
+            ORDER BY COALESCE(FechaAdjudicacion, UpdatedDate, CreatedDate) DESC,
+                     NumeroProyecto DESC, NumeroOferta DESC
+            """,
+            take,
+        )
+        return _rows_to_dicts(cursor)
+
+
 def search_licitaciones_by_client_text(client_text: str, take: int = 50) -> List[Dict[str, Any]]:
     like = f"%{client_text.strip()}%"
     with appregenera_conn() as conn:

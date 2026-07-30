@@ -536,6 +536,83 @@ class BusinessQueryServiceTests(unittest.TestCase):
         self.assertEqual(parsed["aggregate"]["metric"], "pipeline")
         self.assertEqual(parsed["aggregate"]["scope"], "pipeline")
 
+    def test_global_pipeline_and_backlog_questions_do_not_inherit_a_detail_reference(self):
+        history = [{"question": "Cual es el estado de la licitacion 26018"}]
+
+        pipeline = business._parse_question("Cual es el pipeline de 2026", module="estudios", history=history)
+        backlog = business._parse_question("Cual es el backlog de las licitaciones adjudicadas", module="estudios", history=history)
+
+        self.assertIsNone(pipeline["reference"])
+        self.assertEqual(pipeline["aggregate"]["metric"], "pipeline")
+        self.assertEqual(pipeline["aggregate"]["scope"], "pipeline")
+        self.assertIsNone(backlog["reference"])
+        self.assertEqual(backlog["aggregate"]["metric"], "backlog")
+        self.assertEqual(backlog["aggregate"]["scope"], "backlog")
+
+    def test_vague_global_question_does_not_inherit_previous_reference(self):
+        parsed = business._parse_question(
+            "Cuanto tenemos",
+            module="estudios",
+            history=[{"question": "Cual es el estado de la licitacion 26018"}],
+        )
+
+        self.assertIsNone(parsed["reference"])
+        self.assertIsNone(parsed["year"])
+
+    def test_recent_listing_accepts_spelled_out_quantity(self):
+        self.assertTrue(business._looks_like_filtered_listing_request("cuales son las cinco licitaciones mas recientes"))
+
+    def test_recent_licitaciones_listing_uses_dedicated_sql_query(self):
+        parsed = business._parse_question(
+            "Cuales son las cinco licitaciones mas recientes",
+            module="estudios",
+            history=[],
+        )
+        rows = [{"NumeroProyecto": "26018", "Obra": "Proyecto reciente", "Cliente": "REGENERA", "Estado": "Pendiente"}]
+
+        with patch.object(business, "sql_list_recent_licitaciones", return_value=rows) as recent_search:
+            result = business._answer_estudios_recent_listing_sql(parsed, route="business_licitaciones")
+
+        recent_search.assert_called_once_with(take=5)
+        self.assertIn("Licitaciones mas recientes", result["response"])
+        self.assertIn("26018", result["response"])
+
+    def test_sql_detail_without_data_is_preserved_when_other_module_has_no_match(self):
+        history = [{"question": "Cual es el estado de la licitacion 26018"}]
+        no_data = {"response": "Sin importe cargado.", "has_data": False, "route": "business_licitaciones", "confidence": 1.0, "sources": []}
+        with (
+            patch.object(business, "_answer_produccion_detail_sql", return_value=None),
+            patch.object(business, "_answer_estudios_detail_sql", return_value=no_data),
+        ):
+            result = business._answer_business_question_sql(
+                "y cual es su importe contratado",
+                preferred_route=None,
+                history=history,
+            )
+
+        self.assertEqual(result["response"], "Sin importe cargado.")
+        self.assertEqual(result["trace"]["path"], "sql")
+
+    def test_sql_business_question_requests_clarification_for_vague_global_question(self):
+        result = business._answer_business_question_sql("Cuanto tenemos", preferred_route=None, history=[])
+
+        self.assertEqual(result["trace"]["outcome"], "ambiguous")
+        self.assertIn("concretes", result["response"])
+
+    def test_sql_business_question_reports_unknown_explicit_reference_without_http_fallback(self):
+        with (
+            patch.object(business, "_answer_produccion_detail_sql", return_value=None),
+            patch.object(business, "_answer_estudios_detail_sql", return_value=None),
+        ):
+            result = business._answer_business_question_sql(
+                "Cual es el importe de la licitacion EST-99999-2099",
+                preferred_route=None,
+                history=[],
+            )
+
+        self.assertEqual(result["trace"]["outcome"], "not_found")
+        self.assertIn("EST-99999-2099", result["response"])
+
     def test_adjudicated_licitaciones_uses_backlog_scope_without_year_filter_text(self):
         parsed = business._parse_question(
             "cuanto importe contratado tiene en total las licitaciones adjudicadas del ano 2026",

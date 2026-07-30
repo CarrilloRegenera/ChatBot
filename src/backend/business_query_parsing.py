@@ -26,6 +26,8 @@ def mentions_previous_reference(text: str) -> bool:
 
 
 def can_inherit_reference_from_context(text: str) -> bool:
+    if re.search(r"\b(?:cuanto|cuanta|que)\s+(?:tenemos|hay)\b", text):
+        return False
     if any(
         token in text
         for token in (
@@ -40,6 +42,8 @@ def can_inherit_reference_from_context(text: str) -> bool:
             "cuantos ",
             "total de ",
             "suma de ",
+            " backlog",
+            " pipeline",
         )
     ):
         return False

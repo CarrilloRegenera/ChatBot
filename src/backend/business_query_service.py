@@ -55,6 +55,7 @@ from appregenera_sql_service import (
     query_cierre_aggregate as sql_query_cierre_aggregate,
     query_licitaciones_aggregate as sql_query_licitaciones_aggregate,
     query_produccion_aggregate as sql_query_produccion_aggregate,
+    list_recent_licitaciones as sql_list_recent_licitaciones,
     search_licitaciones as sql_search_licitaciones,
     search_licitaciones_by_client_text as sql_search_licitaciones_by_client_text,
     search_produccion as sql_search_produccion,
@@ -440,7 +441,19 @@ def _answer_business_question_sql(
     history: List[Dict[str, Any]],
 ) -> Dict[str, Any] | None:
     normalized = _normalize(question)
+    if re.fullmatch(r"(?:cuanto|cuanta|que)\s+(?:tenemos|hay)", normalized):
+        route = preferred_route or "business_licitaciones"
+        module = "estudios" if route == "business_licitaciones" else "produccion"
+        parsed = _extract_business_intent(question, module=module, history=history or [])
+        return _with_business_trace({
+            "response": "Necesito que concretes si consultas estudios, produccion, pipeline, backlog o una obra/licitacion concreta.",
+            "route": route,
+            "confidence": 1.0,
+            "sources": [],
+        }, _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="ambiguous"))
+
     explicit_scope = _detect_explicit_scope(normalized)
+    explicit_reference = _extract_reference(question, normalized)
     preferred_module = "estudios" if (preferred_route or detect_business_route(question)) == "business_licitaciones" else "produccion"
     reference_hint = _detect_reference_module(_extract_reference(question, normalized))
     if reference_hint == "estudios" and explicit_scope == "produccion":
@@ -457,6 +470,7 @@ def _answer_business_question_sql(
     modules_to_try = _build_module_candidates(preferred_module, explicit_scope, reference_hint)
 
     aggregate_fallback: Dict[str, Any] | None = None
+    detail_fallback: Dict[str, Any] | None = None
     for index, module in enumerate(modules_to_try):
         route = "business_licitaciones" if module == "estudios" else "business_produccion"
         parsed = _extract_business_intent(question, module=module, history=history or [])
@@ -485,6 +499,12 @@ def _answer_business_question_sql(
             )
 
         if module == "estudios":
+            recent_listing_result = _answer_estudios_recent_listing_sql(parsed, route=route)
+            if recent_listing_result:
+                return _with_business_trace(
+                    recent_listing_result,
+                    _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="recent_listing"),
+                )
             filtered_listing_result = _answer_estudios_filtered_listing_sql(parsed, route=route)
             if filtered_listing_result:
                 return _with_business_trace(
@@ -508,13 +528,29 @@ def _answer_business_question_sql(
                 and not detail_result.get("has_data", True)
                 and not _should_block_cross_module_detail_fallback(module, parsed)
             ):
+                detail_fallback = _with_business_trace(
+                    detail_result,
+                    _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="detail"),
+                )
                 continue
             return _with_business_trace(
                 detail_result,
                 _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="detail"),
             )
 
-    return aggregate_fallback
+    if aggregate_fallback or detail_fallback:
+        return aggregate_fallback or detail_fallback
+    if explicit_reference:
+        route = preferred_route or ("business_produccion" if reference_hint == "produccion" else "business_licitaciones")
+        module = "produccion" if route == "business_produccion" else "estudios"
+        parsed = _extract_business_intent(question, module=module, history=history or [])
+        return _with_business_trace({
+            "response": f"No he encontrado ningun dato de negocio para '{explicit_reference}'.",
+            "route": route,
+            "confidence": 0.95,
+            "sources": [],
+        }, _business_trace(path="sql", module=module, route=route, parsed=parsed, outcome="not_found"))
+    return None
 
 
 def _answer_yearly_aggregate_sql(parsed: Dict[str, Any], *, module: str, route: str) -> Dict[str, Any] | None:
@@ -835,6 +871,37 @@ def _answer_produccion_filtered_listing_sql(parsed: Dict[str, Any], *, route: st
     }
 
 
+def _answer_estudios_recent_listing_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
+    question_text = _normalize(parsed.get("question") or "")
+    if parsed.get("reference") or parsed.get("filter_text") or not _looks_like_recent_listing_query(question_text):
+        return None
+    if not any(token in question_text for token in ("licitacion", "licitaciones", "estudio", "estudios", "oferta", "ofertas")):
+        return None
+
+    matches = sql_list_recent_licitaciones(take=5)
+    if not matches:
+        return {
+            "response": "No hay licitaciones recientes disponibles.",
+            "route": route,
+            "confidence": 0.95,
+            "sources": [],
+        }
+
+    lines = []
+    for index, item in enumerate(matches, start=1):
+        code = item.get("NumeroProyecto") or item.get("NumeroOferta") or "-"
+        obra = item.get("Obra") or "-"
+        cliente = item.get("Cliente") or "-"
+        estado = item.get("Estado") or "-"
+        lines.append(f"{index}. {code} - {obra}: cliente = {cliente}; estado = {estado}")
+    return {
+        "response": "Licitaciones mas recientes: " + " | ".join(lines),
+        "route": route,
+        "confidence": 1.0,
+        "sources": [{"source": "AppRegenera SQL", "module": "estudios"}],
+    }
+
+
 def _answer_estudios_filtered_listing_sql(parsed: Dict[str, Any], *, route: str) -> Dict[str, Any] | None:
     question_text = _normalize(parsed.get("question") or "")
     filter_text = str(parsed.get("filter_text") or "").strip()
@@ -1096,6 +1163,7 @@ def _build_module_candidates(preferred_module: str, explicit_scope: str | None, 
 
 def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
     normalized = _normalize(question)
+    is_vague_global_question = bool(re.fullmatch(r"(?:cuanto|cuanta|que)\s+(?:tenemos|hay)", normalized))
     history_context = _extract_history_context(history)
     explicit_reference = _extract_reference(question, normalized)
     filter_text = _extract_filter_text(question, normalized)
@@ -1114,13 +1182,13 @@ def _parse_question(question: str, *, module: str, history: List[Dict[str, Any]]
     year_text = _strip_reference_for_year_detection(normalized, reference)
     year_match = re.search(r"\b(20\d{2})\b", year_text)
     year = int(year_match.group(1)) if year_match else None
-    if year is None and _looks_like_follow_up(normalized):
+    if year is None and _looks_like_follow_up(normalized) and not is_vague_global_question:
         year = history_context.get("year")
     if year is None and len(years) == 1:
         year = years[0]
     cuatrimestre = _extract_cuatrimestre(normalized)
     month = _extract_month(normalized)
-    if month is None and _looks_like_follow_up(normalized):
+    if month is None and _looks_like_follow_up(normalized) and not is_vague_global_question:
         month = history_context.get("month")
     per_month = _is_per_month_request(normalized)
     per_year = _is_per_year_request(normalized) or len(years) > 1
@@ -1288,6 +1356,9 @@ def _resolve_reference(original_question: str, normalized: str, history: List[Di
     reference = _extract_reference(original_question, normalized)
     if reference:
         return reference
+
+    if re.fullmatch(r"(?:cuanto|cuanta|que)\s+(?:tenemos|hay)", normalized):
+        return None
 
     if not (
         _looks_like_follow_up(normalized)
@@ -1473,7 +1544,10 @@ def _detect_aggregate(question: str, text: str, *, module: str, fields: List[str
     )
     is_avg = any(token in text for token in ("importe medio", "importe promedio", "media de ", "promedio de ", "valor medio", *_schema_aggregation_aliases("avg")))
     is_count = _is_count_request(text)
-    is_sum = (not is_count) and any(token in text for token in ("cuanto ", "cuanta ", "cuantos ", "cuantas ", "total de ", "suma de ", *_schema_aggregation_aliases("sum")))
+    is_sum = (not is_count) and (
+        any(token in text for token in ("cuanto ", "cuanta ", "cuantos ", "cuantas ", "total de ", "suma de ", *_schema_aggregation_aliases("sum")))
+        or bool(re.search(r"\b(?:cual|que)\s+es\s+(?:el|la)?\s*(?:importe|pipeline|backlog|produccion|cartera|presupuesto|costes?)\b", text))
+    )
     order = "latest" if any(token in text for token in ("ultimas", "ultimos", "recientes", "mas recientes")) else None
     has_specific_reference = bool(reference)
     asks_plural = any(token in text for token in ("proyectos", "obras", "estudios", "cierres"))
@@ -1536,7 +1610,7 @@ def _looks_like_filtered_listing_request(text: str) -> bool:
     return bool(
         (
             re.search(r"^(que|cuales|dame|listame|lista|muestrame|indicame|ensename)\s+(?:el\s+|la\s+)?(?:top\s+de\s+)?(?:proyectos|obras|estudios|licitaciones|ofertas)\b", text)
-            or re.search(r"^(que|cuales)\s+son\s+las?\s+(?:\d+\s+)?(?:proyectos|obras|estudios|licitaciones|ofertas)\b", text)
+            or re.search(r"^(que|cuales)\s+son\s+las?\s+(?:(?:\d+|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+)?(?:proyectos|obras|estudios|licitaciones|ofertas)\b", text)
         )
         and any(token in text for token in (" son ", " contienen ", " incluyen ", " hay ", " recientes", " relacionadas", " vinculadas", " vinculados", " top ", " ranking ", " cliente"))
     )
