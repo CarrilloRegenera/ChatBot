@@ -141,6 +141,36 @@ class MainRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["rag_backend"], "azure_search")
         self.assertEqual(payload["rag_index_status"], "not_checked")
 
+    def test_chat_router_loading_error_is_not_exposed_to_clients(self):
+        app, client = self._make_client()
+
+        with (
+            mock.patch("main._include_chat_router", side_effect=RuntimeError("SQL password=secret")),
+            mock.patch("main.warm_entra_jwks", return_value=None),
+        ):
+            response = client.get("/messages")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("SQL password=secret", response.text)
+        self.assertEqual(response.json()["chat_router_ready"], False)
+        self.assertEqual(app.state.chat_router_error, "unavailable")
+
+    def test_rag_health_error_is_not_exposed_to_clients(self):
+        import main
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "chroma.sqlite3"
+            db_path.touch()
+            with (
+                mock.patch.object(main, "RAG_BACKEND", "chroma"),
+                mock.patch.object(main, "CHROMA_DB_PATH", tmpdir),
+                mock.patch("main.sqlite3.connect", side_effect=RuntimeError("storage-key=secret")),
+            ):
+                snapshot = main._rag_health_snapshot()
+
+        self.assertEqual(snapshot["rag_index_status"], "error")
+        self.assertNotIn("rag_error", snapshot)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,3 +27,10 @@ def test_deployment_requires_a_successful_validation_check():
     assert "name: Require successful validation" in workflow
     assert '$_.name -eq "validate-backend"' in workflow
     assert 'conclusion -ne "success"' in workflow
+
+
+def test_container_runs_the_application_as_a_non_root_user():
+    dockerfile = (REPOSITORY_ROOT / "src" / "backend" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "useradd --system --gid chatbot" in dockerfile
+    assert "USER chatbot" in dockerfile

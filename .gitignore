@@ -22,6 +22,10 @@ src/backend/LanzarChatbotNube.bat
 src/frontend/config.js
 .claude/settings.local.json
 
+.claude/settings.json
+.claude/skills/
+.mcp.json
+
 # RAG local artifacts
 chroma_db/
 data/documentos/

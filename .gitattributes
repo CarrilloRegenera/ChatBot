@@ -1,0 +1,6 @@
+# Mantiene scripts y configuracion de despliegue portables entre Windows y CI Linux.
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+*.sh text eol=lf

@@ -126,15 +126,14 @@ async def lazy_chat_router_middleware(request: Request, call_next):
     if request.method.upper() != "OPTIONS" and not _is_lightweight_path(request.url.path):
         try:
             _include_chat_router()
-        except Exception as exc:
-            app.state.chat_router_error = str(exc)
+        except Exception:
+            app.state.chat_router_error = "unavailable"
             logging.getLogger(__name__).exception("No se pudieron cargar las rutas de chat")
             return JSONResponse(
                 status_code=503,
                 content={
                     "detail": "El servicio de chat todavia se esta cargando. Intentalo de nuevo en unos segundos.",
                     "chat_router_ready": False,
-                    "chat_router_error": str(exc),
                 },
             )
     return await call_next(request)
@@ -192,10 +191,10 @@ def _rag_health_snapshot() -> dict:
         cursor.execute("SELECT COUNT(*) FROM embeddings")
         indexed_chunks = int(cursor.fetchone()[0] or 0)
         cursor.close()
-    except Exception as exc:
+    except Exception:
+        logging.getLogger(__name__).exception("No se pudo consultar el indice Chroma para health")
         snapshot["rag_ready"] = False
         snapshot["rag_index_status"] = "error"
-        snapshot["rag_error"] = str(exc)
         return snapshot
     finally:
         if conn is not None:

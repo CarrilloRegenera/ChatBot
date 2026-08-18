@@ -50,6 +50,14 @@ RUN python -c "import os; from sentence_transformers import SentenceTransformer;
 COPY backend/ .
 COPY frontend/ /frontend/
 
+RUN groupadd --system chatbot \
+    && useradd --system --gid chatbot --create-home --home-dir /home/chatbot chatbot \
+    && mkdir -p /chroma_db /data/documentos \
+    && chown -R chatbot:chatbot /app /frontend /chroma_db /data
+
+ENV HOME=/home/chatbot
+USER chatbot
+
 EXPOSE 8000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
