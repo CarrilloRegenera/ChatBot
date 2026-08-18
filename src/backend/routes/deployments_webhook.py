@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from config import DEPLOY_WEBHOOK_SECRET
-from deployment_service import notify_run_if_needed, store_webhook_run
+from deployment_service import DeploymentNotificationError, notify_run_if_needed, store_webhook_run
 from models import DeploymentWebhookRequest
 
 
@@ -25,8 +25,15 @@ def admin_deployment_webhook(data: DeploymentWebhookRequest, request: Request):
     try:
         payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
         saved = store_webhook_run(payload)
-        notify_run_if_needed(int(saved["github_run_id"]))
+        notification_sent = notify_run_if_needed(int(saved["github_run_id"]))
+    except DeploymentNotificationError as exc:
+        logger.exception("No se pudo confirmar el correo del despliegue")
+        raise HTTPException(status_code=503, detail=f"No se pudo notificar el despliegue: {exc}") from exc
     except Exception as exc:
         logger.exception("Error procesando webhook de despliegue")
         raise HTTPException(status_code=500, detail=f"No se pudo registrar el despliegue: {exc}") from exc
-    return {"message": "Webhook de despliegue procesado", "run_id": saved["github_run_id"]}
+    return {
+        "message": "Webhook de despliegue procesado y correo confirmado por Graph",
+        "run_id": saved["github_run_id"],
+        "notification_sent": notification_sent,
+    }

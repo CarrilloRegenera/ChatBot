@@ -59,6 +59,33 @@ class DatabaseDriverNormalizationTests(unittest.TestCase):
 
         self.assertIn("Driver={ODBC Driver 17 for SQL Server}", connection_string)
 
+    def test_connection_retries_transient_login_failure(self):
+        class FakeConnection:
+            pass
+
+        original_attempts = os.environ.get("SQL_CONNECTION_RETRY_ATTEMPTS")
+        original_delay = os.environ.get("SQL_CONNECTION_RETRY_DELAY_SECS")
+        try:
+            os.environ["SQL_CONNECTION_RETRY_ATTEMPTS"] = "3"
+            os.environ["SQL_CONNECTION_RETRY_DELAY_SECS"] = "0"
+            login_timeout = database.pyodbc.Error("HYT00", "Login timeout expired")
+            with patch.object(database.pyodbc, "connect", side_effect=[login_timeout, FakeConnection()]) as connect:
+                with patch.object(database.time, "sleep") as sleep:
+                    connection = database._connect_with_retry()
+        finally:
+            if original_attempts is None:
+                os.environ.pop("SQL_CONNECTION_RETRY_ATTEMPTS", None)
+            else:
+                os.environ["SQL_CONNECTION_RETRY_ATTEMPTS"] = original_attempts
+            if original_delay is None:
+                os.environ.pop("SQL_CONNECTION_RETRY_DELAY_SECS", None)
+            else:
+                os.environ["SQL_CONNECTION_RETRY_DELAY_SECS"] = original_delay
+
+        self.assertIsInstance(connection, FakeConnection)
+        self.assertEqual(connect.call_count, 2)
+        sleep.assert_called_once_with(0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

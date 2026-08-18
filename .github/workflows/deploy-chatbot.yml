@@ -578,28 +578,43 @@ jobs:
             completed_at = [DateTime]::UtcNow.ToString("o")
           } | ConvertTo-Json -Depth 4
 
-          try {
-            Invoke-RestMethod `
-              -Method Post `
-              -Uri $webhookUrl `
-              -ContentType "application/json" `
-              -Headers @{ "x-deploy-webhook-secret" = $env:DEPLOY_WEBHOOK_SECRET } `
-              -Body $payload `
-              -TimeoutSec 120 | Out-Null
-          } catch {
-            $detail = $_.ErrorDetails.Message
-            if ([string]::IsNullOrWhiteSpace($detail) -and $_.Exception.Response) {
-              try {
-                $stream = $_.Exception.Response.GetResponseStream()
-                if ($stream) {
-                  $reader = [System.IO.StreamReader]::new($stream)
-                  $detail = $reader.ReadToEnd()
-                }
-              } catch {}
+          $maxWebhookAttempts = 8
+          $webhookSent = $false
+          for ($attempt = 1; $attempt -le $maxWebhookAttempts; $attempt++) {
+            try {
+              $response = Invoke-RestMethod `
+                -Method Post `
+                -Uri $webhookUrl `
+                -ContentType "application/json" `
+                -Headers @{ "x-deploy-webhook-secret" = $env:DEPLOY_WEBHOOK_SECRET } `
+                -Body $payload `
+                -TimeoutSec 120
+
+              if ($response.notification_sent -ne $true) {
+                throw "El webhook respondio sin confirmar que Microsoft Graph acepto el correo."
+              }
+
+              Write-Host "Webhook y correo de despliegue confirmados (intento $attempt/$maxWebhookAttempts)."
+              $webhookSent = $true
+              break
+            } catch {
+              $detail = $_.ErrorDetails.Message
+              if ([string]::IsNullOrWhiteSpace($detail) -and $_.Exception.Response) {
+                try {
+                  $stream = $_.Exception.Response.GetResponseStream()
+                  if ($stream) {
+                    $reader = [System.IO.StreamReader]::new($stream)
+                    $detail = $reader.ReadToEnd()
+                  }
+                } catch {}
+              }
+              $message = "Intento $attempt/$maxWebhookAttempts fallido: $($_.Exception.Message)"
+              if (-not [string]::IsNullOrWhiteSpace($detail)) { $message += ". Detalle: $detail" }
+              Write-Warning $message
+              if ($attempt -lt $maxWebhookAttempts) { Start-Sleep -Seconds ([Math]::Min(15 * $attempt, 60)) }
             }
-            if ([string]::IsNullOrWhiteSpace($detail)) {
-              Write-Warning "No se pudo notificar el webhook del chatbot: $($_.Exception.Message)"
-            } else {
-              Write-Warning "No se pudo notificar el webhook del chatbot: $($_.Exception.Message). Detalle: $detail"
-            }
+          }
+
+          if (-not $webhookSent) {
+            throw "No se pudo confirmar el registro y el correo de despliegue tras $maxWebhookAttempts intentos."
           }

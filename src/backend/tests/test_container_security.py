@@ -29,6 +29,15 @@ def test_deployment_requires_a_successful_validation_check():
     assert 'conclusion -ne "success"' in workflow
 
 
+def test_deployment_retries_and_requires_webhook_email_confirmation():
+    workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "deploy-chatbot.yml").read_text(encoding="utf-8")
+
+    assert "$maxWebhookAttempts = 8" in workflow
+    assert "$response.notification_sent -ne $true" in workflow
+    assert "Webhook y correo de despliegue confirmados" in workflow
+    assert "throw \"No se pudo confirmar el registro y el correo de despliegue" in workflow
+
+
 def test_container_runs_the_application_as_a_non_root_user():
     dockerfile = (REPOSITORY_ROOT / "src" / "backend" / "Dockerfile").read_text(encoding="utf-8")
 

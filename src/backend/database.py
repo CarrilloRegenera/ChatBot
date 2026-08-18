@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -17,7 +18,7 @@ load_dotenv(ENV_PATH)
 
 
 def _normalize_connection_timeout(connection_string: str) -> str:
-    timeout = os.getenv("SQL_CONNECTION_TIMEOUT", "5").strip() or "5"
+    timeout = os.getenv("SQL_CONNECTION_TIMEOUT", "15").strip() or "15"
     if re.search(r"Connection Timeout\s*=", connection_string, flags=re.IGNORECASE):
         return re.sub(
             r"Connection Timeout\s*=\s*[^;]+",
@@ -88,7 +89,7 @@ def _build_connection_string() -> str:
     database = os.getenv("SQL_DATABASE", "").strip()
     user = os.getenv("SQL_USER", "")
     password = os.getenv("SQL_PASSWORD", "")
-    timeout = os.getenv("SQL_CONNECTION_TIMEOUT", "5")
+    timeout = os.getenv("SQL_CONNECTION_TIMEOUT", "15")
     encrypt = os.getenv("SQL_ENCRYPT", "yes")
     trust_cert = os.getenv("SQL_TRUST_SERVER_CERTIFICATE", "no")
 
@@ -121,10 +122,44 @@ def _build_connection_string() -> str:
 _CONNECTION_STRING = _build_connection_string()
 
 
+def _connect_with_retry() -> pyodbc.Connection:
+    """Abre SQL Azure con reintentos para fallos transitorios de red/login.
+
+    No reintenta errores de consulta: estos se producen despues de abrir la
+    conexion y deben propagarse inmediatamente. Mantener esta logica aqui hace
+    que health, el webhook y el resto de accesos tengan el mismo comportamiento.
+    """
+    attempts = max(1, int(os.getenv("SQL_CONNECTION_RETRY_ATTEMPTS", "5")))
+    base_delay = max(0.0, float(os.getenv("SQL_CONNECTION_RETRY_DELAY_SECS", "2")))
+    last_error: pyodbc.Error | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return pyodbc.connect(_CONNECTION_STRING)
+        except pyodbc.Error as exc:
+            last_error = exc
+            if attempt == attempts:
+                break
+
+            # Retroceso acotado: 2, 4, 8, 16 s por defecto. Evita que un
+            # reinicio/cold start puntual de Azure SQL pierda la notificacion.
+            delay = min(base_delay * (2 ** (attempt - 1)), 20.0)
+            logger.warning(
+                "Conexion SQL fallida (intento %s/%s); se reintentara en %.1f s.",
+                attempt,
+                attempts,
+                delay,
+                exc_info=True,
+            )
+            time.sleep(delay)
+
+    raise last_error or RuntimeError("No se pudo abrir la conexion SQL")
+
+
 def get_connection() -> pyodbc.Connection:
     """Conexión cruda. Mantiene compatibilidad. Prefiere `db_conn()` para
     transaccionalidad y cierre garantizado."""
-    return pyodbc.connect(_CONNECTION_STRING)
+    return _connect_with_retry()
 
 
 def ping_database() -> None:
@@ -133,7 +168,7 @@ def ping_database() -> None:
     La usamos en startup y health para no declarar la API lista antes de que
     SQL esté realmente disponible para el primer login.
     """
-    with pyodbc.connect(_CONNECTION_STRING) as conn:
+    with _connect_with_retry() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
         cursor.fetchone()
@@ -147,7 +182,7 @@ def db_conn():
     - Rollback automático en cualquier excepción, re-elevada.
     - Cierre garantizado de la conexión (devuelve handle al pool).
     """
-    conn = pyodbc.connect(_CONNECTION_STRING)
+    conn = _connect_with_retry()
     try:
         yield conn
         conn.commit()

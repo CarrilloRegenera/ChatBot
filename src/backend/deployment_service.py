@@ -34,6 +34,11 @@ class DeploymentConfigurationError(RuntimeError):
     pass
 
 
+class DeploymentNotificationError(RuntimeError):
+    """El despliegue se registro, pero no pudo confirmarse su aviso por correo."""
+    pass
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -370,8 +375,10 @@ def _mark_notification_sent(run_id: int, conclusion: str) -> None:
 
 def _send_graph_mail(*, recipients: list[str], subject: str, html_body: str) -> None:
     if not EMAIL_ENABLED or EMAIL_PROVIDER.strip().lower() != "graph":
-        logger.info("Envio de correo omitido: Email__Enabled o Email__Provider no permiten Graph.")
-        return
+        raise DeploymentNotificationError(
+            "El correo de despliegue no esta habilitado con el proveedor Graph. "
+            "Revisa Email__Enabled y Email__Provider."
+        )
     missing = []
     if not GRAPH_EMAIL_TENANT_ID:
         missing.append("GraphEmail__TenantId")
@@ -382,7 +389,7 @@ def _send_graph_mail(*, recipients: list[str], subject: str, html_body: str) -> 
     if not GRAPH_EMAIL_FROM_USER:
         missing.append("GraphEmail__FromUser")
     if missing:
-        raise DeploymentConfigurationError(f"Faltan ajustes de correo Graph: {', '.join(missing)}")
+        raise DeploymentNotificationError(f"Faltan ajustes de correo Graph: {', '.join(missing)}")
 
     token_payload = parse.urlencode(
         {
@@ -422,8 +429,13 @@ def _send_graph_mail(*, recipients: list[str], subject: str, html_body: str) -> 
         },
         method="POST",
     )
-    with request.urlopen(graph_request, timeout=30):
-        logger.info("Correo de despliegue enviado a %s", ", ".join(recipients))
+    with request.urlopen(graph_request, timeout=30) as response:
+        # Graph devuelve 202 Accepted cuando ha aceptado el correo para envio.
+        if response.status != 202:
+            raise DeploymentNotificationError(
+                f"Microsoft Graph devolvio HTTP {response.status} al aceptar el correo de despliegue."
+            )
+        logger.info("Microsoft Graph acepto el correo de despliegue para %s", ", ".join(recipients))
 
 
 def _build_email_subject(run: dict[str, Any]) -> str:
@@ -481,25 +493,25 @@ def _build_email_body(run: dict[str, Any]) -> str:
     """.strip()
 
 
-def _maybe_notify(run: dict[str, Any]) -> None:
+def _maybe_notify(run: dict[str, Any]) -> bool:
     if (run.get("status") or "").lower() != "completed":
-        return
+        return False
     conclusion = (run.get("conclusion") or "").strip().lower()
     if not conclusion:
-        return
+        return False
     if conclusion == (run.get("last_notified_conclusion") or "").strip().lower():
-        return
+        return True
 
     settings = get_notification_settings()
     recipients = settings.get("recipients") or []
     if not recipients:
-        logger.info("No hay destinatarios configurados para avisos de despliegue.")
-        return
+        raise DeploymentNotificationError("No hay destinatarios configurados para avisos de despliegue.")
 
     subject = _build_email_subject(run)
     body = _build_email_body(run)
     _send_graph_mail(recipients=recipients, subject=subject, html_body=body)
     _mark_notification_sent(int(run["github_run_id"]), conclusion)
+    return True
 
 
 def register_webhook_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -514,7 +526,7 @@ def store_webhook_run(payload: dict[str, Any]) -> dict[str, Any]:
     return _upsert_run(record)
 
 
-def notify_run_if_needed(run_id: int) -> None:
+def notify_run_if_needed(run_id: int) -> bool:
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -555,7 +567,7 @@ def notify_run_if_needed(run_id: int) -> None:
         "duration_seconds": row[18],
         "last_notified_conclusion": row[19],
     }
-    _maybe_notify(run)
+    return _maybe_notify(run)
 
 
 def sync_recent_deployments(limit: int | None = None, page: int = 1) -> None:
