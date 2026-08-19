@@ -21,7 +21,6 @@ src/backend/LanzarChatbotDocker.bat
 src/backend/LanzarChatbotNube.bat
 src/frontend/config.js
 .claude/settings.local.json
-
 .claude/settings.json
 .claude/skills/
 .mcp.json
@@ -40,3 +39,5 @@ docs/auditoria_tecnica_rag_2026-06-25.md
 .pytest_cache/
 appservice-logs/
 appservice-logs.zip
+# Added by code-review-graph
+.code-review-graph/
