@@ -263,6 +263,9 @@ TABLE_QUERY_PATTERN = re.compile(
 )
 PAGE_REFERENCE_PATTERN = re.compile(r"\b(?:pag(?:ina)?|p[áa]g(?:ina)?|page)\.?\s*(\d{1,4})\b", re.IGNORECASE)
 ITC_REFERENCE_PATTERN = re.compile(r"\b(?:itc|guia|gu[ií]a)[-\s]*(bt|lat|rat)?[-\s]*(\d{1,2})\b", re.IGNORECASE)
+# Referencias ITC exactas (itc-bt-25, itc-lat-07, itc-rat-13) que fuerzan su
+# recuperacion por $contains y activan los boosts de scoring de target_itc_refs.
+TARGET_ITC_REF_PATTERN = re.compile(r"itc-(?:bt|lat|rat)-\d{2}")
 # Refs a instrucciones técnicas numeradas del RITE: "IT 3", "IT 3.3", "IT 1.1.1"
 IT_SECTION_REFERENCE_PATTERN = re.compile(r"\bit\s+(\d+(?:\.\d+){0,2})\b", re.IGNORECASE)
 TABLE_REFERENCE_PATTERN = re.compile(r"\btabla\s*(\d{1,3}(?:\.\d+)?)\b", re.IGNORECASE)
@@ -2876,7 +2879,7 @@ def _search_documents_detailed_chroma(
     normalized_question = query_profile["normalized_question"]
     target_itc_refs = {
         ref for ref in query_profile["exact_refs"]
-        if re.fullmatch(r"itc-(?:bt|lat|rat)-\d{2}", ref)
+        if TARGET_ITC_REF_PATTERN.fullmatch(ref)
     }
     if query_profile["temporal_query"]:
         for t in TEMPORAL_INJECT_TERMS:
