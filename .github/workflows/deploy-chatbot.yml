@@ -67,7 +67,7 @@ env:
   BLOB_CONTAINER_NAME: documentos-rag
   BLOB_PREFIX: ""
   TOP_K_RESULTS: "5"
-  ENABLE_RERANK: "true"
+  ENABLE_RERANK: "false"
   EMBEDDING_MODEL: intfloat/multilingual-e5-small
   EMBEDDING_FP16: "false"
   EMBEDDING_QUERY_PREFIX: "query:"
