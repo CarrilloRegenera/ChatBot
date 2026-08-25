@@ -11,14 +11,16 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from config import STOPWORDS
 from database import db_conn
-from rag_service import search_documents_detailed, _expected_domains, _normalize_text
+from rag_service import search_documents_detailed, _expected_domains, _normalize_text, _tokenize
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +113,42 @@ def domain_match_ratio(question: str, retrieved_sources: List[str], stats: Dict[
     return 0.0
 
 
+def _split_sentences(text: str) -> List[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?;])\s+|\n+", text) if s.strip()]
+
+
+def faithfulness_score(answer: str, context: str) -> Optional[float]:
+    """Proxy lexico de faithfulness: que fraccion de las frases con contenido
+    de `answer` comparten al menos una palabra clave con `context`.
+
+    No es un score de entailment real: no detecta afirmaciones que contradigan
+    el contexto, solo frases sin ningun anclaje lexico en las fuentes usadas
+    para generarlas. Devuelve None si no hay nada evaluable (answer/context
+    vacios, o ninguna frase con palabras clave propias).
+    """
+    if not answer.strip() or not context.strip():
+        return None
+    context_tokens = set(_tokenize(_normalize_text(context)))
+    evaluable = 0
+    supported = 0
+    for sentence in _split_sentences(answer):
+        keywords = {t for t in _tokenize(_normalize_text(sentence)) if t not in STOPWORDS and len(t) >= 5}
+        if not keywords:
+            continue
+        evaluable += 1
+        if keywords & context_tokens:
+            supported += 1
+    if evaluable == 0:
+        return None
+    return supported / evaluable
+
+
 def evaluate_single(
     question: str,
     expected_sources: List[str],
     top_k: int = DEFAULT_TOP_K,
+    answer: str = "",
+    validated_context: str = "",
 ) -> Dict[str, Any]:
     context, sources, stats = search_documents_detailed(question, n_results=top_k)
     return {
@@ -124,6 +158,7 @@ def evaluate_single(
         "recall": recall_at_k(expected_sources, sources),
         "precision": precision_at_k(expected_sources, sources),
         "domain_match": domain_match_ratio(question, sources, stats),
+        "faithfulness": faithfulness_score(answer, validated_context),
         "selected_count": stats.get("selected_count", 0),
         "expected_domains": stats.get("expected_domains", []),
     }
@@ -138,7 +173,13 @@ def evaluate_all(
         if not entry["question"].strip():
             continue
         try:
-            result = evaluate_single(entry["question"], entry["sources"], top_k=top_k)
+            result = evaluate_single(
+                entry["question"],
+                entry["sources"],
+                top_k=top_k,
+                answer=entry.get("answer", ""),
+                validated_context=entry.get("context", ""),
+            )
             result["id"] = entry["id"]
             result["route"] = entry.get("route", "")
             results.append(result)
@@ -154,12 +195,22 @@ def evaluate_all(
             })
 
     if not results:
-        return {"count": 0, "avg_recall": 0.0, "avg_precision": 0.0, "avg_domain_match": 0.0, "results": []}
+        return {
+            "count": 0,
+            "avg_recall": 0.0,
+            "avg_precision": 0.0,
+            "avg_domain_match": 0.0,
+            "avg_faithfulness": None,
+            "faithfulness_evaluable_count": 0,
+            "results": [],
+        }
 
     valid = [r for r in results if not r.get("error")]
     avg_recall = sum(r["recall"] for r in valid) / len(valid) if valid else 0.0
     avg_precision = sum(r["precision"] for r in valid) / len(valid) if valid else 0.0
     avg_domain = sum(r["domain_match"] for r in valid) / len(valid) if valid else 0.0
+    faithfulness_values = [r["faithfulness"] for r in valid if r.get("faithfulness") is not None]
+    avg_faithfulness = sum(faithfulness_values) / len(faithfulness_values) if faithfulness_values else None
 
     return {
         "count": len(results),
@@ -168,6 +219,8 @@ def evaluate_all(
         "avg_recall": round(avg_recall, 4),
         "avg_precision": round(avg_precision, 4),
         "avg_domain_match": round(avg_domain, 4),
+        "avg_faithfulness": round(avg_faithfulness, 4) if avg_faithfulness is not None else None,
+        "faithfulness_evaluable_count": len(faithfulness_values),
         "results": results,
     }
 
@@ -181,6 +234,10 @@ def compare_with_baseline(
         cur = current.get(metric, 0.0)
         base = baseline.get(metric, 0.0)
         deltas[metric] = round(cur - base, 4)
+    cur_faith = current.get("avg_faithfulness")
+    base_faith = baseline.get("avg_faithfulness")
+    if cur_faith is not None and base_faith is not None:
+        deltas["avg_faithfulness"] = round(cur_faith - base_faith, 4)
 
     regressions = []
     baseline_by_id = {r["id"]: r for r in baseline.get("results", []) if "id" in r}
@@ -210,6 +267,10 @@ def print_report(report: Dict[str, Any], baseline_comparison: Optional[Dict[str,
     print(f"  Recall@{report['top_k']}:        {report['avg_recall']:.4f}")
     print(f"  Precision@{report['top_k']}:     {report['avg_precision']:.4f}")
     print(f"  Domain match:    {report['avg_domain_match']:.4f}")
+    if report.get("avg_faithfulness") is not None:
+        print(f"  Faithfulness (proxy lexico):  {report['avg_faithfulness']:.4f}  (n={report['faithfulness_evaluable_count']})")
+    else:
+        print("  Faithfulness (proxy lexico):  sin datos evaluables (sin respuesta/contexto validados)")
     if report.get("errors"):
         print(f"  Errores:         {report['errors']}")
 

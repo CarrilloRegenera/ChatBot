@@ -9,6 +9,7 @@ from rag_evaluator import (
     _sources_overlap,
     _normalize_source,
     compare_with_baseline,
+    faithfulness_score,
 )
 
 
@@ -96,6 +97,31 @@ class TestPrecisionAtK:
 
     def test_no_expected_returns_zero(self):
         assert precision_at_k([], ["a.pdf"]) == 0.0
+
+
+class TestFaithfulnessScore:
+    def test_fully_supported_answer(self):
+        context = "La ITC-BT-24 establece las protecciones contra contactos indirectos en viviendas."
+        answer = "Las protecciones contra contactos indirectos se regulan en viviendas."
+        assert faithfulness_score(answer, context) == 1.0
+
+    def test_unsupported_sentence_lowers_score(self):
+        context = "La ITC-BT-24 establece las protecciones contra contactos indirectos en viviendas."
+        answer = (
+            "Las protecciones contra contactos indirectos se regulan en viviendas. "
+            "Ademas, los drones agricolas deben inscribirse en un registro aeronautico."
+        )
+        score = faithfulness_score(answer, context)
+        assert score == 0.5
+
+    def test_empty_answer_returns_none(self):
+        assert faithfulness_score("", "algo de contexto") is None
+
+    def test_empty_context_returns_none(self):
+        assert faithfulness_score("alguna respuesta", "") is None
+
+    def test_no_content_words_returns_none(self):
+        assert faithfulness_score("Si. No. Ok.", "contexto con palabras largas") is None
 
 
 class TestCompareWithBaseline:
