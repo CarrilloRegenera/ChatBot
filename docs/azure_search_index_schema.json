@@ -1,123 +1,66 @@
 {
+  "_note": "Regenerado desde src/backend/azure_rag_service.py (_build_index_fields, _build_semantic_config, ensure_azure_index) el 2026-08-25. Este JSON es solo documentacion: el codigo es la fuente de verdad y crea/actualiza el indice real en tiempo de ejecucion.",
   "name": "idx-chatbot-rag",
   "fields": [
-    {
-      "name": "chunk_id",
-      "type": "Edm.String",
-      "key": true,
-      "filterable": true
-    },
-    {
-      "name": "document_id",
-      "type": "Edm.String",
-      "filterable": true
-    },
-    {
-      "name": "document_name",
-      "type": "Edm.String",
-      "searchable": true,
-      "filterable": true
-    },
-    {
-      "name": "file_name",
-      "type": "Edm.String",
-      "searchable": true,
-      "filterable": true
-    },
-    {
-      "name": "source_path",
-      "type": "Edm.String",
-      "searchable": true,
-      "filterable": true
-    },
-    {
-      "name": "blob_path",
-      "type": "Edm.String",
-      "searchable": true,
-      "filterable": true
-    },
-    {
-      "name": "content",
-      "type": "Edm.String",
-      "searchable": true
-    },
+    { "name": "chunk_id", "type": "Edm.String", "key": true, "filterable": true },
+    { "name": "document_id", "type": "Edm.String", "filterable": true },
+    { "name": "document_name", "type": "Edm.String", "searchable": true },
+    { "name": "file_name", "type": "Edm.String", "searchable": true },
+    { "name": "source_path", "type": "Edm.String", "filterable": true },
+    { "name": "blob_path", "type": "Edm.String", "filterable": true },
+    { "name": "content", "type": "Edm.String", "searchable": true },
     {
       "name": "content_vector",
       "type": "Collection(Edm.Single)",
       "searchable": true,
       "vectorSearchDimensions": 384,
-      "vectorSearchProfileName": "chatbot-vector-profile"
+      "vectorSearchProfileName": "hnsw-profile"
     },
-    {
-      "name": "page_number",
-      "type": "Edm.Int32",
-      "filterable": true,
-      "sortable": true
-    },
-    {
-      "name": "page",
-      "type": "Edm.Int32",
-      "filterable": true,
-      "sortable": true
-    },
-    {
-      "name": "chunk_number",
-      "type": "Edm.Int32",
-      "filterable": true,
-      "sortable": true
-    },
-    {
-      "name": "domain",
-      "type": "Edm.String",
-      "filterable": true,
-      "facetable": true
-    },
-    {
-      "name": "category",
-      "type": "Edm.String",
-      "filterable": true,
-      "facetable": true
-    },
-    {
-      "name": "section",
-      "type": "Edm.String",
-      "searchable": true,
-      "filterable": true
-    },
-    {
-      "name": "topics",
-      "type": "Edm.String",
-      "searchable": true
-    },
-    {
-      "name": "chunk_kind",
-      "type": "Edm.String",
-      "filterable": true,
-      "facetable": true
-    },
-    {
-      "name": "table_signal_count",
-      "type": "Edm.Int32",
-      "filterable": true,
-      "sortable": true
-    },
-    {
-      "name": "file_hash",
-      "type": "Edm.String",
-      "filterable": true
-    }
+    { "name": "page_number", "type": "Edm.Int32", "filterable": true },
+    { "name": "page", "type": "Edm.Int32", "filterable": true },
+    { "name": "chunk_number", "type": "Edm.Int32" },
+    { "name": "domain", "type": "Edm.String", "filterable": true, "facetable": true },
+    { "name": "category", "type": "Edm.String", "filterable": true },
+    { "name": "department", "type": "Edm.String", "filterable": true, "facetable": true },
+    { "name": "document_type", "type": "Edm.String", "filterable": true, "facetable": true },
+    { "name": "confidentiality", "type": "Edm.String", "filterable": true },
+    { "name": "regulation", "type": "Edm.String", "filterable": true, "facetable": true },
+    { "name": "document_variant", "type": "Edm.String", "filterable": true, "facetable": true },
+    { "name": "section", "type": "Edm.String", "searchable": true },
+    { "name": "section_type", "type": "Edm.String", "filterable": true, "facetable": true },
+    { "name": "topics", "type": "Edm.String", "searchable": true },
+    { "name": "chunk_kind", "type": "Edm.String", "filterable": true },
+    { "name": "content_intent", "type": "Edm.String", "filterable": true, "facetable": true },
+    { "name": "scope_hint", "type": "Edm.String", "searchable": true },
+    { "name": "table_hint", "type": "Edm.String", "searchable": true },
+    { "name": "table_signal_count", "type": "Edm.Int32" },
+    { "name": "file_hash", "type": "Edm.String", "filterable": true },
+    { "name": "document_layer", "type": "Edm.String", "filterable": true, "facetable": true },
+    { "name": "itc_refs", "type": "Edm.String", "searchable": true, "filterable": true },
+    { "name": "exact_refs", "type": "Edm.String", "searchable": true, "filterable": true },
+    { "name": "article_refs", "type": "Edm.String", "searchable": true, "filterable": true },
+    { "name": "it_section_refs", "type": "Edm.String", "searchable": true, "filterable": true },
+    { "name": "article_ref", "type": "Edm.String", "searchable": true, "filterable": true },
+    { "name": "section_level", "type": "Edm.Int32", "filterable": true }
   ],
   "vectorSearch": {
     "algorithms": [
-      {
-        "name": "chatbot-hnsw",
-        "kind": "hnsw"
-      }
+      { "name": "hnsw-config", "kind": "hnsw" }
     ],
     "profiles": [
+      { "name": "hnsw-profile", "algorithm": "hnsw-config" }
+    ]
+  },
+  "semantic": {
+    "defaultConfiguration": "semantic-config",
+    "configurations": [
       {
-        "name": "chatbot-vector-profile",
-        "algorithm": "chatbot-hnsw"
+        "name": "semantic-config",
+        "prioritizedFields": {
+          "titleField": "section",
+          "contentFields": ["content"],
+          "keywordsFields": ["topics"]
+        }
       }
     ]
   }
