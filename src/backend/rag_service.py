@@ -2876,7 +2876,7 @@ def _search_documents_detailed_chroma(
     normalized_question = query_profile["normalized_question"]
     target_itc_refs = {
         ref for ref in query_profile["exact_refs"]
-        if re.fullmatch(r"itc-bt-\d{2}", ref)
+        if re.fullmatch(r"itc-(?:bt|lat|rat)-\d{2}", ref)
     }
     if query_profile["temporal_query"]:
         for t in TEMPORAL_INJECT_TERMS:
