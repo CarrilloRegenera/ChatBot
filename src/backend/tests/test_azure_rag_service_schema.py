@@ -180,6 +180,7 @@ def test_iter_pdf_chunks_refreshes_progress_while_processing_pages(monkeypatch):
     assert all(update["current_file"].endswith("EMSA Guidance on SSE_PART1.pdf") for update in progress_updates)
     assert docs[0]["section"] == "Seccion 1"
     assert docs[1]["section"] == "Seccion 2"
+    assert docs[0]["content"].startswith("Documento: EMSA Guidance on SSE_PART1")
 
 
 def test_azure_index_health_reports_ready_index(monkeypatch):

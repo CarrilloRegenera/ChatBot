@@ -54,6 +54,7 @@ from rag_service import (
     RERANK_MODEL,
     _apply_embedding_prefix,
     _clean_question,
+    _contextualize_chunk,
     _clean_structural_chunk_score,
     _embedding_fn,
     _encode_passage,
@@ -489,6 +490,9 @@ def _iter_pdf_chunks(
                     active_itc_heading,
                     active_itc_section,
                 )
+                contextual_chunk = _contextualize_chunk(
+                    chunk, blob_name, document_profile, chunk_profile
+                )
                 docs.append({
                     "chunk_id": _chunk_id(blob_name, page_number, chunk_index),
                     "document_id": document_id,
@@ -496,8 +500,8 @@ def _iter_pdf_chunks(
                     "file_name": file_name,
                     "source_path": blob_name,
                     "blob_path": blob_name,
-                    "content": chunk,
-                    AZURE_SEARCH_VECTOR_FIELD: _encode_passage(chunk),
+                    "content": contextual_chunk,
+                    AZURE_SEARCH_VECTOR_FIELD: _encode_passage(contextual_chunk),
                     "page_number": page_number,
                     "page": page_number,
                     "chunk_number": chunk_index,

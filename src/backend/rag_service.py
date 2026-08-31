@@ -591,7 +591,7 @@ def _rag_index_version_tag(value: str) -> str:
 
 
 _index_version_tag = _rag_index_version_tag(RAG_INDEX_VERSION)
-_EF_VERSION = f"{_model_tag}-v2-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}-i{_index_version_tag}"
+_EF_VERSION = f"{_model_tag}-v3-contextual-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}-i{_index_version_tag}"
 
 _EMBEDDING_CACHE_FILE = Path(CHROMA_DB_PATH) / "_embedding_cache.json"
 _embedding_cache = EmbeddingCache(
@@ -2035,6 +2035,31 @@ def _chunk_profile_metadata(
     }
 
 
+def _contextualize_chunk(
+    content: str,
+    source_name: str,
+    document_profile: Dict[str, object],
+    chunk_profile: Dict[str, object],
+) -> str:
+    """Añade al chunk el contexto documental ya disponible antes de indexarlo."""
+    fields = [
+        f"Documento: {Path(source_name).stem}",
+        f"Dominio: {document_profile.get('domain', '')}",
+        f"Tipo: {document_profile.get('document_type', '')}",
+        f"Sección: {chunk_profile.get('section', '')}",
+    ]
+    references = (
+        chunk_profile.get("itc_refs")
+        or chunk_profile.get("article_refs")
+        or chunk_profile.get("exact_refs")
+        or ""
+    )
+    if references:
+        fields.append(f"Referencias: {references}")
+    context = " | ".join(field for field in fields if not field.endswith(": "))
+    return f"{context}\n{content}" if context else content
+
+
 def _page_structure_context(
     text: str,
     active_itc: str = "",
@@ -2484,9 +2509,13 @@ def _collection_add_batched(
     batch_size: int = CHROMA_ADD_BATCH_SIZE,
     use_embedding_cache: bool = False,
 ) -> None:
+    contextual_documents = [
+        _contextualize_chunk(document, str(metadata.get("source", "")), metadata, metadata)
+        for document, metadata in zip(documents, metadatas)
+    ]
     add_batched_to_collection(
         target_collection,
-        documents=documents,
+        documents=contextual_documents,
         metadatas=metadatas,
         ids=ids,
         batch_size=batch_size,

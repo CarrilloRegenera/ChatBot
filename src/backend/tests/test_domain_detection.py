@@ -17,6 +17,7 @@ from rag_service import (  # noqa: E402
     _auto_technical_terms,
     _decode_chunk_corruption,
     _chunk_profile_metadata,
+    _contextualize_chunk,
     _document_profile_metadata,
     _document_variant_from_source,
     _domain_phrase_queries,
@@ -827,6 +828,20 @@ def test_rag_index_version_is_part_of_embedding_version():
     assert "-i" in _EF_VERSION
     assert _rag_index_version_tag("  produccion 2 / textos corruptos ") == "produccion-2-textos-corruptos"
     assert _rag_index_version_tag("") == "1"
+
+
+def test_contextualize_chunk_uses_existing_document_metadata_only():
+    contextualized = _contextualize_chunk(
+        "La limpieza es anual.",
+        "rite/RITE IT3.pdf",
+        {"domain": "rite", "document_type": "reglamento"},
+        {"section": "IT 3.3", "itc_refs": "", "article_refs": "", "exact_refs": ""},
+    )
+
+    assert contextualized == (
+        "Documento: RITE IT3 | Dominio: rite | Tipo: reglamento | Sección: IT 3.3\n"
+        "La limpieza es anual."
+    )
 
 
 def test_decode_corruption_uses_config_not_hardcode():
