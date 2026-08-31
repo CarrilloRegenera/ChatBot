@@ -591,7 +591,7 @@ def _rag_index_version_tag(value: str) -> str:
 
 
 _index_version_tag = _rag_index_version_tag(RAG_INDEX_VERSION)
-_EF_VERSION = f"{_model_tag}-v3-contextual-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}-i{_index_version_tag}"
+_EF_VERSION = f"{_model_tag}-v3-contextual-t2-p{_prefix_tag}-c{CHUNK_SIZE}-o{CHUNK_OVERLAP}-i{_index_version_tag}"
 
 _EMBEDDING_CACHE_FILE = Path(CHROMA_DB_PATH) / "_embedding_cache.json"
 _embedding_cache = EmbeddingCache(
@@ -1090,6 +1090,11 @@ def _extract_table_row_chunks(page, page_text: str) -> List[Dict[str, object]]:
                     "row_index": row_index,
                 })
     return rows
+
+
+def _split_table_row_document(document: str) -> List[str]:
+    parts = _split_structured_blocks([{"text": document, "section": ""}])
+    return [part for part, _section in parts] or [document]
 
 
 def _format_chunk(text: str, section: str) -> str:
@@ -2704,10 +2709,10 @@ def _index_file(filepath: Path, root_path: Path, file_hash: str) -> int:
                     "table_signal_count": max(_table_signal_count(row_doc), 1),
                     "file_hash": file_hash,
                 }
-                row_id = f"{source_name}-{page_index + 1}-t{table_index}-r{row_index}"
-                documents.append(row_doc)
-                metadatas.append(row_metadata)
-                ids.append(row_id)
+                for row_part, row_part_doc in enumerate(_split_table_row_document(row_doc), start=1):
+                    documents.append(row_part_doc)
+                    metadatas.append({**row_metadata, "row_part": row_part})
+                    ids.append(f"{source_name}-{page_index + 1}-t{table_index}-r{row_index}-p{row_part}")
                 # Las filas de tabla se indexan solo en la colección principal
                 # (filtrable por chunk_kind="table_row"). Se mantiene
                 # table_collection para consultas legacy hasta próxima reindex.

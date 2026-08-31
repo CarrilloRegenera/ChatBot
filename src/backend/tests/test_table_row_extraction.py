@@ -4,9 +4,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rag_service import (
+    CHUNK_SENTENCE_GRACE,
+    CHUNK_SIZE,
     _extract_table_legend,
     _expand_legend_value,
     _row_document,
+    _split_table_row_document,
     _table_headers_and_body,
 )
 
@@ -114,6 +117,14 @@ class TestExpandLegendValue:
 
 
 class TestRowDocumentHeaderFallback:
+    def test_long_row_is_split_for_embedding(self):
+        document = "FILA_TABLA | Tabla 1 | " + ("columna: valor largo " * 120)
+
+        parts = _split_table_row_document(document)
+
+        assert len(parts) > 1
+        assert all(len(part) <= CHUNK_SIZE + CHUNK_SENTENCE_GRACE for part in parts)
+
     def test_composite_power_header_preserves_both_ranges(self):
         headers, body = _table_headers_and_body(
             [
