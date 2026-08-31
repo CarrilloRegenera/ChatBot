@@ -74,8 +74,8 @@ from rag_chunking_service import (
 from rag_pdf_utils import decode_chunk_corruption, is_noise_chunk, normalize_rite_table31_text, ocr_page_text
 
 
-CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "900"))
-CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
+CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "450"))
+CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "90"))
 
 _DOMAINS_CONFIG_PATH = Path(__file__).parent / "domains.json"
 
@@ -218,7 +218,7 @@ SECTION_PRIORITY_BOOST = 8
 SECTION_TITLE_BOOST = 6
 COMPARISON_PRIORITY_BOOST = 3
 LOW_SIGNAL_PENALTY = 5
-CHUNK_SENTENCE_GRACE = int(os.getenv("RAG_CHUNK_SENTENCE_GRACE", "260"))
+CHUNK_SENTENCE_GRACE = int(os.getenv("RAG_CHUNK_SENTENCE_GRACE", "120"))
 HEADING_PATTERN = re.compile(r"^(?:\d+(?:\.\d+)*[\.\)]?\s+)?[A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑa-záéíóúüñ\s\-/,:()]{3,}$")
 NORMATIVE_HEADING_PATTERN = re.compile(
     r"^(?:"
