@@ -182,6 +182,10 @@ def record_interaction_pending(
     route: str = "knowledge",
     from_memory: bool = False,
     elapsed_ms: int = 0,
+    router_ms: int | None = None,
+    rag_ms: int | None = None,
+    llm_ms: int | None = None,
+    db_ms: int | None = None,
 ) -> int:
     final_confidence = confidence if final_confidence is None else final_confidence
     base_confidence = final_confidence if base_confidence is None else base_confidence
@@ -196,10 +200,10 @@ def record_interaction_pending(
                 ConversacionId, Pregunta, Respuesta, Fuentes, Contexto, Estado, Confianza,
                 PromptTokens, CompletionTokens, TotalTokens, Modelo, ModeloBase, ModeloFinal,
                 ConfianzaBase, ConfianzaFinal, Escalado, MotivoEscalado, Ruta, DesdeMemoria,
-                TiempoRespuestaMs
+                TiempoRespuestaMs, RouterMs, RagMs, LlmMs, DbMs
             )
             OUTPUT INSERTED.Id
-            VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             conversation_id,
             question,
@@ -220,9 +224,37 @@ def record_interaction_pending(
             route,
             1 if from_memory else 0,
             elapsed_ms,
+            router_ms,
+            rag_ms,
+            llm_ms,
+            db_ms,
         )
         interaction_id = cursor.fetchone()[0]
     return interaction_id
+
+
+def update_interaction_latency(
+    interaction_id: int,
+    *,
+    router_ms: int,
+    rag_ms: int,
+    llm_ms: int,
+    db_ms: int,
+) -> None:
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE dbo.InteraccionesRAG
+            SET RouterMs = ?, RagMs = ?, LlmMs = ?, DbMs = ?
+            WHERE Id = ?
+            """,
+            router_ms,
+            rag_ms,
+            llm_ms,
+            db_ms,
+            interaction_id,
+        )
 
 
 def list_pending_users() -> List[Dict]:
@@ -475,6 +507,34 @@ def get_admin_metrics(days: int = 30) -> Dict:
         )
         model_rows = cursor.fetchall()
 
+        cursor.execute(
+            """
+            WITH samples AS (
+                SELECT RouterMs, RagMs, LlmMs, DbMs, TiempoRespuestaMs
+                FROM dbo.InteraccionesRAG
+                WHERE FechaCreacion >= DATEADD(day, ?, SYSUTCDATETIME())
+                  AND RouterMs IS NOT NULL
+            ), percentiles AS (
+                SELECT
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY TiempoRespuestaMs) OVER () AS p50_ms,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY TiempoRespuestaMs) OVER () AS p95_ms
+                FROM samples
+            )
+            SELECT
+                COUNT(*) AS samples,
+                ISNULL(AVG(CAST(RouterMs AS FLOAT)), 0) AS avg_router_ms,
+                ISNULL(AVG(CAST(RagMs AS FLOAT)), 0) AS avg_rag_ms,
+                ISNULL(AVG(CAST(LlmMs AS FLOAT)), 0) AS avg_llm_ms,
+                ISNULL(AVG(CAST(DbMs AS FLOAT)), 0) AS avg_db_ms,
+                ISNULL(MAX(p50_ms), 0) AS p50_ms,
+                ISNULL(MAX(p95_ms), 0) AS p95_ms
+            FROM samples
+            CROSS JOIN percentiles
+            """,
+            -abs(days),
+        )
+        latency_row = cursor.fetchone()
+
     total_interactions = int(row[0] or 0)
     validated = int(row[1] or 0)
     pending = int(row[2] or 0)
@@ -484,6 +544,15 @@ def get_admin_metrics(days: int = 30) -> Dict:
     total_completion_tokens = int(row[6] or 0)
     total_tokens = int(row[7] or 0)
     avg_latency = float(row[8] or 0.0)
+    latency_breakdown = {
+        "samples": int(latency_row[0] or 0),
+        "avg_router_ms": round(float(latency_row[1] or 0.0), 2),
+        "avg_rag_ms": round(float(latency_row[2] or 0.0), 2),
+        "avg_llm_ms": round(float(latency_row[3] or 0.0), 2),
+        "avg_db_ms": round(float(latency_row[4] or 0.0), 2),
+        "p50_ms": round(float(latency_row[5] or 0.0), 2),
+        "p95_ms": round(float(latency_row[6] or 0.0), 2),
+    }
 
     validation_rate = (validated / total_interactions) if total_interactions else 0.0
     cost_estimated_usd = 0.0
@@ -524,6 +593,7 @@ def get_admin_metrics(days: int = 30) -> Dict:
         "completion_tokens": total_completion_tokens,
         "total_tokens": total_tokens,
         "avg_latency_ms": round(avg_latency, 2),
+        "latency_breakdown": latency_breakdown,
         "estimated_cost_usd": round(cost_estimated_usd, 6),
         "model": OPENAI_MODEL,
         "baseline_model": LLM_SECONDARY_MODEL,

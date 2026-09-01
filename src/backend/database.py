@@ -392,6 +392,14 @@ def ensure_app_schema() -> None:
                 ALTER TABLE dbo.InteraccionesRAG ADD DesdeMemoria BIT NOT NULL CONSTRAINT DF_InteraccionesRAG_DesdeMemoria DEFAULT 0;
             IF COL_LENGTH('dbo.InteraccionesRAG', 'TiempoRespuestaMs') IS NULL
                 ALTER TABLE dbo.InteraccionesRAG ADD TiempoRespuestaMs INT NULL;
+            IF COL_LENGTH('dbo.InteraccionesRAG', 'RouterMs') IS NULL
+                ALTER TABLE dbo.InteraccionesRAG ADD RouterMs INT NULL;
+            IF COL_LENGTH('dbo.InteraccionesRAG', 'RagMs') IS NULL
+                ALTER TABLE dbo.InteraccionesRAG ADD RagMs INT NULL;
+            IF COL_LENGTH('dbo.InteraccionesRAG', 'LlmMs') IS NULL
+                ALTER TABLE dbo.InteraccionesRAG ADD LlmMs INT NULL;
+            IF COL_LENGTH('dbo.InteraccionesRAG', 'DbMs') IS NULL
+                ALTER TABLE dbo.InteraccionesRAG ADD DbMs INT NULL;
             """
         )
 
