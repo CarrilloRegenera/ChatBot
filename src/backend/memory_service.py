@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import re
 import unicodedata
 from typing import Dict, List, Optional
@@ -255,6 +256,23 @@ def update_interaction_latency(
             db_ms,
             interaction_id,
         )
+
+
+def record_knowledge_interaction_and_message(**kwargs) -> tuple[int, int]:
+    """Registra interacción, mensaje y desglose usando una sola conexión SQL."""
+    started = time.perf_counter()
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO dbo.InteraccionesRAG (ConversacionId,Pregunta,Respuesta,Fuentes,Contexto,Estado,Confianza,PromptTokens,CompletionTokens,TotalTokens,Modelo,ModeloBase,ModeloFinal,ConfianzaBase,ConfianzaFinal,Escalado,MotivoEscalado,Ruta,DesdeMemoria,TiempoRespuestaMs,RouterMs,RagMs,LlmMs)
+            OUTPUT INSERTED.Id VALUES (?,?,?,?,?,'pendiente',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            kwargs["conversation_id"], kwargs["question"], kwargs["answer"], _to_json(kwargs["sources"]), kwargs["context"], kwargs["confidence"], kwargs["prompt_tokens"], kwargs["completion_tokens"], kwargs["total_tokens"], kwargs["final_model"], kwargs["base_model"], kwargs["final_model"], kwargs["base_confidence"], kwargs["final_confidence"], 1 if kwargs["escalated"] else 0, (kwargs["escalation_reason"] or "")[:80], "knowledge", 0, kwargs["elapsed_ms"], kwargs["router_ms"], kwargs["rag_ms"], kwargs["llm_ms"],
+        )
+        interaction_id = cursor.fetchone()[0]
+        cursor.execute("INSERT INTO dbo.Mensajes (ConversacionId,Pregunta,Respuesta,TiempoRespuestaMs) VALUES (?,?,?,?)", kwargs["conversation_id"], kwargs["question"], kwargs["answer"], kwargs["elapsed_ms"])
+        db_ms = int((time.perf_counter() - started) * 1000)
+        cursor.execute("UPDATE dbo.InteraccionesRAG SET DbMs=? WHERE Id=?", db_ms, interaction_id)
+    return interaction_id, db_ms
 
 
 def list_pending_users() -> List[Dict]:

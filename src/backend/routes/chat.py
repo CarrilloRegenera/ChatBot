@@ -612,7 +612,7 @@ def send_message(data: MessageRequest, request: Request):
                 try:
                     raise_if_request_cancelled(request_id)
                     stage_metrics_db_start = time.time()
-                    interaction_id = _memory_service().record_interaction_pending(
+                    interaction_id, db_ms = _memory_service().record_knowledge_interaction_and_message(
                         conversation_id=data.conversation_id,
                         question=data.question,
                         answer=response,
@@ -636,7 +636,7 @@ def send_message(data: MessageRequest, request: Request):
                         rag_ms=rag_ms,
                         llm_ms=llm_ms,
                     )
-                    db_ms += int((time.time() - stage_metrics_db_start) * 1000)
+                    db_ms = max(db_ms, int((time.time() - stage_metrics_db_start) * 1000))
                 except Exception:
                     logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo registrar InteraccionesRAG")
         except RequestCancelledError:
@@ -680,18 +680,8 @@ def send_message(data: MessageRequest, request: Request):
         elapsed = int((time.time() - start) * 1000)
         response, confidence = _apply_known_technical_answer_overrides(data.question, response, confidence)
         raise_if_request_cancelled(request_id)
-        db_ms += _save_chat_message(data.conversation_id, data.question, response, elapsed)
-        if interaction_id is not None:
-            try:
-                _memory_service().update_interaction_latency(
-                    interaction_id,
-                    router_ms=router_ms,
-                    rag_ms=rag_ms,
-                    llm_ms=llm_ms,
-                    db_ms=db_ms,
-                )
-            except Exception:
-                logger.exception("[ALERT][METRICS_WRITE_ERROR] No se pudo actualizar desglose de latencia")
+        if interaction_id is None:
+            db_ms += _save_chat_message(data.conversation_id, data.question, response, elapsed)
 
         if llm_retries > 0:
             logger.warning("[ALERT][LLM_RETRY] conv=%s retries=%s q=\"%s\"", data.conversation_id, llm_retries, q_preview(data.question))
