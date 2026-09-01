@@ -202,3 +202,20 @@ def test_search_documents_detailed_marks_empty_index_after_failed_sync():
     assert stats["index_status"] == "sync_failed"
     assert stats["backend"] == "chroma"
     assert stats["expected_domains"] == ["ops"]
+
+
+def test_sync_documents_updates_document_source_registry_after_chroma_sync():
+    with (
+        mock.patch.object(rag_service, "RAG_BACKEND", "chroma"),
+        mock.patch.object(rag_service, "_sync_documents_chroma", return_value={"added": 1, "updated": 0, "removed": 0}),
+        mock.patch.object(rag_service, "list_indexed_sources", return_value={"ops/manual.pdf": "hash-1"}),
+        mock.patch("document_source_registry.sync_document_source_registry") as sync_registry,
+    ):
+        result = rag_service.sync_documents("ignored")
+
+    assert result == {"added": 1, "updated": 0, "removed": 0}
+    sync_registry.assert_called_once_with(
+        {"ops/manual.pdf": "hash-1"},
+        backend="chroma",
+        profile_resolver=rag_service._document_profile_metadata,
+    )

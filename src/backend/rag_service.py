@@ -2858,8 +2858,23 @@ def sync_documents(
 ) -> Dict[str, int]:
     if RAG_BACKEND == "azure_search":
         from azure_rag_service import sync_documents_from_blob
-        return sync_documents_from_blob(progress_callback=progress_callback)
-    return _sync_documents_chroma(folder_path, progress_callback=progress_callback)
+        result = sync_documents_from_blob(progress_callback=progress_callback)
+    else:
+        result = _sync_documents_chroma(folder_path, progress_callback=progress_callback)
+
+    try:
+        from document_source_registry import sync_document_source_registry
+
+        sync_document_source_registry(
+            list_indexed_sources(),
+            backend=RAG_BACKEND,
+            profile_resolver=_document_profile_metadata,
+        )
+    except Exception:
+        # El inventario aporta gobierno documental, pero no debe deshacer un
+        # indexado RAG que ya se ha completado correctamente.
+        logger.exception("No se pudo actualizar el inventario DocumentosFuente")
+    return result
 
 
 def load_documents(folder_path: str = DOCUMENTS_PATH, reset: bool = False) -> int:
