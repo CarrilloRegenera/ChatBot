@@ -9,6 +9,22 @@ from typing import Callable, Dict
 from database import db_conn
 
 
+def list_active_document_sources(backend: str) -> Dict[str, str]:
+    """Fuentes activas del catálogo, sin recorrer los chunks del índice RAG."""
+    with db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT RutaFuente, HashContenido
+            FROM dbo.DocumentosFuente
+            WHERE Backend = ? AND EstadoIndexacion = 'indexado'
+            ORDER BY RutaFuente
+            """,
+            backend.strip().lower(),
+        )
+        return {str(row[0]): str(row[1] or "") for row in cursor.fetchall()}
+
+
 def _normalize_source_path(source_path: str) -> str:
     return str(source_path or "").replace("\\", "/").strip("/")
 

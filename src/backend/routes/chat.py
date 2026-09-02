@@ -35,6 +35,7 @@ from chat_technical_response_service import (
 )
 from config import CONVERSATION_LOCK_TIMEOUT_SECS, TOP_K_COMPLEX_QUERY, TOP_K_SYMBOL_QUERY
 from database import db_conn
+from document_source_registry import list_active_document_sources
 from document_inventory_service import format_document_inventory_response
 from models import (
     ConversationRequest,
@@ -446,7 +447,11 @@ def send_message(data: MessageRequest, request: Request):
             )
 
         if route == "document_inventory":
-            indexed_sources = _rag_service().list_indexed_sources()
+            try:
+                indexed_sources = list_active_document_sources(_rag_service().RAG_BACKEND)
+            except Exception:
+                logger.exception("No se pudo leer DocumentosFuente; usando índice RAG")
+                indexed_sources = _rag_service().list_indexed_sources()
             response = format_document_inventory_response(
                 indexed_sources,
                 data.question,
