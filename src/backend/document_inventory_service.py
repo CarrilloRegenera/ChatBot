@@ -37,6 +37,18 @@ def inventory_focus_domains(
     ]
 
 
+def inventory_sources_for_question(
+    indexed_sources: Dict[str, str],
+    question: str,
+    *,
+    detect_hint_domains: Callable[[str], List[str]],
+) -> List[str]:
+    grouped = group_indexed_sources(indexed_sources)
+    focus_domains = inventory_focus_domains(question, grouped, detect_hint_domains=detect_hint_domains)
+    domains = focus_domains or sorted(grouped)
+    return [source for domain in domains for source in grouped.get(domain, [])]
+
+
 def source_display_name(source: str) -> str:
     normalized = str(source or "").replace("\\", "/").strip("/")
     if not normalized:

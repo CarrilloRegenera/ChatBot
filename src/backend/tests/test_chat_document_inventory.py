@@ -5,7 +5,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import rag_service
-from document_inventory_service import format_document_inventory_response
+from document_inventory_service import format_document_inventory_response, inventory_sources_for_question
 
 
 def test_format_document_inventory_response_groups_domains_and_counts():
@@ -67,6 +67,15 @@ def test_format_document_inventory_response_can_focus_on_other_areas_too():
     assert "- RITE-2021-BOE-A-2021-4572.pdf" in response
     assert "1329648_CENELEC_IEC_PDF.pdf" not in response
     assert "BOE-326_Reglamento_electrotecnico_para_baja_tension_e_ITC.pdf" not in response
+
+
+def test_inventory_sources_for_question_only_returns_focused_domain():
+    sources = inventory_sources_for_question(
+        {"rite/RITE IT3.pdf": "h1", "ops/guia.pdf": "h2"},
+        "Que documentos tenemos de RITE?",
+        detect_hint_domains=rag_service.detect_hint_domains,
+    )
+    assert sources == ["rite/RITE IT3.pdf"]
 
 
 def test_list_indexed_sources_dispatches_to_azure_backend():

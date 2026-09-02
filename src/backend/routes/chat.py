@@ -36,7 +36,7 @@ from chat_technical_response_service import (
 from config import CONVERSATION_LOCK_TIMEOUT_SECS, TOP_K_COMPLEX_QUERY, TOP_K_SYMBOL_QUERY
 from database import db_conn
 from document_source_registry import list_active_document_sources
-from document_inventory_service import format_document_inventory_response
+from document_inventory_service import format_document_inventory_response, inventory_sources_for_question
 from models import (
     ConversationRequest,
     MessageCancelRequest,
@@ -466,7 +466,9 @@ def send_message(data: MessageRequest, request: Request):
                 confidence=1.0,
                 route=route,
                 elapsed_ms=elapsed,
-                sources=sorted(indexed_sources)[:20],
+                sources=inventory_sources_for_question(
+                    indexed_sources, data.question, detect_hint_domains=_rag_service().detect_hint_domains
+                )[:20],
                 model="inventory_formatter",
                 from_memory=False,
                 record_pending_interaction_safe=_record_pending_interaction_safe,
