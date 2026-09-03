@@ -1015,6 +1015,7 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
                     "text": postprocess_answer(text, question=question),
                     "usage": _extract_usage(response),
                     "model": active_model,
+                    "reasoning_effort": reasoning_effort or "default",
                     "retries": retries,
                 }
 

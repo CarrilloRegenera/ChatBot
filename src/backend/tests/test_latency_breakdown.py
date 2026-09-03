@@ -18,11 +18,12 @@ def test_record_interaction_pending_persists_latency_breakdown():
         interaction_id = memory_service.record_interaction_pending(
             7, "pregunta", "respuesta", [], "", 0.8,
             router_ms=12, rag_ms=130, llm_ms=900, db_ms=8,
+            reasoning_effort="low",
         )
 
     assert interaction_id == 321
-    assert "RouterMs, RagMs, LlmMs, DbMs" in cursor.execute.call_args.args[0]
-    assert cursor.execute.call_args.args[-4:] == (12, 130, 900, 8)
+    assert "RouterMs, RagMs, LlmMs, DbMs, EsfuerzoRazonamiento" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.args[-5:] == (12, 130, 900, 8, "low")
 
 
 def test_update_interaction_latency_writes_all_stages():

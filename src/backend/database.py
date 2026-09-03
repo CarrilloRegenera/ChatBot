@@ -325,6 +325,7 @@ def ensure_app_schema() -> None:
                     FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
                     FechaRevision DATETIME2 NULL,
                     RevisadoPor NVARCHAR(120) NULL
+                    ,EsfuerzoRazonamiento NVARCHAR(20) NULL
                 );
             END
             """
@@ -400,6 +401,8 @@ def ensure_app_schema() -> None:
                 ALTER TABLE dbo.InteraccionesRAG ADD LlmMs INT NULL;
             IF COL_LENGTH('dbo.InteraccionesRAG', 'DbMs') IS NULL
                 ALTER TABLE dbo.InteraccionesRAG ADD DbMs INT NULL;
+            IF COL_LENGTH('dbo.InteraccionesRAG', 'EsfuerzoRazonamiento') IS NULL
+                ALTER TABLE dbo.InteraccionesRAG ADD EsfuerzoRazonamiento NVARCHAR(20) NULL;
             """
         )
 

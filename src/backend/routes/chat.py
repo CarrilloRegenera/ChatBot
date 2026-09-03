@@ -605,6 +605,7 @@ def send_message(data: MessageRequest, request: Request):
                 trace = {
                     "base_model": generated.get("base_model", ""),
                     "final_model": generated.get("final_model") or generated.get("model", ""),
+                    "reasoning_effort": generated.get("reasoning_effort", ""),
                     "base_confidence": generated.get("base_confidence"),
                     "final_confidence": generated.get("final_confidence", confidence),
                     "escalated": bool(generated.get("escalated", False)),
@@ -642,6 +643,7 @@ def send_message(data: MessageRequest, request: Request):
                         router_ms=router_ms,
                         rag_ms=rag_ms,
                         llm_ms=llm_ms,
+                        reasoning_effort=trace["reasoning_effort"],
                     )
                     db_ms = max(db_ms, int((time.time() - stage_metrics_db_start) * 1000))
                 except Exception:

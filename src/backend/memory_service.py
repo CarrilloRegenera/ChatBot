@@ -187,6 +187,7 @@ def record_interaction_pending(
     rag_ms: int | None = None,
     llm_ms: int | None = None,
     db_ms: int | None = None,
+    reasoning_effort: str = "",
 ) -> int:
     final_confidence = confidence if final_confidence is None else final_confidence
     base_confidence = final_confidence if base_confidence is None else base_confidence
@@ -201,10 +202,10 @@ def record_interaction_pending(
                 ConversacionId, Pregunta, Respuesta, Fuentes, Contexto, Estado, Confianza,
                 PromptTokens, CompletionTokens, TotalTokens, Modelo, ModeloBase, ModeloFinal,
                 ConfianzaBase, ConfianzaFinal, Escalado, MotivoEscalado, Ruta, DesdeMemoria,
-                TiempoRespuestaMs, RouterMs, RagMs, LlmMs, DbMs
+                TiempoRespuestaMs, RouterMs, RagMs, LlmMs, DbMs, EsfuerzoRazonamiento
             )
             OUTPUT INSERTED.Id
-            VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             conversation_id,
             question,
@@ -229,6 +230,7 @@ def record_interaction_pending(
             rag_ms,
             llm_ms,
             db_ms,
+            reasoning_effort or None,
         )
         interaction_id = cursor.fetchone()[0]
     return interaction_id
@@ -264,9 +266,9 @@ def record_knowledge_interaction_and_message(**kwargs) -> tuple[int, int]:
     with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            """INSERT INTO dbo.InteraccionesRAG (ConversacionId,Pregunta,Respuesta,Fuentes,Contexto,Estado,Confianza,PromptTokens,CompletionTokens,TotalTokens,Modelo,ModeloBase,ModeloFinal,ConfianzaBase,ConfianzaFinal,Escalado,MotivoEscalado,Ruta,DesdeMemoria,TiempoRespuestaMs,RouterMs,RagMs,LlmMs)
-            OUTPUT INSERTED.Id VALUES (?,?,?,?,?,'pendiente',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            kwargs["conversation_id"], kwargs["question"], kwargs["answer"], _to_json(kwargs["sources"]), kwargs["context"], kwargs["confidence"], kwargs["prompt_tokens"], kwargs["completion_tokens"], kwargs["total_tokens"], kwargs["final_model"], kwargs["base_model"], kwargs["final_model"], kwargs["base_confidence"], kwargs["final_confidence"], 1 if kwargs["escalated"] else 0, (kwargs["escalation_reason"] or "")[:80], "knowledge", 0, kwargs["elapsed_ms"], kwargs["router_ms"], kwargs["rag_ms"], kwargs["llm_ms"],
+            """INSERT INTO dbo.InteraccionesRAG (ConversacionId,Pregunta,Respuesta,Fuentes,Contexto,Estado,Confianza,PromptTokens,CompletionTokens,TotalTokens,Modelo,ModeloBase,ModeloFinal,ConfianzaBase,ConfianzaFinal,Escalado,MotivoEscalado,Ruta,DesdeMemoria,TiempoRespuestaMs,RouterMs,RagMs,LlmMs,EsfuerzoRazonamiento)
+            OUTPUT INSERTED.Id VALUES (?,?,?,?,?,'pendiente',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            kwargs["conversation_id"], kwargs["question"], kwargs["answer"], _to_json(kwargs["sources"]), kwargs["context"], kwargs["confidence"], kwargs["prompt_tokens"], kwargs["completion_tokens"], kwargs["total_tokens"], kwargs["final_model"], kwargs["base_model"], kwargs["final_model"], kwargs["base_confidence"], kwargs["final_confidence"], 1 if kwargs["escalated"] else 0, (kwargs["escalation_reason"] or "")[:80], "knowledge", 0, kwargs["elapsed_ms"], kwargs["router_ms"], kwargs["rag_ms"], kwargs["llm_ms"], kwargs.get("reasoning_effort") or None,
         )
         interaction_id = cursor.fetchone()[0]
         cursor.execute("INSERT INTO dbo.Mensajes (ConversacionId,Pregunta,Respuesta,TiempoRespuestaMs) VALUES (?,?,?,?)", kwargs["conversation_id"], kwargs["question"], kwargs["answer"], kwargs["elapsed_ms"])
