@@ -230,6 +230,27 @@ def _build_prompt(question: str, context: str = "", history: Optional[List[Dict]
     )
 
 
+def _reasoning_effort_for_question(question: str, model: str) -> Optional[str]:
+    """Use less reasoning only for direct factual RAG questions."""
+    if not str(model or "").startswith("gpt-5"):
+        return None
+    profile = _infer_answer_profile(question)
+    complex_intents = (
+        "list",
+        "summary",
+        "table",
+        "comparison",
+        "procedure",
+        "generalization",
+        "normative_validity",
+        "motivation",
+        "numeric",
+    )
+    if profile["direct_fact"] and not any(profile[intent] for intent in complex_intents):
+        return "low"
+    return None
+
+
 def _extract_usage(response) -> Dict[str, int]:
     usage = getattr(response, "usage", None)
     prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
@@ -956,6 +977,7 @@ def _should_escalate(
 def generate_ai_response(question: str, context: str = "", history: Optional[List[Dict]] = None, *, model: Optional[str] = None) -> Dict:
     prompt = _build_prompt(question=question, context=context, history=history)
     active_model = model or OPENAI_MODEL
+    reasoning_effort = _reasoning_effort_for_question(question, active_model)
 
     last_error = None
     retries = 0
@@ -970,11 +992,16 @@ def generate_ai_response(question: str, context: str = "", history: Optional[Lis
                 OPENAI_TIMEOUT_SECS,
                 len(prompt),
             )
+            completion_args = {
+                "model": active_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_completion_tokens": 2048,
+            }
+            if reasoning_effort:
+                completion_args["reasoning_effort"] = reasoning_effort
             response = client.chat.completions.create(
-                model=active_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_completion_tokens=2048,
+                **completion_args,
             )
             text = _extract_response_text(response)
             if text and text.strip():
